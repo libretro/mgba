@@ -164,7 +164,7 @@ static void _GBCoreDeinit(struct mCore* core) {
 #if !defined(MINIMAL_CORE) || MINIMAL_CORE < 2
 	mDirectorySetDeinit(&core->dirs);
 #endif
-#ifdef USE_DEBUGGERS
+#ifdef ENABLE_DEBUGGERS
 	if (core->symbolTable) {
 		mDebuggerSymbolTableDestroy(core->symbolTable);
 	}
@@ -428,21 +428,19 @@ static void _GBCorePutPixels(struct mCore* core, const void* buffer, size_t stri
 	gbcore->renderer.d.putPixels(&gbcore->renderer.d, stride, buffer);
 }
 
-static struct blip_t* _GBCoreGetAudioChannel(struct mCore* core, int ch) {
+static struct mAudioBuffer* _GBCoreGetAudioBuffer(struct mCore* core) {
 	struct GB* gb = core->board;
-	switch (ch) {
-	case 0:
-		return gb->audio.left;
-	case 1:
-		return gb->audio.right;
-	default:
-		return NULL;
-	}
+	return &gb->audio.buffer;
 }
 
 static void _GBCoreSetAudioBufferSize(struct mCore* core, size_t samples) {
 	struct GB* gb = core->board;
 	GBAudioResizeBuffer(&gb->audio, samples);
+}
+
+static unsigned _GBCoreAudioSampleRate(const struct mCore* core) {
+	UNUSED(core);
+	return 131072;
 }
 
 static size_t _GBCoreGetAudioBufferSize(struct mCore* core) {
@@ -1060,7 +1058,7 @@ static bool _GBCoreWriteRegister(struct mCore* core, const char* name, const voi
 	return false;
 }
 
-#ifdef USE_DEBUGGERS
+#ifdef ENABLE_DEBUGGERS
 static bool _GBCoreSupportsDebuggerType(struct mCore* core, enum mDebuggerType type) {
 	UNUSED(core);
 	switch (type) {
@@ -1302,7 +1300,8 @@ struct mCore* GBCoreCreate(void) {
 	core->setVideoGLTex = _GBCoreSetVideoGLTex;
 	core->getPixels = _GBCoreGetPixels;
 	core->putPixels = _GBCorePutPixels;
-	core->getAudioChannel = _GBCoreGetAudioChannel;
+	core->audioSampleRate = _GBCoreAudioSampleRate;
+	core->getAudioBuffer = _GBCoreGetAudioBuffer;
 	core->setAudioBufferSize = _GBCoreSetAudioBufferSize;
 	core->getAudioBufferSize = _GBCoreGetAudioBufferSize;
 	core->setAVStream = _GBCoreSetAVStream;
@@ -1352,7 +1351,7 @@ struct mCore* GBCoreCreate(void) {
 	core->listRegisters = _GBCoreListRegisters;
 	core->readRegister = _GBCoreReadRegister;
 	core->writeRegister = _GBCoreWriteRegister;
-#ifdef USE_DEBUGGERS
+#ifdef ENABLE_DEBUGGERS
 	core->supportsDebuggerType = _GBCoreSupportsDebuggerType;
 	core->debuggerPlatform = _GBCoreDebuggerPlatform;
 	core->cliDebuggerSystem = _GBCoreCliDebuggerSystem;

@@ -49,7 +49,7 @@ CoreController::CoreController(mCore* core, QObject* parent)
 	GBASIODolphinCreate(&m_dolphin);
 #endif
 
-#ifdef USE_DEBUGGERS
+#ifdef ENABLE_DEBUGGERS
 	mDebuggerInit(&m_debugger);
 #endif
 
@@ -218,7 +218,7 @@ CoreController::~CoreController() {
 
 	mCoreThreadJoin(&m_threadContext);
 
-#ifdef USE_DEBUGGERS
+#ifdef ENABLE_DEBUGGERS
 	mDebuggerDeinit(&m_debugger);
 #endif
 
@@ -331,7 +331,7 @@ void CoreController::loadConfig(ConfigController* config) {
 #endif
 }
 
-#ifdef USE_DEBUGGERS
+#ifdef ENABLE_DEBUGGERS
 void CoreController::attachDebugger(bool interrupt) {
 	Interrupter interrupter(this);
 	if (!m_threadContext.core->debugger) {
@@ -478,7 +478,7 @@ void CoreController::start() {
 
 void CoreController::stop() {
 	setSync(false);
-#ifdef USE_DEBUGGERS
+#ifdef ENABLE_DEBUGGERS
 	detachDebugger();
 #endif
 	setPaused(false);
@@ -556,11 +556,7 @@ void CoreController::rewind(int states) {
 	if (!states) {
 		states = INT_MAX;
 	}
-	for (int i = 0; i < states; ++i) {
-		if (!mCoreRewindRestore(&m_threadContext.impl->rewind, m_threadContext.core)) {
-			break;
-		}
-	}
+	mCoreRewindRestore(&m_threadContext.impl->rewind, m_threadContext.core, states);
 	interrupter.resume();
 	emit frameAvailable();
 	emit rewound();

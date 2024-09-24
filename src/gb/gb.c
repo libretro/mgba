@@ -106,7 +106,7 @@ static void GBDeinit(struct mCPUComponent* component) {
 
 bool GBLoadGBX(struct GBXMetadata* metadata, struct VFile* vf) {
 	uint8_t footer[16];
-	if (vf->seek(vf, -sizeof(footer), SEEK_END) < 0) {
+	if (vf->seek(vf, -(off_t) sizeof(footer), SEEK_END) < 0) {
 		return false;
 	}
 	if (vf->read(vf, footer, sizeof(footer)) < (ssize_t) sizeof(footer)) {
@@ -940,7 +940,7 @@ void GBProcessEvents(struct SM83Core* cpu) {
 
 			nextEvent = cycles;
 			do {
-#ifdef USE_DEBUGGERS
+#ifdef ENABLE_DEBUGGERS
 				gb->timing.globalCycles += nextEvent;
 #endif
 				nextEvent = mTimingTick(&gb->timing, nextEvent);
@@ -1057,7 +1057,7 @@ void GBStop(struct SM83Core* cpu) {
 void GBIllegal(struct SM83Core* cpu) {
 	struct GB* gb = (struct GB*) cpu->master;
 	mLOG(GB, GAME_ERROR, "Hit illegal opcode at address %04X:%02X", cpu->pc, cpu->bus);
-#ifdef USE_DEBUGGERS
+#ifdef ENABLE_DEBUGGERS
 	if (cpu->components && cpu->components[CPU_COMPONENT_DEBUGGER]) {
 		struct mDebuggerEntryInfo info = {
 			.address = cpu->pc,
@@ -1100,7 +1100,7 @@ bool GBIsROM(struct VFile* vf) {
 	}
 
 	uint8_t footer[16];
-	vf->seek(vf, -sizeof(footer), SEEK_END);
+	vf->seek(vf, -(off_t) sizeof(footer), SEEK_END);
 	if (vf->read(vf, footer, sizeof(footer)) < (ssize_t) sizeof(footer)) {
 		return false;
 	}

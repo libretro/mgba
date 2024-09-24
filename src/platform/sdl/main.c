@@ -47,6 +47,7 @@ static void _loadState(struct mCoreThread* thread) {
 int main(int argc, char** argv) {
 #ifdef _WIN32
 	AttachConsole(ATTACH_PARENT_PROCESS);
+	freopen("CONOUT$", "w", stdout);
 #endif
 	struct mSDLRenderer renderer = {0};
 
@@ -216,12 +217,12 @@ int mSDLRun(struct mSDLRenderer* renderer, struct mArguments* args) {
 #ifdef ENABLE_PYTHON
 	mPythonSetup(bridge);
 #endif
-#ifdef USE_DEBUGGERS
+#ifdef ENABLE_DEBUGGERS
 	CLIDebuggerScriptEngineInstall(bridge);
 #endif
 #endif
 
-#ifdef USE_DEBUGGERS
+#ifdef ENABLE_DEBUGGERS
 	struct mDebugger debugger;
 	mDebuggerInit(&debugger);
 	bool hasDebugger = mArgumentsApplyDebugger(args, renderer->core, &debugger);
@@ -291,7 +292,7 @@ int mSDLRun(struct mSDLRenderer* renderer, struct mArguments* args) {
 	mScriptBridgeDestroy(bridge);
 #endif
 
-#ifdef USE_DEBUGGERS
+#ifdef ENABLE_DEBUGGERS
 	if (hasDebugger) {
 		renderer->core->detachDebugger(renderer->core);
 		mDebuggerDeinit(&debugger);

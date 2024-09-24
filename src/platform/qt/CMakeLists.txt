@@ -25,12 +25,24 @@ set(CMAKE_INCLUDE_CURRENT_DIR ON)
 
 set(QT_LIBRARIES)
 
-set(QT_V 5)
-find_package(Qt${QT_V} COMPONENTS Core Widgets Network OPTIONAL_COMPONENTS Multimedia)
-if(QT_V GREATER_EQUAL 6)
-	find_package(Qt${QT_V} COMPONENTS OpenGL OpenGLWidgets)
+option(FORCE_QT_VERSION "Force the used Qt version" OFF)
+
+if(FORCE_QT_VERSION EQUAL 5 OR FORCE_QT_VERSION EQUAL 6)
+	set(QT_VERSIONS ${FORCE_QT_VERSION})
+else()
+	set(QT_VERSIONS 6 5)
 endif()
-set(QT Qt${QT_V})
+foreach(V ${QT_VERSIONS})
+	set(QT Qt${V})
+	set(QT_V ${V})
+	find_package(${QT} COMPONENTS Core Widgets Network OPTIONAL_COMPONENTS Multimedia)
+	if(QT_V GREATER_EQUAL 6)
+		find_package(${QT} COMPONENTS OpenGL OpenGLWidgets)
+	endif()
+	if(${${QT}Widgets_FOUND})
+		break()
+	endif()
+endforeach()
 
 if(NOT BUILD_GL AND NOT BUILD_GLES2 AND NOT BUILD_GLES3)
 	message(WARNING "OpenGL is recommended to build the Qt port")
@@ -225,11 +237,8 @@ endif()
 if(${QT}Multimedia_FOUND)
 	list(APPEND AUDIO_SRC
 		AudioProcessorQt.cpp
-		AudioDevice.cpp)
-	if(QT_V LESS 6)
-		list(APPEND SOURCE_FILES
-			VideoDumper.cpp)
-	endif()
+		AudioDevice.cpp
+		VideoDumper.cpp)
 	if (WIN32 AND QT_STATIC)
 		list(APPEND QT_LIBRARIES ${QT}::QWindowsAudioPlugin ${QT}::DSServicePlugin ${QT}::QWindowsVistaStylePlugin ${QT}::QJpegPlugin
                                  strmiids mfuuid mfplat mf ksguid dxva2 evr d3d9)
@@ -245,7 +254,7 @@ if(NOT AUDIO_SRC)
 	return()
 endif()
 
-if(USE_DEBUGGERS)
+if(ENABLE_DEBUGGERS)
 	list(APPEND SOURCE_FILES
 		DebuggerController.cpp
 		DebuggerConsole.cpp
@@ -253,7 +262,7 @@ if(USE_DEBUGGERS)
 		MemoryAccessLogView.cpp)
 endif()
 
-if(USE_GDB_STUB)
+if(ENABLE_GDB_STUB)
 	list(APPEND SOURCE_FILES GDBController.cpp GDBWindow.cpp)
 endif()
 
@@ -335,7 +344,6 @@ if(BUILD_GL OR BUILD_GLES2 OR BUILD_EPOXY)
 		install(DIRECTORY ${PROJECT_SOURCE_DIR}/res/shaders DESTINATION ${DATADIR} COMPONENT ${BINARY_NAME}-qt)
 	else()
 		file(GLOB SHADERS ${PROJECT_SOURCE_DIR}/res/shaders/*.shader)
-		message(STATUS ${SHADERS})
 		file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/shaders)
 		foreach(SHADER_DIR ${SHADERS})
 			get_filename_component(SHADER ${SHADER_DIR} NAME)

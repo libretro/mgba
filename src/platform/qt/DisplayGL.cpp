@@ -53,6 +53,12 @@ typedef struct _XDisplay Display;
 #define OVERHEAD_NSEC 300000
 #endif
 
+// Legacy define from X11/X.h
+#ifdef Unsorted
+#undef Unsorted
+#endif
+
+#include "LogController.h"
 #include "OpenGLBug.h"
 #include "utils.h"
 
@@ -277,6 +283,47 @@ void DisplayGL::startDrawing(std::shared_ptr<CoreController> controller) {
 	QTimer::singleShot(8, this, &DisplayGL::updateContentSize);
 }
 
+bool DisplayGL::highestCompatible(QSurfaceFormat& format) {
+#if defined(BUILD_GLES2) || defined(BUILD_GLES3) || defined(USE_EPOXY)
+	if (QOpenGLContext::openGLModuleType() == QOpenGLContext::LibGL) {
+		format.setVersion(3, 3);
+		format.setProfile(QSurfaceFormat::CoreProfile);
+		if (DisplayGL::supportsFormat(format)) {
+			return true;
+		}
+	} else {
+#if defined(BUILD_GLES3) || defined(USE_EPOXY)
+		format.setVersion(3, 1);
+		if (DisplayGL::supportsFormat(format)) {
+			return true;
+		}
+#endif
+#if defined(BUILD_GLES2) || defined(USE_EPOXY)
+		format.setVersion(2, 0);
+		if (DisplayGL::supportsFormat(format)) {
+			return true;
+		}
+#endif
+	}
+#endif
+
+#ifdef BUILD_GL
+#if defined(BUILD_GLES2) || defined(BUILD_GLES3) || defined(USE_EPOXY)
+	LOG(QT, WARN) << tr("Failed to create an OpenGL 3 context, trying old-style...");
+#endif
+	if (QOpenGLContext::openGLModuleType() == QOpenGLContext::LibGL) {
+		format.setVersion(1, 4);
+	} else {
+		format.setVersion(1, 1);			
+	}
+	format.setOption(QSurfaceFormat::DeprecatedFunctions);
+	if (DisplayGL::supportsFormat(format)) {
+			return true;
+	}
+#endif
+	return false;
+}
+
 bool DisplayGL::supportsFormat(const QSurfaceFormat& format) {
 	if (!s_supports.contains(format)) {
 		QOpenGLContext context;
@@ -477,6 +524,10 @@ int DisplayGL::framebufferHandle() {
 	return m_painter->glTex();
 }
 
+void DisplayGL::setMaximumSize(const QSize& size) {
+	QMetaObject::invokeMethod(m_painter.get(), "setMaximumSize", Q_ARG(const QSize&, size));
+}
+
 PainterGL::PainterGL(QWindow* window, mGLWidget* widget, const QSurfaceFormat& format)
 	: m_window(window)
 	, m_format(format)
@@ -673,6 +724,11 @@ void PainterGL::resize(const QSize& size) {
 	}
 }
 
+void PainterGL::setMaximumSize(const QSize& size) {
+	m_maxSize = size;
+	resizeContext();
+}
+
 void PainterGL::lockAspectRatio(bool lock) {
 	m_backend->lockAspectRatio = lock;
 	resize(m_size);
@@ -864,7 +920,11 @@ void PainterGL::unpause() {
 
 void PainterGL::performDraw() {
 	float r = m_window->devicePixelRatio();
-	m_backend->contextResized(m_backend, m_size.width() * r, m_size.height() * r);
+	QSize maxSize = m_maxSize;
+	if (!maxSize.isValid()) {
+		maxSize = QSize(0, 0);
+	}
+	m_backend->contextResized(m_backend, m_size.width() * r, m_size.height() * r, maxSize.width() * r, maxSize.height() * r);
 	if (m_buffer) {
 		m_backend->setImage(m_backend, VIDEO_LAYER_IMAGE, m_buffer);
 	}

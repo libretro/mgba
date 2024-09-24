@@ -615,7 +615,7 @@ static struct ParseTree* _parseTree(const char** string) {
 	struct ParseTree* tree = NULL;
 	if (!error) {
 		tree = parseTreeCreate();
-		parseLexedExpression(tree, &lv);
+		error = !parseLexedExpression(tree, &lv);
 	}
 	lexFree(&lv);
 	LexVectorClear(&lv);
@@ -1420,7 +1420,7 @@ static void _loadSymbols(struct CLIDebugger* debugger, struct CLIDebugVector* dv
 #ifdef USE_ELF
 	struct ELF* elf = ELFOpen(vf);
 	if (elf) {
-#ifdef USE_DEBUGGERS
+#ifdef ENABLE_DEBUGGERS
 		mCoreLoadELFSymbols(symbolTable, elf);
 #endif
 		ELFClose(elf);

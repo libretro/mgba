@@ -18,7 +18,7 @@ CXX_GUARD_START
 #include <mgba/core/input.h>
 #endif
 #include <mgba/core/interface.h>
-#ifdef USE_DEBUGGERS
+#ifdef ENABLE_DEBUGGERS
 #include <mgba/debugger/debugger.h>
 #endif
 
@@ -32,6 +32,7 @@ enum mCoreChecksumType {
 	mCHECKSUM_CRC32,
 };
 
+struct mAudioBuffer;
 struct mCoreConfig;
 struct mCoreSync;
 struct mDebuggerSymbols;
@@ -78,7 +79,8 @@ struct mCore {
 	void (*getPixels)(struct mCore*, const void** buffer, size_t* stride);
 	void (*putPixels)(struct mCore*, const void* buffer, size_t stride);
 
-	struct blip_t* (*getAudioChannel)(struct mCore*, int ch);
+	unsigned (*audioSampleRate)(const struct mCore*);
+	struct mAudioBuffer* (*getAudioBuffer)(struct mCore*);
 	void (*setAudioBufferSize)(struct mCore*, size_t samples);
 	size_t (*getAudioBufferSize)(struct mCore*);
 
@@ -146,7 +148,7 @@ struct mCore {
 	bool (*readRegister)(const struct mCore*, const char* name, void* out);
 	bool (*writeRegister)(struct mCore*, const char* name, const void* in);
 
-#ifdef USE_DEBUGGERS
+#ifdef ENABLE_DEBUGGERS
 	bool (*supportsDebuggerType)(struct mCore*, enum mDebuggerType);
 	struct mDebuggerPlatform* (*debuggerPlatform)(struct mCore*);
 	struct CLIDebuggerSystem* (*cliDebuggerSystem)(struct mCore*);
@@ -216,10 +218,12 @@ void* mCoreGetMemoryBlock(struct mCore* core, uint32_t start, size_t* size);
 void* mCoreGetMemoryBlockMasked(struct mCore* core, uint32_t start, size_t* size, uint32_t mask);
 const struct mCoreMemoryBlock* mCoreGetMemoryBlockInfo(struct mCore* core, uint32_t address);
 
+double mCoreCalculateFramerateRatio(const struct mCore* core, double desiredFrameRate);
+
 #ifdef USE_ELF
 struct ELF;
 bool mCoreLoadELF(struct mCore* core, struct ELF* elf);
-#ifdef USE_DEBUGGERS
+#ifdef ENABLE_DEBUGGERS
 void mCoreLoadELFSymbols(struct mDebuggerSymbols* symbols, struct ELF*);
 #endif
 #endif
