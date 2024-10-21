@@ -7,7 +7,6 @@
 
 #include <mgba-util/common.h>
 
-#include <mgba/core/blip_buf.h>
 #include <mgba/core/cheats.h>
 #include <mgba/core/core.h>
 #include <mgba/core/log.h>
@@ -43,7 +42,6 @@ FS_Archive sdmcArchive;
 #include "libretro_core_options.h"
 
 #define GB_SAMPLES 512
-#define SAMPLE_RATE 32768
 /* An alpha factor of 1/180 is *somewhat* equivalent
  * to calculating the average for the last 180
  * frames, or 3 seconds of runtime... */
@@ -69,7 +67,7 @@ static bool libretro_supports_bitmasks = false;
 
 static void GBARetroLog(struct mLogger* logger, int category, enum mLogLevel level, const char* format, va_list args);
 
-static void _postAudioBuffer(struct mAVStream*, blip_t* left, blip_t* right);
+static void _postAudioBuffer(struct mAVStream*, struct mAudioBuffer*);
 static void _setRumble(struct mRumble* rumble, int enable);
 static uint8_t _readLux(struct GBALuminanceSource* lux);
 static void _updateLux(struct GBALuminanceSource* lux);
@@ -1349,7 +1347,7 @@ void retro_get_system_av_info(struct retro_system_av_info* info) {
 
 	info->geometry.aspect_ratio = width / (double) height;
 	info->timing.fps = core->frequency(core) / (float) core->frameCycles(core);
-	info->timing.sample_rate = SAMPLE_RATE;
+	info->timing.sample_rate = core->audioSampleRate(core);
 }
 
 void retro_init(void) {
@@ -1690,9 +1688,8 @@ void retro_run(void) {
 
 #ifdef M_CORE_GBA
 	if (core->platform(core) == mPLATFORM_GBA) {
-		blip_t *audioChannelLeft  = core->getAudioChannel(core, 0);
-		blip_t *audioChannelRight = core->getAudioChannel(core, 1);
-		int samplesAvail          = blip_samples_avail(audioChannelLeft);
+		struct mAudioBuffer *buffer = core->getAudioBuffer(core);
+		int samplesAvail            = mAudioBufferAvailable(buffer);
 		if (samplesAvail > 0) {
 			/* Update 'running average' of number of
 			 * samples per frame.
@@ -1709,8 +1706,7 @@ void retro_run(void) {
 				audioSampleBufferSize = (samplesToRead * 2);
 				audioSampleBuffer     = realloc(audioSampleBuffer, audioSampleBufferSize * sizeof(int16_t));
 			}
-			int produced = blip_read_samples(audioChannelLeft, audioSampleBuffer, samplesToRead, true);
-			blip_read_samples(audioChannelRight, audioSampleBuffer + 1, samplesToRead, true);
+			int produced = mAudioBufferRead(buffer, audioSampleBuffer, samplesToRead);
 			if (produced > 0) {
 				if (audioLowPassEnabled) {
 					_audioLowPassFilter(audioSampleBuffer, produced);
@@ -2012,11 +2008,11 @@ bool retro_load_game(const struct retro_game_info* game) {
 		 * to nominal number of samples per frame.
 		 * Buffer will be resized as required in
 		 * retro_run(). */
-		size_t audioSamplesPerFrame = (size_t)((float)SAMPLE_RATE * (float)core->frameCycles(core) /
-				(float)core->frequency(core));
-		audioSampleBufferSize       = audioSamplesPerFrame * 2;
-		audioSampleBuffer           = malloc(audioSampleBufferSize * sizeof(int16_t));
-		audioSamplesPerFrameAvg     = (float)audioSamplesPerFrame;
+		size_t audioSamplesPerFrame = (size_t)((float) core->audioSampleRate(core) * (float) core->frameCycles(core) /
+			(float)core->frequency(core));
+		audioSampleBufferSize  = ceil(audioSamplesPerFrame) * 2;
+		audioSampleBuffer = malloc(audioSampleBufferSize * sizeof(int16_t));
+		audioSamplesPerFrameAvg = (float) audioSamplesPerFrame;
 		/* Internal audio buffer size should be
 		 * audioSamplesPerFrame, but number of samples
 		 * actually generated varies slightly on a
@@ -2045,9 +2041,6 @@ bool retro_load_game(const struct retro_game_info* game) {
 		audioSamplesPerFrameAvg = GB_SAMPLES;
 		core->setAudioBufferSize(core, GB_SAMPLES);
 	}
-
-	blip_set_rates(core->getAudioChannel(core, 0), core->frequency(core), SAMPLE_RATE);
-	blip_set_rates(core->getAudioChannel(core, 1), core->frequency(core), SAMPLE_RATE);
 
 	core->setPeripheral(core, mPERIPH_RUMBLE, &rumble);
 	core->setPeripheral(core, mPERIPH_ROTATION, &rotation);
@@ -2315,7 +2308,7 @@ size_t retro_get_memory_size(unsigned id) {
 #ifdef M_CORE_GBA
 		case mPLATFORM_GBA:
 			switch (((struct GBA*) core->board)->memory.savedata.type) {
-			case SAVEDATA_AUTODETECT:
+			case GBA_SAVEDATA_AUTODETECT:
 				return GBA_SIZE_FLASH1M;
 			default:
 				return GBASavedataSize(&((struct GBA*) core->board)->memory.savedata);
@@ -2402,10 +2395,9 @@ void GBARetroLog(struct mLogger* logger, int category, enum mLogLevel level, con
 }
 
 /* Used only for GB/GBC content */
-static void _postAudioBuffer(struct mAVStream* stream, blip_t* left, blip_t* right) {
+static void _postAudioBuffer(struct mAVStream* stream, struct mAudioBuffer* buffer) {
 	UNUSED(stream);
-	int produced = blip_read_samples(left, audioSampleBuffer, GB_SAMPLES, true);
-	blip_read_samples(right, audioSampleBuffer + 1, GB_SAMPLES, true);
+	int produced = mAudioBufferRead(buffer, audioSampleBuffer, GB_SAMPLES);
 	if (produced > 0) {
 		if (audioLowPassEnabled) {
 			_audioLowPassFilter(audioSampleBuffer, produced);
@@ -2554,7 +2546,7 @@ static void _updateRotation(struct mRotationSource* source) {
 		tiltY = sensorGetCallback(0, RETRO_SENSOR_ACCELEROMETER_Y) * 2e8f;
 	}
 	if (gyroEnabled) {
-		gyroZ = sensorGetCallback(0, RETRO_SENSOR_GYROSCOPE_Z) * -1.1e9f;
+		gyroZ = sensorGetCallback(0, RETRO_SENSOR_GYROSCOPE_Z) * -5.5e8f;
 	}
 }
 

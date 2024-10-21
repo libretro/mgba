@@ -18,7 +18,7 @@
 
 #ifdef M_CORE_GB
 #include "GameBoy.h"
-#include <mgba/internal/gb/overrides.h>
+#include <mgba/gb/interface.h>
 #endif
 
 #include <mgba/core/serialize.h>
@@ -26,6 +26,7 @@
 #include <mgba/internal/gba/gba.h>
 
 #ifdef BUILD_SDL
+#define SDL_MAIN_HANDLED
 #include "platform/sdl/sdl-events.h"
 #endif
 
@@ -333,8 +334,13 @@ SettingsView::SettingsView(ConfigController* controller, InputController* inputC
 
 	GBAKeyEditor* buttonEditor = nullptr;
 #ifdef BUILD_SDL
+#if SDL_VERSION_ATLEAST(2, 0, 0)
+	QString profile = inputController->profileForType(SDL_BINDING_CONTROLLER);
+	buttonEditor = new GBAKeyEditor(inputController, SDL_BINDING_CONTROLLER, profile);
+#else
 	QString profile = inputController->profileForType(SDL_BINDING_BUTTON);
 	buttonEditor = new GBAKeyEditor(inputController, SDL_BINDING_BUTTON, profile);
+#endif
 	addPage(tr("Controllers"), buttonEditor, Page::CONTROLLERS);
 	connect(m_ui.buttonBox, &QDialogButtonBox::accepted, buttonEditor, &GBAKeyEditor::save);
 #endif
@@ -601,12 +607,6 @@ void SettingsView::updateConfig() {
 		emit languageChanged();
 	}
 
-	bool oldAudioHle = m_controller->getOption("gba.audioHle", "0") != "0";
-	if (oldAudioHle != m_ui.audioHle->isChecked()) {
-		saveSetting("gba.audioHle", m_ui.audioHle);
-		emit audioHleChanged();
-	}
-
 	if (m_ui.multiplayerAudioAll->isChecked()) {
 		m_controller->setQtOption("multiplayerAudio", "all");
 	} else if (m_ui.multiplayerAudio1->isChecked()) {
@@ -734,7 +734,6 @@ void SettingsView::reloadConfig() {
 	loadSetting("logToStdout", m_ui.logToStdout);
 	loadSetting("logFile", m_ui.logFile);
 	loadSetting("useDiscordPresence", m_ui.useDiscordPresence);
-	loadSetting("gba.audioHle", m_ui.audioHle);
 	loadSetting("dynamicTitle", m_ui.dynamicTitle, true);
 	loadSetting("gba.forceGbp", m_ui.forceGbp);
 	loadSetting("vbaBugCompat", m_ui.vbaBugCompat, true);
