@@ -2111,7 +2111,7 @@ bool retro_load_game(const struct retro_game_info* game) {
 		switch (gb->model) {
 		case GB_MODEL_AGB:
 		case GB_MODEL_CGB:
-			biosName = "gbc_bios.bin";
+			biosName = "gba_gbc_bios.bin";
 			break;
 		case GB_MODEL_SGB:
 			biosName = "sgb_bios.bin";
