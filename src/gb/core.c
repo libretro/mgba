@@ -667,7 +667,7 @@ static void _GBCoreReset(struct mCore* core) {
 			case GB_MODEL_CGB:
 			case GB_MODEL_AGB:
 			case GB_MODEL_SCGB:
-				strncat(path, PATH_SEP "gbc_bios.bin", PATH_MAX - strlen(path) - 1);
+				strncat(path, PATH_SEP "gba_gbc_bios.bin", PATH_MAX - strlen(path) - 1);
 				break;
 			default:
 				break;
