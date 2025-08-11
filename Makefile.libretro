@@ -268,7 +268,7 @@ else ifneq (,$(filter $(platform), psl1ght))
    TARGET := $(TARGET_NAME)_libretro_$(platform).a
    CC = $(PS3DEV)/ppu/bin/ppu-gcc$(EXE_EXT)
    AR = $(PS3DEV)/ppu/bin/ppu-ar$(EXE_EXT)
-   PLATFORM_DEFINES := -D__PPC__ -D__BIG_ENDIAN__
+   PLATFORM_DEFINES := -D__PPC__ -D__BIG_ENDIAN__ -DUSE_LOW_GBA_RESAMPLE_RATE
    STATIC_LINKING = 1
    DEFINES += -std=gnu99 -fms-extensions
    HAVE_VFS_FD = 0
@@ -279,7 +279,7 @@ else ifeq ($(platform), ps2)
    CC = mips64r5900el-ps2-elf-gcc$(EXE_EXT)
    AR = mips64r5900el-ps2-elf-ar$(EXE_EXT)
    PLATFORM_DEFINES := -DPS2 -DCC_RESAMPLER
-   CFLAGS += -G0 -DHAVE_NO_LANGEXTRA -DHAVE_STRTOF_L -D_GNU_SOURCE -DHAVE_LOCALE
+   CFLAGS += -G0 -DHAVE_NO_LANGEXTRA -DHAVE_STRTOF_L -D_GNU_SOURCE -DHAVE_LOCALE -DUSE_LOW_GBA_RESAMPLE_RATE
    STATIC_LINKING = 1
    DEFINES += -std=c99
 	HAVE_VFS_FD = 0
@@ -290,7 +290,7 @@ else ifeq ($(platform), psp1)
    CC = psp-gcc$(EXE_EXT)
    AR = psp-ar$(EXE_EXT)
    PLATFORM_DEFINES := -DPSP -DCC_RESAMPLER -DHAVE_STRTOF_L
-   CFLAGS += -G0 -I$(shell psp-config --pspsdk-path)/include
+   CFLAGS += -G0 -I$(shell psp-config --pspsdk-path)/include -DUSE_LOW_GBA_RESAMPLE_RATE
    STATIC_LINKING = 1
    DEFINES += -std=c99
 	HAVE_VFS_FD = 0
@@ -337,7 +337,7 @@ else ifneq (,$(filter $(platform), ngc wii wiiu))
    CC = $(DEVKITPPC)/bin/powerpc-eabi-gcc$(EXE_EXT)
    AR = $(DEVKITPPC)/bin/powerpc-eabi-ar$(EXE_EXT)
    PLATFORM_DEFINES += -DGEKKO -mcpu=750 -meabi -mhard-float -DHAVE_STRTOF_L
-   PLATFORM_DEFINES += -U__INT32_TYPE__ -U __UINT32_TYPE__ -D__INT32_TYPE__=int -D_GNU_SOURCE
+   PLATFORM_DEFINES += -U__INT32_TYPE__ -U __UINT32_TYPE__ -D__INT32_TYPE__=int -D_GNU_SOURCE -DUSE_LOW_GBA_RESAMPLE_RATE
    STATIC_LINKING = 1
    DEFINES += -std=c99
    HAVE_VFS_FD = 0
