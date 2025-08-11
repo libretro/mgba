@@ -43,7 +43,15 @@ FS_Archive sdmcArchive;
 
 #include "libretro_core_options.h"
 
+/* 65536 is too high for low-end platforms (such the
+ * NGC, Wii, Wii U) resulting in a very slow 
+ * GBA emulation performance...
+ * so let's revert to 32768 for these platforms */
+#if !defined(USE_LOW_GBA_RESAMPLE_RATE)
 #define GBA_RESAMPLED_RATE 65536
+#else
+#define GBA_RESAMPLED_RATE 32768
+#endif
 #define GB_SAMPLES 512
 /* An alpha factor of 1/180 is *somewhat* equivalent
  * to calculating the average for the last 180
