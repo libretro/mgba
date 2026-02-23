@@ -42,6 +42,8 @@ FS_Archive sdmcArchive;
 #endif
 
 #include "libretro_core_options.h"
+#include "libretro_input.h"
+#include "libretro_multiplayer.h"
 
 #define GBA_RESAMPLED_RATE 65536
 static unsigned targetSampleRate = GBA_RESAMPLED_RATE;
@@ -135,19 +137,9 @@ static bool audioLowPassEnabled = false;
 static int32_t audioLowPassRange = 0;
 static int32_t audioLowPassLeftPrev = 0;
 static int32_t audioLowPassRightPrev = 0;
-
-static const int keymap[] = {
-	RETRO_DEVICE_ID_JOYPAD_A,
-	RETRO_DEVICE_ID_JOYPAD_B,
-	RETRO_DEVICE_ID_JOYPAD_SELECT,
-	RETRO_DEVICE_ID_JOYPAD_START,
-	RETRO_DEVICE_ID_JOYPAD_RIGHT,
-	RETRO_DEVICE_ID_JOYPAD_LEFT,
-	RETRO_DEVICE_ID_JOYPAD_UP,
-	RETRO_DEVICE_ID_JOYPAD_DOWN,
-	RETRO_DEVICE_ID_JOYPAD_R,
-	RETRO_DEVICE_ID_JOYPAD_L,
-};
+static struct mLibretroTurboState turboState;
+static struct mLibretroMultiplayer multiplayer;
+static char loadedRomPath[PATH_MAX];
 
 #ifndef GIT_VERSION
 #define GIT_VERSION ""
@@ -1364,6 +1356,12 @@ void retro_get_system_av_info(struct retro_system_av_info* info) {
 	info->geometry.max_height = height;
 
 	info->geometry.aspect_ratio = width / (double) height;
+	mLibretroMultiplayerAdjustGeometry(&multiplayer,
+			&info->geometry.base_width,
+			&info->geometry.base_height,
+			&info->geometry.max_width,
+			&info->geometry.max_height,
+			&info->geometry.aspect_ratio);
 	info->timing.fps = core->frequency(core) / (float) core->frameCycles(core);
 
 #ifdef M_CORE_GBA
@@ -1473,9 +1471,14 @@ void retro_init(void) {
 	retroAudioLatency       = 0;
 	updateAudioLatency      = false;
 	updateAudioRate         = false;
+	mLibretroTurboStateInit(&turboState);
+	mLibretroMultiplayerInit(&multiplayer, VIDEO_WIDTH_MAX, VIDEO_HEIGHT_MAX);
+	loadedRomPath[0] = '\0';
 }
 
 void retro_deinit(void) {
+	mLibretroMultiplayerDeinit(&multiplayer, core);
+
 	if (outputBuffer) {
 #ifdef _3DS
 		linearFree(outputBuffer);
@@ -1515,43 +1518,15 @@ void retro_deinit(void) {
 	audioLowPassRange = 0;
 	audioLowPassLeftPrev = 0;
 	audioLowPassRightPrev = 0;
-}
-
-static int turboclock = 0;
-static bool indownstate = true;
-
-int16_t cycleturbo(bool a, bool b, bool l, bool r) {
-	int16_t buttons = 0;
-	turboclock++;
-	if (turboclock >= 2) {
-		turboclock = 0;
-		indownstate = !indownstate;
-	}
-
-	if (a) {
-		buttons |= indownstate << 0;
-	}
-
-	if (b) {
-		buttons |= indownstate << 1;
-	}
-
-	if (l) {
-		buttons |= indownstate << 9;
-	}
-
-	if (r) {
-		buttons |= indownstate << 8;
-	}
-
-	return buttons;
+	core = NULL;
 }
 
 void retro_run(void) {
 	if (deferredSetup) {
 		_doDeferredSetup();
 	}
-	uint16_t keys;
+	uint16_t player1Keys;
+	uint16_t player2Keys;
 	bool skipFrame = false;
 
 	inputPollCallback();
@@ -1575,36 +1550,16 @@ void retro_run(void) {
 #if defined(COLOR_16_BIT) && defined(COLOR_5_6_5)
 		_loadPostProcessingSettings();
 #endif
+		mLibretroMultiplayerUpdateMode(&multiplayer, environCallback);
+		mLibretroMultiplayerApplyMode(&multiplayer, core, data, dataSize, loadedRomPath, logCallback);
 #ifdef M_CORE_GB
 		_updateGbPal();
 #endif
 	}
 
-	keys = 0;
-	int i;
-	if (useBitmasks) {
-		int16_t joypadMask = inputCallback(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_MASK);
-		for (i = 0; i < sizeof(keymap) / sizeof(*keymap); ++i) {
-			keys |= ((joypadMask >> keymap[i]) & 1) << i;
-		}
-		// XXX: turbo keys, should be moved to frontend
-#define JOYPAD_BIT(BUTTON) (1 << RETRO_DEVICE_ID_JOYPAD_ ## BUTTON)
-		keys |= cycleturbo(joypadMask & JOYPAD_BIT(X), joypadMask & JOYPAD_BIT(Y), joypadMask & JOYPAD_BIT(L2), joypadMask & JOYPAD_BIT(R2));
-#undef JOYPAD_BIT
-	} else {
-		for (i = 0; i < sizeof(keymap) / sizeof(*keymap); ++i) {
-			keys |= (!!inputCallback(0, RETRO_DEVICE_JOYPAD, 0, keymap[i])) << i;
-		}
-		// XXX: turbo keys, should be moved to frontend
-		keys |= cycleturbo(
-			inputCallback(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_X),
-			inputCallback(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_Y),
-			inputCallback(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L2),
-			inputCallback(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R2)
-		);
-	}
-
-	core->setKeys(core, keys);
+	player1Keys = mLibretroInputReadKeys(0, inputCallback, useBitmasks, &turboState);
+	player2Keys = mLibretroInputReadKeys(1, inputCallback, useBitmasks, &turboState);
+	mLibretroMultiplayerSetKeys(&multiplayer, core, player1Keys, player2Keys);
 
 	if (!luxSensorUsed) {
 		static bool wasAdjustingLux = false;
@@ -1683,7 +1638,7 @@ void retro_run(void) {
       updateAudioLatency = false;
    }
 
-	core->runFrame(core);
+	mLibretroMultiplayerRunFrame(&multiplayer, core);
 	unsigned width, height;
 	core->currentVideoSize(core, &width, &height);
 
@@ -1707,15 +1662,29 @@ void retro_run(void) {
 	}
 
 	if (!skipFrame) {
+		if (multiplayer.active) {
+			size_t outPitch;
+			unsigned outWidth;
+			unsigned outHeight;
+			const mColor* frame = mLibretroMultiplayerComposeFrame(&multiplayer, outputBuffer, width, height, &outPitch, &outWidth, &outHeight);
+			videoCallback(frame, outWidth, outHeight, outPitch);
+		} else {
 #if defined(COLOR_16_BIT) && defined(COLOR_5_6_5)
-		if (videoPostProcess) {
-			videoPostProcess(width, height);
-			videoCallback(ppOutputBuffer, width, height, VIDEO_WIDTH_MAX * sizeof(mColor));
-		} else
+			if (videoPostProcess) {
+				videoPostProcess(width, height);
+				videoCallback(ppOutputBuffer, width, height, VIDEO_WIDTH_MAX * sizeof(mColor));
+			} else
 #endif
-			videoCallback(outputBuffer, width, height, VIDEO_WIDTH_MAX * sizeof(mColor));
+				videoCallback(outputBuffer, width, height, VIDEO_WIDTH_MAX * sizeof(mColor));
+		}
 	} else {
-		videoCallback(NULL, width, height, VIDEO_WIDTH_MAX * sizeof(mColor));
+		size_t outPitch = VIDEO_WIDTH_MAX * sizeof(mColor);
+		unsigned outWidth = width;
+		unsigned outHeight = height;
+		if (multiplayer.active) {
+			mLibretroMultiplayerComposeFrame(&multiplayer, outputBuffer, width, height, &outPitch, &outWidth, &outHeight);
+		}
+		videoCallback(NULL, outWidth, outHeight, outPitch);
 	}
 
 	/* Check whether audio sample rate has changed */
@@ -1995,6 +1964,12 @@ bool retro_load_game(const struct retro_game_info* game) {
 		return false;
 	}
 
+	if (game->path) {
+		snprintf(loadedRomPath, sizeof(loadedRomPath), "%s", game->path);
+	} else {
+		loadedRomPath[0] = '\0';
+	}
+
 	if (game->data) {
 		data = anonymousMemoryMap(game->size);
 		dataSize = game->size;
@@ -2087,6 +2062,8 @@ bool retro_load_game(const struct retro_game_info* game) {
 	_reloadSettings();
 	core->loadROM(core, rom);
 	deferredSetup = true;
+	mLibretroMultiplayerUpdateMode(&multiplayer, environCallback);
+	mLibretroMultiplayerApplyMode(&multiplayer, core, data, dataSize, loadedRomPath, logCallback);
 
 	const char* sysDir = 0;
 	const char* biosName = 0;
@@ -2154,12 +2131,15 @@ void retro_unload_game(void) {
 	if (!core) {
 		return;
 	}
+	mLibretroMultiplayerDeinit(&multiplayer, core);
 	mCoreConfigDeinit(&core->config);
 	core->deinit(core);
+	core = NULL;
 	mappedMemoryFree(data, dataSize);
 	data = 0;
 	mappedMemoryFree(savedata, GBA_SIZE_FLASH1M);
 	savedata = 0;
+	loadedRomPath[0] = '\0';
 }
 
 size_t retro_serialize_size(void) {

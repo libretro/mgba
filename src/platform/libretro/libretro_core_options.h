@@ -102,6 +102,21 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "Autodetect"
    },
    {
+      "mgba_multiplayer_splitscreen",
+      "Multiplayer Splitscreen (Restart)",
+      NULL,
+      "Runs a linked second GBA instance and combines both player views into a single output frame.",
+      NULL,
+      "system",
+      {
+         { "OFF",                 "disabled" },
+         { "Side by Side",        "2-Player Side by Side" },
+         { "Top/Bottom",          "2-Player Top/Bottom" },
+         { NULL, NULL },
+      },
+      "OFF"
+   },
+   {
       "mgba_use_bios",
       "Use BIOS File if Found (Restart)",
       NULL,

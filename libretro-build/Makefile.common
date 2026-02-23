@@ -112,6 +112,9 @@ SOURCES_C :=   $(CORE_DIR)/src/arm/arm.c \
 					$(CORE_DIR)/src/gba/cart/vfame.c \
 					$(CORE_DIR)/src/gba/video.c \
 					$(CORE_DIR)/src/platform/libretro/memory.c \
+					$(CORE_DIR)/src/platform/libretro/libretro_input.c \
+					$(CORE_DIR)/src/platform/libretro/libretro_lockstep.c \
+					$(CORE_DIR)/src/platform/libretro/libretro_multiplayer.c \
 					$(CORE_DIR)/src/platform/libretro/libretro.c \
 					$(CORE_DIR)/src/sm83/isa-sm83.c \
 					$(CORE_DIR)/src/sm83/sm83.c \
