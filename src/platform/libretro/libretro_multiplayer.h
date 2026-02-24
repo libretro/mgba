@@ -55,6 +55,7 @@ void mLibretroMultiplayerInit(struct mLibretroMultiplayer* multiplayer, unsigned
 void mLibretroMultiplayerDeinit(struct mLibretroMultiplayer* multiplayer, struct mCore* primaryCore);
 void mLibretroMultiplayerUpdateMode(struct mLibretroMultiplayer* multiplayer, retro_environment_t environCallback);
 bool mLibretroMultiplayerApplyMode(struct mLibretroMultiplayer* multiplayer, struct mCore* primaryCore, const void* romData, size_t romSize, const char* romPath, retro_log_printf_t logCallback);
+void mLibretroMultiplayerReset(struct mLibretroMultiplayer* multiplayer, struct mCore* primaryCore);
 void mLibretroMultiplayerSetKeys(struct mLibretroMultiplayer* multiplayer, struct mCore* primaryCore, uint16_t player1Keys, uint16_t player2Keys);
 void mLibretroMultiplayerRunFrame(struct mLibretroMultiplayer* multiplayer, struct mCore* primaryCore);
 void mLibretroMultiplayerAdjustGeometry(const struct mLibretroMultiplayer* multiplayer, unsigned* baseWidth, unsigned* baseHeight, unsigned* maxWidth, unsigned* maxHeight, float* aspectRatio);

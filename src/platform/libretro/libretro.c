@@ -1917,7 +1917,7 @@ static void _setupMaps(struct mCore* core) {
 }
 
 void retro_reset(void) {
-	core->reset(core);
+	mLibretroMultiplayerReset(&multiplayer, core);
 	mRumbleIntegratorReset(&rumble);
 	_setupMaps(core);
 }

@@ -334,6 +334,19 @@ bool mLibretroMultiplayerApplyMode(struct mLibretroMultiplayer* multiplayer, str
 	return true;
 }
 
+void mLibretroMultiplayerReset(struct mLibretroMultiplayer* multiplayer, struct mCore* primaryCore) {
+	if (!primaryCore) {
+		return;
+	}
+	multiplayer->primaryCore = primaryCore;
+
+	if (multiplayer->active && multiplayer->secondaryCore) {
+		multiplayer->secondaryCore->reset(multiplayer->secondaryCore);
+	}
+
+	primaryCore->reset(primaryCore);
+}
+
 void mLibretroMultiplayerSetKeys(struct mLibretroMultiplayer* multiplayer, struct mCore* primaryCore, uint16_t player1Keys, uint16_t player2Keys) {
 	if (!primaryCore) {
 		return;
