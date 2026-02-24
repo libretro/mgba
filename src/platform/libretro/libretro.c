@@ -1545,8 +1545,6 @@ void retro_run(void) {
 #if defined(COLOR_16_BIT) && defined(COLOR_5_6_5)
 		_loadPostProcessingSettings();
 #endif
-		mLibretroMultiplayerUpdateMode(environCallback);
-		mLibretroMultiplayerApplyMode(data, dataSize, loadedRomPath, logCallback);
 #ifdef M_CORE_GB
 		_updateGbPal();
 #endif
@@ -1912,9 +1910,16 @@ static void _setupMaps(struct mCore* core) {
 }
 
 void retro_reset(void) {
+	mLibretroMultiplayerUpdateMode(environCallback);
+	mLibretroMultiplayerApplyMode(data, dataSize, loadedRomPath, logCallback);
+	mLibretroMultiplayerSetPrimaryCore(core);
 	mLibretroMultiplayerReset();
 	mRumbleIntegratorReset(&rumble);
 	_setupMaps(core);
+
+	struct retro_system_av_info info;
+	retro_get_system_av_info(&info);
+	environCallback(RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO, &info);
 }
 
 #ifdef GEKKO
