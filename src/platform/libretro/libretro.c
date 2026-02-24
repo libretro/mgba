@@ -1356,12 +1356,7 @@ void retro_get_system_av_info(struct retro_system_av_info* info) {
 	info->geometry.max_height = height;
 
 	info->geometry.aspect_ratio = width / (double) height;
-	mLibretroMultiplayerAdjustGeometry(&multiplayer,
-			&info->geometry.base_width,
-			&info->geometry.base_height,
-			&info->geometry.max_width,
-			&info->geometry.max_height,
-			&info->geometry.aspect_ratio);
+	mLibretroMultiplayerAdjustGeometry(&info->geometry);
 	info->timing.fps = core->frequency(core) / (float) core->frameCycles(core);
 
 #ifdef M_CORE_GBA
@@ -1477,7 +1472,7 @@ void retro_init(void) {
 }
 
 void retro_deinit(void) {
-	mLibretroMultiplayerDeinit(&multiplayer, core);
+	mLibretroMultiplayerDeinit();
 
 	if (outputBuffer) {
 #ifdef _3DS
@@ -1550,8 +1545,8 @@ void retro_run(void) {
 #if defined(COLOR_16_BIT) && defined(COLOR_5_6_5)
 		_loadPostProcessingSettings();
 #endif
-		mLibretroMultiplayerUpdateMode(&multiplayer, environCallback);
-		mLibretroMultiplayerApplyMode(&multiplayer, core, data, dataSize, loadedRomPath, logCallback);
+		mLibretroMultiplayerUpdateMode(environCallback);
+		mLibretroMultiplayerApplyMode(data, dataSize, loadedRomPath, logCallback);
 #ifdef M_CORE_GB
 		_updateGbPal();
 #endif
@@ -1559,7 +1554,7 @@ void retro_run(void) {
 
 	player1Keys = mLibretroInputReadKeys(0, inputCallback, useBitmasks, &turboState);
 	player2Keys = mLibretroInputReadKeys(1, inputCallback, useBitmasks, &turboState);
-	mLibretroMultiplayerSetKeys(&multiplayer, core, player1Keys, player2Keys);
+	mLibretroMultiplayerSetKeys(player1Keys, player2Keys);
 
 	if (!luxSensorUsed) {
 		static bool wasAdjustingLux = false;
@@ -1638,7 +1633,7 @@ void retro_run(void) {
       updateAudioLatency = false;
    }
 
-	mLibretroMultiplayerRunFrame(&multiplayer, core);
+	mLibretroMultiplayerRunFrame();
 	unsigned width, height;
 	core->currentVideoSize(core, &width, &height);
 
@@ -1666,7 +1661,7 @@ void retro_run(void) {
 			size_t outPitch;
 			unsigned outWidth;
 			unsigned outHeight;
-			const mColor* frame = mLibretroMultiplayerComposeFrame(&multiplayer, outputBuffer, width, height, &outPitch, &outWidth, &outHeight);
+			const mColor* frame = mLibretroMultiplayerComposeFrame(outputBuffer, width, height, &outPitch, &outWidth, &outHeight);
 			videoCallback(frame, outWidth, outHeight, outPitch);
 		} else {
 #if defined(COLOR_16_BIT) && defined(COLOR_5_6_5)
@@ -1682,7 +1677,7 @@ void retro_run(void) {
 		unsigned outWidth = width;
 		unsigned outHeight = height;
 		if (multiplayer.active) {
-			mLibretroMultiplayerComposeFrame(&multiplayer, outputBuffer, width, height, &outPitch, &outWidth, &outHeight);
+			mLibretroMultiplayerComposeFrame(outputBuffer, width, height, &outPitch, &outWidth, &outHeight);
 		}
 		videoCallback(NULL, outWidth, outHeight, outPitch);
 	}
@@ -1917,7 +1912,7 @@ static void _setupMaps(struct mCore* core) {
 }
 
 void retro_reset(void) {
-	mLibretroMultiplayerReset(&multiplayer, core);
+	mLibretroMultiplayerReset();
 	mRumbleIntegratorReset(&rumble);
 	_setupMaps(core);
 }
@@ -2000,6 +1995,7 @@ bool retro_load_game(const struct retro_game_info* game) {
 	}
 	mCoreInitConfig(core, NULL);
 	core->init(core);
+	mLibretroMultiplayerSetPrimaryCore(core);
 
 #ifdef _3DS
 	outputBuffer = linearMemAlign(VIDEO_BUFF_SIZE, 0x80);
@@ -2062,8 +2058,8 @@ bool retro_load_game(const struct retro_game_info* game) {
 	_reloadSettings();
 	core->loadROM(core, rom);
 	deferredSetup = true;
-	mLibretroMultiplayerUpdateMode(&multiplayer, environCallback);
-	mLibretroMultiplayerApplyMode(&multiplayer, core, data, dataSize, loadedRomPath, logCallback);
+	mLibretroMultiplayerUpdateMode(environCallback);
+	mLibretroMultiplayerApplyMode(data, dataSize, loadedRomPath, logCallback);
 
 	const char* sysDir = 0;
 	const char* biosName = 0;
@@ -2131,10 +2127,11 @@ void retro_unload_game(void) {
 	if (!core) {
 		return;
 	}
-	mLibretroMultiplayerDeinit(&multiplayer, core);
+	mLibretroMultiplayerDeinit();
 	mCoreConfigDeinit(&core->config);
 	core->deinit(core);
 	core = NULL;
+	mLibretroMultiplayerSetPrimaryCore(NULL);
 	mappedMemoryFree(data, dataSize);
 	data = 0;
 	mappedMemoryFree(savedata, GBA_SIZE_FLASH1M);

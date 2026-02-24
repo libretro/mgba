@@ -12,6 +12,8 @@
 #define VIDEO_BYTES_PER_PIXEL sizeof(mColor)
 #define LOCKSTEP_PUMP_WATCHDOG 2000000
 
+static struct mLibretroMultiplayer* sMultiplayer;
+
 static void _stepRunnerCore(struct mCore* core) {
 	if (!core) {
 		return;
@@ -106,77 +108,79 @@ static void _clearPrimaryLinkPeripheral(struct mCore* primaryCore) {
 	primaryCore->setPeripheral(primaryCore, mPERIPH_GBA_LINK_PORT, NULL);
 }
 
-static void _detachLockstep(struct mLibretroMultiplayer* multiplayer, struct mCore* primaryCore) {
-	if (!multiplayer->coordinatorInitialized) {
+static void _detachLockstep(void) {
+	struct mCore* primaryCore = sMultiplayer->primaryCore;
+	if (!sMultiplayer->coordinatorInitialized) {
 		return;
 	}
 
 	if (primaryCore && primaryCore->platform(primaryCore) == mPLATFORM_GBA) {
-		GBASIOLockstepCoordinatorDetach(&multiplayer->coordinator, &multiplayer->drivers[0]);
+		GBASIOLockstepCoordinatorDetach(&sMultiplayer->coordinator, &sMultiplayer->drivers[0]);
 	}
 
-	if (multiplayer->secondaryCore && multiplayer->secondaryCore->platform(multiplayer->secondaryCore) == mPLATFORM_GBA) {
-		multiplayer->secondaryCore->setPeripheral(multiplayer->secondaryCore, mPERIPH_GBA_LINK_PORT, NULL);
-		GBASIOLockstepCoordinatorDetach(&multiplayer->coordinator, &multiplayer->drivers[1]);
+	if (sMultiplayer->secondaryCore && sMultiplayer->secondaryCore->platform(sMultiplayer->secondaryCore) == mPLATFORM_GBA) {
+		sMultiplayer->secondaryCore->setPeripheral(sMultiplayer->secondaryCore, mPERIPH_GBA_LINK_PORT, NULL);
+		GBASIOLockstepCoordinatorDetach(&sMultiplayer->coordinator, &sMultiplayer->drivers[1]);
 	}
 
-	GBASIOLockstepCoordinatorDeinit(&multiplayer->coordinator);
-	multiplayer->coordinatorInitialized = false;
+	GBASIOLockstepCoordinatorDeinit(&sMultiplayer->coordinator);
+	sMultiplayer->coordinatorInitialized = false;
 }
 
-static void _destroySecondaryCore(struct mLibretroMultiplayer* multiplayer) {
-	if (!multiplayer->secondaryCore) {
+static void _destroySecondaryCore(void) {
+	if (!sMultiplayer->secondaryCore) {
 		return;
 	}
 
-	mCoreConfigDeinit(&multiplayer->secondaryCore->config);
-	multiplayer->secondaryCore->deinit(multiplayer->secondaryCore);
-	multiplayer->secondaryCore = NULL;
+	mCoreConfigDeinit(&sMultiplayer->secondaryCore->config);
+	sMultiplayer->secondaryCore->deinit(sMultiplayer->secondaryCore);
+	sMultiplayer->secondaryCore = NULL;
 }
 
-static void _destroyBuffers(struct mLibretroMultiplayer* multiplayer) {
-	if (multiplayer->secondaryOutputBuffer) {
-		free(multiplayer->secondaryOutputBuffer);
-		multiplayer->secondaryOutputBuffer = NULL;
+static void _destroyBuffers(void) {
+	if (sMultiplayer->secondaryOutputBuffer) {
+		free(sMultiplayer->secondaryOutputBuffer);
+		sMultiplayer->secondaryOutputBuffer = NULL;
 	}
 
-	if (multiplayer->compositeBuffer) {
-		free(multiplayer->compositeBuffer);
-		multiplayer->compositeBuffer = NULL;
-		multiplayer->compositeBufferPixels = 0;
-	}
-}
-
-static void _destroySecondaryRom(struct mLibretroMultiplayer* multiplayer) {
-	if (multiplayer->secondaryRomData) {
-		mappedMemoryFree(multiplayer->secondaryRomData, multiplayer->secondaryRomSize);
-		multiplayer->secondaryRomData = NULL;
-		multiplayer->secondaryRomSize = 0;
+	if (sMultiplayer->compositeBuffer) {
+		free(sMultiplayer->compositeBuffer);
+		sMultiplayer->compositeBuffer = NULL;
+		sMultiplayer->compositeBufferPixels = 0;
 	}
 }
 
-static void _stopSession(struct mLibretroMultiplayer* multiplayer, struct mCore* primaryCore) {
+static void _destroySecondaryRom(void) {
+	if (sMultiplayer->secondaryRomData) {
+		mappedMemoryFree(sMultiplayer->secondaryRomData, sMultiplayer->secondaryRomSize);
+		sMultiplayer->secondaryRomData = NULL;
+		sMultiplayer->secondaryRomSize = 0;
+	}
+}
+
+static void _stopSession(void) {
+	struct mCore* primaryCore = sMultiplayer->primaryCore;
 	_clearPrimaryLinkPeripheral(primaryCore);
-	_detachLockstep(multiplayer, primaryCore);
-	_destroySecondaryCore(multiplayer);
-	_destroyBuffers(multiplayer);
-	_destroySecondaryRom(multiplayer);
-	multiplayer->primaryCore = NULL;
-	multiplayer->active = false;
+	_detachLockstep();
+	_destroySecondaryCore();
+	_destroyBuffers();
+	_destroySecondaryRom();
+	sMultiplayer->primaryCore = NULL;
+	sMultiplayer->active = false;
 }
 
-static bool _initSecondaryCore(struct mLibretroMultiplayer* multiplayer, const void* romData, size_t romSize, const char* romPath) {
+static bool _initSecondaryCore(const void* romData, size_t romSize, const char* romPath) {
 	struct VFile* rom;
 
 	if (romData && romSize) {
-		multiplayer->secondaryRomData = anonymousMemoryMap(romSize);
-		if (!multiplayer->secondaryRomData) {
+		sMultiplayer->secondaryRomData = anonymousMemoryMap(romSize);
+		if (!sMultiplayer->secondaryRomData) {
 			return false;
 		}
-		multiplayer->secondaryRomSize = romSize;
-		memcpy(multiplayer->secondaryRomData, romData, romSize);
+		sMultiplayer->secondaryRomSize = romSize;
+		memcpy(sMultiplayer->secondaryRomData, romData, romSize);
 
-		rom = VFileFromMemory(multiplayer->secondaryRomData, romSize);
+		rom = VFileFromMemory(sMultiplayer->secondaryRomData, romSize);
 		if (!rom) {
 			return false;
 		}
@@ -189,104 +193,106 @@ static bool _initSecondaryCore(struct mLibretroMultiplayer* multiplayer, const v
 		return false;
 	}
 
-	multiplayer->secondaryCore = mCoreFindVF(rom);
-	if (!multiplayer->secondaryCore) {
+	sMultiplayer->secondaryCore = mCoreFindVF(rom);
+	if (!sMultiplayer->secondaryCore) {
 		rom->close(rom);
 		return false;
 	}
 
-	mCoreInitConfig(multiplayer->secondaryCore, NULL);
-	multiplayer->secondaryCore->init(multiplayer->secondaryCore);
+	mCoreInitConfig(sMultiplayer->secondaryCore, NULL);
+	sMultiplayer->secondaryCore->init(sMultiplayer->secondaryCore);
 
-	multiplayer->secondaryOutputBuffer = malloc((size_t) multiplayer->maxVideoWidth * multiplayer->maxVideoHeight * VIDEO_BYTES_PER_PIXEL);
-	if (!multiplayer->secondaryOutputBuffer) {
+	sMultiplayer->secondaryOutputBuffer = malloc((size_t) sMultiplayer->maxVideoWidth * sMultiplayer->maxVideoHeight * VIDEO_BYTES_PER_PIXEL);
+	if (!sMultiplayer->secondaryOutputBuffer) {
 		rom->close(rom);
 		return false;
 	}
-	memset(multiplayer->secondaryOutputBuffer, 0xFF, (size_t) multiplayer->maxVideoWidth * multiplayer->maxVideoHeight * VIDEO_BYTES_PER_PIXEL);
-	multiplayer->secondaryCore->setVideoBuffer(multiplayer->secondaryCore, multiplayer->secondaryOutputBuffer, multiplayer->maxVideoWidth);
+	memset(sMultiplayer->secondaryOutputBuffer, 0xFF, (size_t) sMultiplayer->maxVideoWidth * sMultiplayer->maxVideoHeight * VIDEO_BYTES_PER_PIXEL);
+	sMultiplayer->secondaryCore->setVideoBuffer(sMultiplayer->secondaryCore, sMultiplayer->secondaryOutputBuffer, sMultiplayer->maxVideoWidth);
 
-	memset(&multiplayer->secondaryStream, 0, sizeof(multiplayer->secondaryStream));
-	multiplayer->secondaryCore->setAVStream(multiplayer->secondaryCore, &multiplayer->secondaryStream);
+	memset(&sMultiplayer->secondaryStream, 0, sizeof(sMultiplayer->secondaryStream));
+	sMultiplayer->secondaryCore->setAVStream(sMultiplayer->secondaryCore, &sMultiplayer->secondaryStream);
 
-	if (!multiplayer->secondaryCore->loadROM(multiplayer->secondaryCore, rom)) {
+	if (!sMultiplayer->secondaryCore->loadROM(sMultiplayer->secondaryCore, rom)) {
 		rom->close(rom);
 		return false;
 	}
 
-	multiplayer->secondaryCore->reset(multiplayer->secondaryCore);
+	sMultiplayer->secondaryCore->reset(sMultiplayer->secondaryCore);
 	return true;
 }
 
-static bool _attachLockstep(struct mLibretroMultiplayer* multiplayer, struct mCore* primaryCore) {
+static bool _attachLockstep(void) {
+	struct mCore* primaryCore = sMultiplayer->primaryCore;
 	if (!primaryCore || primaryCore->platform(primaryCore) != mPLATFORM_GBA) {
 		return false;
 	}
-	if (!multiplayer->secondaryCore || multiplayer->secondaryCore->platform(multiplayer->secondaryCore) != mPLATFORM_GBA) {
+	if (!sMultiplayer->secondaryCore || sMultiplayer->secondaryCore->platform(sMultiplayer->secondaryCore) != mPLATFORM_GBA) {
 		return false;
 	}
 
-	GBASIOLockstepCoordinatorInit(&multiplayer->coordinator);
-	multiplayer->coordinatorInitialized = true;
+	GBASIOLockstepCoordinatorInit(&sMultiplayer->coordinator);
+	sMultiplayer->coordinatorInitialized = true;
 
-	multiplayer->users[0].d.sleep = _lockstepSleep;
-	multiplayer->users[0].d.wake = _lockstepWake;
-	multiplayer->users[0].d.requestedId = _requestedId;
-	multiplayer->users[0].d.playerIdChanged = NULL;
-	multiplayer->users[0].requestedId = 0;
-	multiplayer->users[0].multiplayer = multiplayer;
-	multiplayer->users[0].playerIndex = 0;
-	multiplayer->users[0].blocked = false;
-	multiplayer->users[0].stepping = false;
+	sMultiplayer->users[0].d.sleep = _lockstepSleep;
+	sMultiplayer->users[0].d.wake = _lockstepWake;
+	sMultiplayer->users[0].d.requestedId = _requestedId;
+	sMultiplayer->users[0].d.playerIdChanged = NULL;
+	sMultiplayer->users[0].requestedId = 0;
+	sMultiplayer->users[0].multiplayer = sMultiplayer;
+	sMultiplayer->users[0].playerIndex = 0;
+	sMultiplayer->users[0].blocked = false;
+	sMultiplayer->users[0].stepping = false;
 
-	multiplayer->users[1].d.sleep = _lockstepSleep;
-	multiplayer->users[1].d.wake = _lockstepWake;
-	multiplayer->users[1].d.requestedId = _requestedId;
-	multiplayer->users[1].d.playerIdChanged = NULL;
-	multiplayer->users[1].requestedId = 1;
-	multiplayer->users[1].multiplayer = multiplayer;
-	multiplayer->users[1].playerIndex = 1;
-	multiplayer->users[1].blocked = false;
-	multiplayer->users[1].stepping = false;
+	sMultiplayer->users[1].d.sleep = _lockstepSleep;
+	sMultiplayer->users[1].d.wake = _lockstepWake;
+	sMultiplayer->users[1].d.requestedId = _requestedId;
+	sMultiplayer->users[1].d.playerIdChanged = NULL;
+	sMultiplayer->users[1].requestedId = 1;
+	sMultiplayer->users[1].multiplayer = sMultiplayer;
+	sMultiplayer->users[1].playerIndex = 1;
+	sMultiplayer->users[1].blocked = false;
+	sMultiplayer->users[1].stepping = false;
 
-	GBASIOLockstepDriverCreate(&multiplayer->drivers[0], &multiplayer->users[0].d);
-	GBASIOLockstepDriverCreate(&multiplayer->drivers[1], &multiplayer->users[1].d);
+	GBASIOLockstepDriverCreate(&sMultiplayer->drivers[0], &sMultiplayer->users[0].d);
+	GBASIOLockstepDriverCreate(&sMultiplayer->drivers[1], &sMultiplayer->users[1].d);
 
-	GBASIOLockstepCoordinatorAttach(&multiplayer->coordinator, &multiplayer->drivers[0]);
-	GBASIOLockstepCoordinatorAttach(&multiplayer->coordinator, &multiplayer->drivers[1]);
+	GBASIOLockstepCoordinatorAttach(&sMultiplayer->coordinator, &sMultiplayer->drivers[0]);
+	GBASIOLockstepCoordinatorAttach(&sMultiplayer->coordinator, &sMultiplayer->drivers[1]);
 
-	primaryCore->setPeripheral(primaryCore, mPERIPH_GBA_LINK_PORT, &multiplayer->drivers[0].d);
-	multiplayer->secondaryCore->setPeripheral(multiplayer->secondaryCore, mPERIPH_GBA_LINK_PORT, &multiplayer->drivers[1].d);
+	primaryCore->setPeripheral(primaryCore, mPERIPH_GBA_LINK_PORT, &sMultiplayer->drivers[0].d);
+	sMultiplayer->secondaryCore->setPeripheral(sMultiplayer->secondaryCore, mPERIPH_GBA_LINK_PORT, &sMultiplayer->drivers[1].d);
 	return true;
 }
 
-static bool _startSession(struct mLibretroMultiplayer* multiplayer, struct mCore* primaryCore, const void* romData, size_t romSize, const char* romPath) {
+static bool _startSession(const void* romData, size_t romSize, const char* romPath) {
+	struct mCore* primaryCore = sMultiplayer->primaryCore;
 	if (!primaryCore || primaryCore->platform(primaryCore) != mPLATFORM_GBA || !romData || !romSize) {
 		if (!(romPath && *romPath)) {
 			return false;
 		}
 	}
 
-	if (!_initSecondaryCore(multiplayer, romData, romSize, romPath)) {
-		_stopSession(multiplayer, primaryCore);
+	if (!_initSecondaryCore(romData, romSize, romPath)) {
+		_stopSession();
 		return false;
 	}
 
-	multiplayer->compositeBufferPixels = _compositePixels(multiplayer->maxVideoWidth, multiplayer->maxVideoHeight);
-	multiplayer->compositeBuffer = malloc(multiplayer->compositeBufferPixels * VIDEO_BYTES_PER_PIXEL);
-	if (!multiplayer->compositeBuffer) {
-		_stopSession(multiplayer, primaryCore);
+	sMultiplayer->compositeBufferPixels = _compositePixels(sMultiplayer->maxVideoWidth, sMultiplayer->maxVideoHeight);
+	sMultiplayer->compositeBuffer = malloc(sMultiplayer->compositeBufferPixels * VIDEO_BYTES_PER_PIXEL);
+	if (!sMultiplayer->compositeBuffer) {
+		_stopSession();
 		return false;
 	}
-	memset(multiplayer->compositeBuffer, 0xFF, multiplayer->compositeBufferPixels * VIDEO_BYTES_PER_PIXEL);
+	memset(sMultiplayer->compositeBuffer, 0xFF, sMultiplayer->compositeBufferPixels * VIDEO_BYTES_PER_PIXEL);
 
-	if (!_attachLockstep(multiplayer, primaryCore)) {
-		_stopSession(multiplayer, primaryCore);
+	if (!_attachLockstep()) {
+		_stopSession();
 		return false;
 	}
-	multiplayer->primaryCore = primaryCore;
+	sMultiplayer->primaryCore = primaryCore;
 
-	multiplayer->active = true;
+	sMultiplayer->active = true;
 	return true;
 }
 
@@ -296,34 +302,43 @@ void mLibretroMultiplayerInit(struct mLibretroMultiplayer* multiplayer, unsigned
 	multiplayer->maxVideoHeight = maxVideoHeight;
 	multiplayer->mode = mLIBRETRO_SPLITSCREEN_OFF;
 	multiplayer->primaryCore = NULL;
+	sMultiplayer = multiplayer;
 }
 
-void mLibretroMultiplayerDeinit(struct mLibretroMultiplayer* multiplayer, struct mCore* primaryCore) {
-	_stopSession(multiplayer, primaryCore);
-	multiplayer->mode = mLIBRETRO_SPLITSCREEN_OFF;
+void mLibretroMultiplayerSetPrimaryCore(struct mCore* primaryCore) {
+	mASSERT(sMultiplayer);
+	sMultiplayer->primaryCore = primaryCore;
 }
 
-void mLibretroMultiplayerUpdateMode(struct mLibretroMultiplayer* multiplayer, retro_environment_t environCallback) {
-	multiplayer->mode = _parseMode(environCallback);
+void mLibretroMultiplayerDeinit(void) {
+	mASSERT(sMultiplayer);
+	_stopSession();
+	sMultiplayer->mode = mLIBRETRO_SPLITSCREEN_OFF;
 }
 
-bool mLibretroMultiplayerApplyMode(struct mLibretroMultiplayer* multiplayer, struct mCore* primaryCore, const void* romData, size_t romSize, const char* romPath, retro_log_printf_t logCallback) {
-	if (multiplayer->mode == mLIBRETRO_SPLITSCREEN_OFF) {
-		if (multiplayer->active) {
-			_stopSession(multiplayer, primaryCore);
+void mLibretroMultiplayerUpdateMode(retro_environment_t environCallback) {
+	mASSERT(sMultiplayer);
+	sMultiplayer->mode = _parseMode(environCallback);
+}
+
+bool mLibretroMultiplayerApplyMode(const void* romData, size_t romSize, const char* romPath, retro_log_printf_t logCallback) {
+	mASSERT(sMultiplayer);
+	if (sMultiplayer->mode == mLIBRETRO_SPLITSCREEN_OFF) {
+		if (sMultiplayer->active) {
+			_stopSession();
 		}
 		return true;
 	}
 
-	if (multiplayer->active) {
+	if (sMultiplayer->active) {
 		return true;
 	}
 
-	if (!_startSession(multiplayer, primaryCore, romData, romSize, romPath)) {
+	if (!_startSession(romData, romSize, romPath)) {
 		if (logCallback) {
 			logCallback(RETRO_LOG_WARN, "libretro: failed to start multiplayer splitscreen session; continuing in single-player mode\n");
 		}
-		multiplayer->mode = mLIBRETRO_SPLITSCREEN_OFF;
+		sMultiplayer->mode = mLIBRETRO_SPLITSCREEN_OFF;
 		return false;
 	}
 
@@ -334,69 +349,75 @@ bool mLibretroMultiplayerApplyMode(struct mLibretroMultiplayer* multiplayer, str
 	return true;
 }
 
-void mLibretroMultiplayerReset(struct mLibretroMultiplayer* multiplayer, struct mCore* primaryCore) {
+void mLibretroMultiplayerReset(void) {
+	mASSERT(sMultiplayer);
+	struct mCore* primaryCore = sMultiplayer->primaryCore;
 	if (!primaryCore) {
 		return;
 	}
-	multiplayer->primaryCore = primaryCore;
 
-	if (multiplayer->active && multiplayer->secondaryCore) {
-		multiplayer->secondaryCore->reset(multiplayer->secondaryCore);
+	if (sMultiplayer->active && sMultiplayer->secondaryCore) {
+		sMultiplayer->secondaryCore->reset(sMultiplayer->secondaryCore);
 	}
 
 	primaryCore->reset(primaryCore);
 }
 
-void mLibretroMultiplayerSetKeys(struct mLibretroMultiplayer* multiplayer, struct mCore* primaryCore, uint16_t player1Keys, uint16_t player2Keys) {
+void mLibretroMultiplayerSetKeys(uint16_t player1Keys, uint16_t player2Keys) {
+	mASSERT(sMultiplayer);
+	struct mCore* primaryCore = sMultiplayer->primaryCore;
 	if (!primaryCore) {
 		return;
 	}
 
 	primaryCore->setKeys(primaryCore, player1Keys);
 
-	if (!multiplayer->active || !multiplayer->secondaryCore) {
+	if (!sMultiplayer->active || !sMultiplayer->secondaryCore) {
 		return;
 	}
 
-	multiplayer->secondaryCore->setKeys(multiplayer->secondaryCore, player2Keys);
+	sMultiplayer->secondaryCore->setKeys(sMultiplayer->secondaryCore, player2Keys);
 }
 
-void mLibretroMultiplayerRunFrame(struct mLibretroMultiplayer* multiplayer, struct mCore* primaryCore) {
+void mLibretroMultiplayerRunFrame(void) {
+	mASSERT(sMultiplayer);
+	struct mCore* primaryCore = sMultiplayer->primaryCore;
 	if (!primaryCore) {
 		return;
 	}
-	multiplayer->primaryCore = primaryCore;
-	multiplayer->pumpedThisFrame[0] = false;
-	multiplayer->pumpedThisFrame[1] = false;
+	sMultiplayer->pumpedThisFrame[0] = false;
+	sMultiplayer->pumpedThisFrame[1] = false;
 
 	primaryCore->runFrame(primaryCore);
 
-	if (multiplayer->active && multiplayer->secondaryCore && !multiplayer->pumpedThisFrame[1]) {
-		multiplayer->secondaryCore->runFrame(multiplayer->secondaryCore);
+	if (sMultiplayer->active && sMultiplayer->secondaryCore && !sMultiplayer->pumpedThisFrame[1]) {
+		sMultiplayer->secondaryCore->runFrame(sMultiplayer->secondaryCore);
 	}
 }
 
-void mLibretroMultiplayerAdjustGeometry(const struct mLibretroMultiplayer* multiplayer, unsigned* baseWidth, unsigned* baseHeight, unsigned* maxWidth, unsigned* maxHeight, float* aspectRatio) {
-	if (!multiplayer->active) {
+void mLibretroMultiplayerAdjustGeometry(struct retro_game_geometry* geometry) {
+	mASSERT(sMultiplayer);
+	if (!sMultiplayer->active || !geometry) {
 		return;
 	}
 
-	if (multiplayer->mode == mLIBRETRO_SPLITSCREEN_2P_VERTICAL) {
-		*baseWidth *= 2;
-		*maxWidth *= 2;
-		*aspectRatio *= 2.0;
+	if (sMultiplayer->mode == mLIBRETRO_SPLITSCREEN_2P_VERTICAL) {
+		geometry->base_width *= 2;
+		geometry->max_width *= 2;
+		geometry->aspect_ratio *= 2.0;
 		return;
 	}
 
-	if (multiplayer->mode == mLIBRETRO_SPLITSCREEN_2P_HORIZONTAL) {
-		*baseHeight *= 2;
-		*maxHeight *= 2;
-		*aspectRatio *= 0.5;
+	if (sMultiplayer->mode == mLIBRETRO_SPLITSCREEN_2P_HORIZONTAL) {
+		geometry->base_height *= 2;
+		geometry->max_height *= 2;
+		geometry->aspect_ratio *= 0.5;
 	}
 }
 
-const mColor* mLibretroMultiplayerComposeFrame(struct mLibretroMultiplayer* multiplayer, const mColor* primaryFrame, unsigned primaryWidth, unsigned primaryHeight, size_t* outPitch, unsigned* outWidth, unsigned* outHeight) {
-	if (!multiplayer->active || !multiplayer->secondaryCore || !multiplayer->compositeBuffer || !multiplayer->secondaryOutputBuffer) {
+const mColor* mLibretroMultiplayerComposeFrame(const mColor* primaryFrame, unsigned primaryWidth, unsigned primaryHeight, size_t* outPitch, unsigned* outWidth, unsigned* outHeight) {
+	mASSERT(sMultiplayer);
+	if (!sMultiplayer->active || !sMultiplayer->secondaryCore || !sMultiplayer->compositeBuffer || !sMultiplayer->secondaryOutputBuffer) {
 		*outPitch = (size_t) primaryWidth * VIDEO_BYTES_PER_PIXEL;
 		*outWidth = primaryWidth;
 		*outHeight = primaryHeight;
@@ -404,40 +425,40 @@ const mColor* mLibretroMultiplayerComposeFrame(struct mLibretroMultiplayer* mult
 	}
 
 	unsigned secondaryWidth, secondaryHeight;
-	multiplayer->secondaryCore->currentVideoSize(multiplayer->secondaryCore, &secondaryWidth, &secondaryHeight);
+	sMultiplayer->secondaryCore->currentVideoSize(sMultiplayer->secondaryCore, &secondaryWidth, &secondaryHeight);
 
-	if (multiplayer->mode == mLIBRETRO_SPLITSCREEN_2P_VERTICAL) {
+	if (sMultiplayer->mode == mLIBRETRO_SPLITSCREEN_2P_VERTICAL) {
 		size_t y;
 		*outWidth = primaryWidth + secondaryWidth;
 		*outHeight = primaryHeight > secondaryHeight ? primaryHeight : secondaryHeight;
 		*outPitch = (size_t) *outWidth * VIDEO_BYTES_PER_PIXEL;
-		memset(multiplayer->compositeBuffer, 0xFF, (size_t) *outWidth * *outHeight * VIDEO_BYTES_PER_PIXEL);
+		memset(sMultiplayer->compositeBuffer, 0xFF, (size_t) *outWidth * *outHeight * VIDEO_BYTES_PER_PIXEL);
 		for (y = 0; y < primaryHeight; ++y) {
-			mColor* row = &multiplayer->compositeBuffer[y * (*outWidth)];
-			memcpy(row, &primaryFrame[y * multiplayer->maxVideoWidth], (size_t) primaryWidth * VIDEO_BYTES_PER_PIXEL);
+			mColor* row = &sMultiplayer->compositeBuffer[y * (*outWidth)];
+			memcpy(row, &primaryFrame[y * sMultiplayer->maxVideoWidth], (size_t) primaryWidth * VIDEO_BYTES_PER_PIXEL);
 		}
 		for (y = 0; y < secondaryHeight; ++y) {
-			mColor* row = &multiplayer->compositeBuffer[y * (*outWidth) + primaryWidth];
-			memcpy(row, &multiplayer->secondaryOutputBuffer[y * multiplayer->maxVideoWidth], (size_t) secondaryWidth * VIDEO_BYTES_PER_PIXEL);
+			mColor* row = &sMultiplayer->compositeBuffer[y * (*outWidth) + primaryWidth];
+			memcpy(row, &sMultiplayer->secondaryOutputBuffer[y * sMultiplayer->maxVideoWidth], (size_t) secondaryWidth * VIDEO_BYTES_PER_PIXEL);
 		}
-		return multiplayer->compositeBuffer;
+		return sMultiplayer->compositeBuffer;
 	}
 
-	if (multiplayer->mode == mLIBRETRO_SPLITSCREEN_2P_HORIZONTAL) {
+	if (sMultiplayer->mode == mLIBRETRO_SPLITSCREEN_2P_HORIZONTAL) {
 		size_t y;
 		*outWidth = primaryWidth > secondaryWidth ? primaryWidth : secondaryWidth;
 		*outHeight = primaryHeight + secondaryHeight;
 		*outPitch = (size_t) *outWidth * VIDEO_BYTES_PER_PIXEL;
-		memset(multiplayer->compositeBuffer, 0xFF, (size_t) *outWidth * *outHeight * VIDEO_BYTES_PER_PIXEL);
+		memset(sMultiplayer->compositeBuffer, 0xFF, (size_t) *outWidth * *outHeight * VIDEO_BYTES_PER_PIXEL);
 		for (y = 0; y < primaryHeight; ++y) {
-			mColor* row = &multiplayer->compositeBuffer[y * (*outWidth)];
-			memcpy(row, &primaryFrame[y * multiplayer->maxVideoWidth], (size_t) primaryWidth * VIDEO_BYTES_PER_PIXEL);
+			mColor* row = &sMultiplayer->compositeBuffer[y * (*outWidth)];
+			memcpy(row, &primaryFrame[y * sMultiplayer->maxVideoWidth], (size_t) primaryWidth * VIDEO_BYTES_PER_PIXEL);
 		}
 		for (y = 0; y < secondaryHeight; ++y) {
-			mColor* row = &multiplayer->compositeBuffer[(y + primaryHeight) * (*outWidth)];
-			memcpy(row, &multiplayer->secondaryOutputBuffer[y * multiplayer->maxVideoWidth], (size_t) secondaryWidth * VIDEO_BYTES_PER_PIXEL);
+			mColor* row = &sMultiplayer->compositeBuffer[(y + primaryHeight) * (*outWidth)];
+			memcpy(row, &sMultiplayer->secondaryOutputBuffer[y * sMultiplayer->maxVideoWidth], (size_t) secondaryWidth * VIDEO_BYTES_PER_PIXEL);
 		}
-		return multiplayer->compositeBuffer;
+		return sMultiplayer->compositeBuffer;
 	}
 
 	*outPitch = (size_t) primaryWidth * VIDEO_BYTES_PER_PIXEL;

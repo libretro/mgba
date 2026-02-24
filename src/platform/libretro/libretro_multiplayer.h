@@ -52,14 +52,15 @@ struct mLibretroMultiplayer {
 };
 
 void mLibretroMultiplayerInit(struct mLibretroMultiplayer* multiplayer, unsigned maxVideoWidth, unsigned maxVideoHeight);
-void mLibretroMultiplayerDeinit(struct mLibretroMultiplayer* multiplayer, struct mCore* primaryCore);
-void mLibretroMultiplayerUpdateMode(struct mLibretroMultiplayer* multiplayer, retro_environment_t environCallback);
-bool mLibretroMultiplayerApplyMode(struct mLibretroMultiplayer* multiplayer, struct mCore* primaryCore, const void* romData, size_t romSize, const char* romPath, retro_log_printf_t logCallback);
-void mLibretroMultiplayerReset(struct mLibretroMultiplayer* multiplayer, struct mCore* primaryCore);
-void mLibretroMultiplayerSetKeys(struct mLibretroMultiplayer* multiplayer, struct mCore* primaryCore, uint16_t player1Keys, uint16_t player2Keys);
-void mLibretroMultiplayerRunFrame(struct mLibretroMultiplayer* multiplayer, struct mCore* primaryCore);
-void mLibretroMultiplayerAdjustGeometry(const struct mLibretroMultiplayer* multiplayer, unsigned* baseWidth, unsigned* baseHeight, unsigned* maxWidth, unsigned* maxHeight, float* aspectRatio);
-const mColor* mLibretroMultiplayerComposeFrame(struct mLibretroMultiplayer* multiplayer, const mColor* primaryFrame, unsigned primaryWidth, unsigned primaryHeight, size_t* outPitch, unsigned* outWidth, unsigned* outHeight);
+void mLibretroMultiplayerSetPrimaryCore(struct mCore* primaryCore);
+void mLibretroMultiplayerDeinit(void);
+void mLibretroMultiplayerUpdateMode(retro_environment_t environCallback);
+bool mLibretroMultiplayerApplyMode(const void* romData, size_t romSize, const char* romPath, retro_log_printf_t logCallback);
+void mLibretroMultiplayerReset(void);
+void mLibretroMultiplayerSetKeys(uint16_t player1Keys, uint16_t player2Keys);
+void mLibretroMultiplayerRunFrame(void);
+void mLibretroMultiplayerAdjustGeometry(struct retro_game_geometry* geometry);
+const mColor* mLibretroMultiplayerComposeFrame(const mColor* primaryFrame, unsigned primaryWidth, unsigned primaryHeight, size_t* outPitch, unsigned* outWidth, unsigned* outHeight);
 
 CXX_GUARD_END
 
