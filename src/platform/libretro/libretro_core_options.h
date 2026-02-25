@@ -387,6 +387,22 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       },
       "0"
    },
+#ifdef ENABLE_JOYBUS_DOLPHIN
+   {
+      "mgba_joybus_dolphin",
+      "Connect to Dolphin",
+      "Connect to Dolphin",
+      "Enabling this will allow you to connect to Dolphin via an emulated GameCube/GBA Link Cable. Dolphin must be running locally on this device, and it must have a \"GBA (TCP)\" controller configured. If you can't connect, try completely restarting Dolphin.",
+      NULL,
+      "input",
+      {
+         { "disabled", NULL },
+         { "enabled",  NULL },
+         { NULL, NULL },
+      },
+      "disabled"
+   },
+#endif
    { NULL, NULL, NULL, NULL, NULL, NULL, {{0}}, NULL },
 };
 

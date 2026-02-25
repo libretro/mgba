@@ -203,7 +203,14 @@ int32_t _processCommand(struct GBASIODolphin* dol, uint32_t cyclesLate) {
 	}
 
 	if (!dol->active) {
-		return 0;
+		/* GBA BIOS: respond so Dolphin doesn't kill the connection */
+		if (buffer[0] == JOY_RESET || buffer[0] == JOY_POLL) {
+			buffer[1] = 0x00;
+			buffer[2] = 0x04;
+			buffer[3] = 0x00;
+			SocketSend(dol->data, &buffer[1], 3);
+		}
+		return bitsOnLine * CYCLES_PER_BIT - cyclesLate;
 	}
 
 	int sent = GBASIOJOYSendCommand(&dol->d, buffer[0], &buffer[1]);

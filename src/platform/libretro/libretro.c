@@ -24,6 +24,13 @@
 #include <mgba/gba/core.h>
 #include <mgba/gba/interface.h>
 #include <mgba/internal/gba/gba.h>
+#ifdef ENABLE_JOYBUS_DOLPHIN
+#include <mgba/internal/gba/sio/dolphin.h>
+#include <mgba-util/socket.h>
+#endif
+#endif
+#if defined(ENABLE_JOYBUS_DOLPHIN) && !defined(M_CORE_GBA)
+#error "ENABLE_JOYBUS_DOLPHIN requires M_CORE_GBA"
 #endif
 #include <mgba-util/memory.h>
 #include <mgba-util/vfs.h>
@@ -135,6 +142,13 @@ static bool audioLowPassEnabled = false;
 static int32_t audioLowPassRange = 0;
 static int32_t audioLowPassLeftPrev = 0;
 static int32_t audioLowPassRightPrev = 0;
+
+#ifdef ENABLE_JOYBUS_DOLPHIN
+static struct GBASIODolphin dolphin;
+static bool dolphinEnabled;
+static int dolphinRetryCounter;
+#define DOLPHIN_RETRY_INTERVAL 60
+#endif
 
 static const int keymap[] = {
 	RETRO_DEVICE_ID_JOYPAD_A,
@@ -1170,6 +1184,76 @@ static void _updateGbPal(void) {
 }
 #endif
 
+#ifdef ENABLE_JOYBUS_DOLPHIN
+static void _connectDolphin(void) {
+	struct Address addr;
+	addr.version = IPV4;
+	addr.ipv4 = 0x7F000001; /* 127.0.0.1 */
+
+	if (!GBASIODolphinConnect(&dolphin, &addr, 0, 0)) {
+		return;
+	}
+
+	core->setPeripheral(core, mPERIPH_GBA_LINK_PORT, &dolphin.d);
+
+	if (logCallback) {
+		logCallback(RETRO_LOG_INFO, "[JoyBus] Connected to Dolphin\n");
+	}
+}
+
+static void _disconnectDolphin(void) {
+	if (core) {
+		core->setPeripheral(core, mPERIPH_GBA_LINK_PORT, 0);
+	}
+	GBASIODolphinDestroy(&dolphin);
+	GBASIODolphinCreate(&dolphin);
+
+	if (logCallback) {
+		logCallback(RETRO_LOG_INFO, "[JoyBus] Disconnected from Dolphin\n");
+	}
+}
+
+static bool _isDolphinAlive(void) {
+	char buf;
+
+	if (!GBASIODolphinIsConnected(&dolphin)) {
+		return false;
+	}
+
+	switch (recv(dolphin.data, &buf, 1, MSG_PEEK)) {
+	case 0:
+		return false;
+	case -1:
+		return SocketWouldBlock();
+	default:
+		return true;
+	}
+}
+
+static void _updateDolphin(void) {
+	if (!dolphinEnabled) {
+		return;
+	}
+
+	++dolphinRetryCounter;
+	if (dolphinRetryCounter < DOLPHIN_RETRY_INTERVAL) {
+		return;
+	}
+	dolphinRetryCounter = 0;
+
+	if (GBASIODolphinIsConnected(&dolphin)) {
+		if (!_isDolphinAlive()) {
+			if (logCallback) {
+				logCallback(RETRO_LOG_WARN, "[JoyBus] Lost connection with Dolphin\n");
+			}
+			_disconnectDolphin();
+		}
+	} else {
+		_connectDolphin();
+	}
+}
+#endif
+
 static void _reloadSettings(void) {
 	struct mCoreOptions opts = {
 		.useBios = true,
@@ -1315,6 +1399,11 @@ void retro_set_environment(retro_environment_t env)
 
 	bool categoriesSupported;
 	libretro_set_core_options(environCallback, &categoriesSupported);
+
+#ifdef ENABLE_JOYBUS_DOLPHIN
+	bool supportsNoGame = true;
+	environCallback(RETRO_ENVIRONMENT_SET_SUPPORT_NO_GAME, &supportsNoGame);
+#endif
 }
 
 void retro_set_video_refresh(retro_video_refresh_t video) {
@@ -1473,6 +1562,13 @@ void retro_init(void) {
 	retroAudioLatency       = 0;
 	updateAudioLatency      = false;
 	updateAudioRate         = false;
+
+#ifdef ENABLE_JOYBUS_DOLPHIN
+	SocketSubsystemInit();
+	GBASIODolphinCreate(&dolphin);
+	dolphinEnabled = false;
+	dolphinRetryCounter = 0;
+#endif
 }
 
 void retro_deinit(void) {
@@ -1515,6 +1611,15 @@ void retro_deinit(void) {
 	audioLowPassRange = 0;
 	audioLowPassLeftPrev = 0;
 	audioLowPassRightPrev = 0;
+
+#ifdef ENABLE_JOYBUS_DOLPHIN
+	if (GBASIODolphinIsConnected(&dolphin)) {
+		_disconnectDolphin();
+	}
+	dolphinEnabled = false;
+	dolphinRetryCounter = 0;
+	SocketSubsystemDeinit();
+#endif
 }
 
 static int turboclock = 0;
@@ -1578,7 +1683,35 @@ void retro_run(void) {
 #ifdef M_CORE_GB
 		_updateGbPal();
 #endif
+
+#ifdef ENABLE_JOYBUS_DOLPHIN
+		if (core->platform(core) == mPLATFORM_GBA) {
+			struct retro_variable dol_var = {
+				.key = "mgba_joybus_dolphin",
+				.value = 0
+			};
+			if (environCallback(RETRO_ENVIRONMENT_GET_VARIABLE, &dol_var) && dol_var.value) {
+				bool enabled = strcmp(dol_var.value, "enabled") == 0;
+				if (enabled != dolphinEnabled) {
+					dolphinEnabled = enabled;
+					if (!enabled) {
+						if (GBASIODolphinIsConnected(&dolphin)) {
+							_disconnectDolphin();
+						}
+					} else {
+						dolphinRetryCounter = DOLPHIN_RETRY_INTERVAL;
+					}
+				}
+			}
+		}
+#endif
 	}
+
+#ifdef ENABLE_JOYBUS_DOLPHIN
+	if (core->platform(core) == mPLATFORM_GBA) {
+		_updateDolphin();
+	}
+#endif
 
 	keys = 0;
 	int i;
@@ -1992,7 +2125,19 @@ bool retro_load_game(const struct retro_game_info* game) {
 	struct VFile* rom;
 
 	if (!game) {
+#ifdef ENABLE_JOYBUS_DOLPHIN
+		/* No content, boot to GBA BIOS */
+		data = NULL;
+		dataSize = 0;
+		rom = NULL;
+		core = mCoreCreate(mPLATFORM_GBA);
+		if (!core) {
+			return false;
+		}
+		goto core_init;
+#else
 		return false;
+#endif
 	}
 
 	if (game->data) {
@@ -2023,6 +2168,7 @@ bool retro_load_game(const struct retro_game_info* game) {
 		mappedMemoryFree(data, game->size);
 		return false;
 	}
+core_init:
 	mCoreInitConfig(core, NULL);
 	core->init(core);
 
@@ -2147,6 +2293,18 @@ bool retro_load_game(const struct retro_game_info* game) {
 	}
 #endif
 
+#ifdef ENABLE_JOYBUS_DOLPHIN
+	if (core->platform(core) == mPLATFORM_GBA) {
+		struct retro_variable var;
+		var.key = "mgba_joybus_dolphin";
+		var.value = 0;
+		if (environCallback(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value) {
+			dolphinEnabled = strcmp(var.value, "enabled") == 0;
+		}
+		dolphinRetryCounter = DOLPHIN_RETRY_INTERVAL;
+	}
+#endif
+
 	return true;
 }
 
@@ -2154,6 +2312,14 @@ void retro_unload_game(void) {
 	if (!core) {
 		return;
 	}
+
+#ifdef ENABLE_JOYBUS_DOLPHIN
+	if (core->platform(core) == mPLATFORM_GBA) {
+		_disconnectDolphin();
+		dolphinEnabled = false;
+	}
+#endif
+
 	mCoreConfigDeinit(&core->config);
 	core->deinit(core);
 	mappedMemoryFree(data, dataSize);
