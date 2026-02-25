@@ -61,6 +61,10 @@ void mLibretroMultiplayerSetKeys(uint16_t player1Keys, uint16_t player2Keys);
 void mLibretroMultiplayerRunFrame(void);
 void mLibretroMultiplayerAdjustGeometry(struct retro_game_geometry* geometry);
 const mColor* mLibretroMultiplayerComposeFrame(const mColor* primaryFrame, unsigned primaryWidth, unsigned primaryHeight, size_t* outPitch, unsigned* outWidth, unsigned* outHeight);
+bool mLibretroMultiplayerStateActive(void);
+size_t mLibretroMultiplayerSerializeSize(void);
+bool mLibretroMultiplayerSerialize(void* data, size_t size);
+bool mLibretroMultiplayerUnserialize(const void* data, size_t size);
 
 CXX_GUARD_END
 

@@ -44,6 +44,7 @@ FS_Archive sdmcArchive;
 #include "libretro_core_options.h"
 #include "libretro_input.h"
 #include "libretro_multiplayer.h"
+#include "libretro_savestate.h"
 
 #define GBA_RESAMPLED_RATE 65536
 static unsigned targetSampleRate = GBA_RESAMPLED_RATE;
@@ -2148,39 +2149,21 @@ size_t retro_serialize_size(void) {
 	if (deferredSetup) {
 		_doDeferredSetup();
 	}
-	struct VFile* vfm = VFileMemChunk(NULL, 0);
-	mCoreSaveStateNamed(core, vfm, SAVESTATE_SAVEDATA | SAVESTATE_RTC);
-	size_t size = vfm->size(vfm);
-	vfm->close(vfm);
-	return size;
+	return mLibretroSerializeSize(core);
 }
 
 bool retro_serialize(void* data, size_t size) {
 	if (deferredSetup) {
 		_doDeferredSetup();
 	}
-	struct VFile* vfm = VFileMemChunk(NULL, 0);
-	mCoreSaveStateNamed(core, vfm, SAVESTATE_SAVEDATA | SAVESTATE_RTC);
-	if ((ssize_t) size > vfm->size(vfm)) {
-		size = vfm->size(vfm);
-	} else if ((ssize_t) size < vfm->size(vfm)) {
-		vfm->close(vfm);
-		return false;
-	}
-	vfm->seek(vfm, 0, SEEK_SET);
-	vfm->read(vfm, data, size);
-	vfm->close(vfm);
-	return true;
+	return mLibretroSerialize(core, data, size);
 }
 
 bool retro_unserialize(const void* data, size_t size) {
 	if (deferredSetup) {
 		_doDeferredSetup();
 	}
-	struct VFile* vfm = VFileFromConstMemory(data, size);
-	bool success = mCoreLoadStateNamed(core, vfm, SAVESTATE_RTC);
-	vfm->close(vfm);
-	return success;
+	return mLibretroUnserialize(core, data, size, logCallback);
 }
 
 void retro_cheat_reset(void) {

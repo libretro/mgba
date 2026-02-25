@@ -1,6 +1,7 @@
 #include "libretro_multiplayer.h"
 
 #include <mgba/core/config.h>
+#include <mgba/core/serialize.h>
 #include <mgba/gba/interface.h>
 #include <mgba/internal/gba/sio/lockstep.h>
 #include <mgba-util/memory.h>
@@ -465,4 +466,66 @@ const mColor* mLibretroMultiplayerComposeFrame(const mColor* primaryFrame, unsig
 	*outWidth = primaryWidth;
 	*outHeight = primaryHeight;
 	return primaryFrame;
+}
+
+bool mLibretroMultiplayerStateActive(void) {
+	mASSERT(sMultiplayer);
+	return sMultiplayer->active && sMultiplayer->secondaryCore;
+}
+
+size_t mLibretroMultiplayerSerializeSize(void) {
+	mASSERT(sMultiplayer);
+	if (!mLibretroMultiplayerStateActive()) {
+		return 0;
+	}
+
+	struct VFile* vfm = VFileMemChunk(NULL, 0);
+	if (!vfm) {
+		return 0;
+	}
+
+	mCoreSaveStateNamed(sMultiplayer->secondaryCore, vfm, SAVESTATE_SAVEDATA | SAVESTATE_RTC);
+	size_t size = vfm->size(vfm);
+	vfm->close(vfm);
+	return size;
+}
+
+bool mLibretroMultiplayerSerialize(void* data, size_t size) {
+	mASSERT(sMultiplayer);
+	if (!mLibretroMultiplayerStateActive() || !data) {
+		return false;
+	}
+
+	struct VFile* vfm = VFileMemChunk(NULL, 0);
+	if (!vfm) {
+		return false;
+	}
+
+	mCoreSaveStateNamed(sMultiplayer->secondaryCore, vfm, SAVESTATE_SAVEDATA | SAVESTATE_RTC);
+	ssize_t stateSize = vfm->size(vfm);
+	if ((ssize_t) size != stateSize) {
+		vfm->close(vfm);
+		return false;
+	}
+
+	vfm->seek(vfm, 0, SEEK_SET);
+	vfm->read(vfm, data, size);
+	vfm->close(vfm);
+	return true;
+}
+
+bool mLibretroMultiplayerUnserialize(const void* data, size_t size) {
+	mASSERT(sMultiplayer);
+	if (!mLibretroMultiplayerStateActive() || !data) {
+		return false;
+	}
+
+	struct VFile* vfm = VFileFromConstMemory(data, size);
+	if (!vfm) {
+		return false;
+	}
+
+	bool success = mCoreLoadStateNamed(sMultiplayer->secondaryCore, vfm, SAVESTATE_RTC);
+	vfm->close(vfm);
+	return success;
 }
