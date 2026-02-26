@@ -84,6 +84,9 @@ static int32_t _readTiltX(struct mRotationSource* source);
 static int32_t _readTiltY(struct mRotationSource* source);
 static int32_t _readGyroZ(struct mRotationSource* source);
 static void _setupMaps(struct mCore* core);
+static void _updateLuxFromExternalInput(void);
+static int _boktai1StepToBar(int step);
+static int _boktai1BarToStep(int bar);
 
 static struct mCore* core;
 static mColor* outputBuffer = NULL;
@@ -106,6 +109,7 @@ static int luxLevelIndex;
 static uint8_t luxLevel;
 static bool luxSensorEnabled;
 static bool luxSensorUsed;
+static bool luxExternalSensorUsed;
 static bool boktai1Game;
 static struct mLogger logger;
 static struct retro_camera_callback cam;
@@ -129,6 +133,7 @@ static bool updateAudioRate;
 static bool deferredSetup = false;
 static bool useBitmasks = true;
 static bool envVarsUpdated;
+static unsigned inputMaxUsers = 1;
 static int32_t tiltX = 0;
 static int32_t tiltY = 0;
 static int32_t gyroZ = 0;
@@ -153,8 +158,10 @@ static const int keymap[] = {
 #ifndef GIT_VERSION
 #define GIT_VERSION ""
 #endif
+#ifndef MGBA_LIBRETRO_USE_GENERATED_VERSION
 const char* const projectVersion = "0.11-dev" GIT_VERSION;
 const char* const projectName = "mGBA";
+#endif
 
 /* Maximum number of consecutive frames that
  * can be skipped */
@@ -1415,6 +1422,12 @@ void retro_init(void) {
 	environCallback(RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS, &inputDescriptors);
 
 	useBitmasks = environCallback(RETRO_ENVIRONMENT_GET_INPUT_BITMASKS, NULL);
+	unsigned maxUsers = 1;
+	if (environCallback(RETRO_ENVIRONMENT_GET_INPUT_MAX_USERS, &maxUsers) && maxUsers > 0) {
+		inputMaxUsers = maxUsers;
+	} else {
+		inputMaxUsers = 1;
+	}
 
 	// TODO: RETRO_ENVIRONMENT_SET_SUPPORT_NO_GAME when BIOS booting is supported
 
@@ -1436,6 +1449,7 @@ void retro_init(void) {
 
 	envVarsUpdated = true;
 	luxSensorUsed = false;
+	luxExternalSensorUsed = false;
 	luxSensorEnabled = false;
 	boktai1Game = false;
 	luxLevelIndex = 0;
@@ -1608,7 +1622,9 @@ void retro_run(void) {
 
 	core->setKeys(core, keys);
 
-	if (!luxSensorUsed) {
+	if (luxExternalSensorUsed) {
+		_updateLuxFromExternalInput();
+	} else if (!luxSensorUsed) {
 		static bool wasAdjustingLux = false;
 		if (wasAdjustingLux) {
 			wasAdjustingLux = inputCallback(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R3) ||
@@ -2495,6 +2511,53 @@ static int _boktai1BarToStep(int bar) {
 	return map[bar];
 }
 
+static void _updateLuxFromExternalInput(void) {
+	unsigned port;
+	bool unlocked = false;
+	float maxDeflection = 0.0f;
+	int maxBars = boktai1Game ? 8 : 10;
+	int numLevels = maxBars + 1;
+	int bars;
+
+	for (port = 0; port < inputMaxUsers; ++port) {
+		int16_t rawAxis;
+		float normalized = 0.0f;
+
+		if (!inputCallback(port, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R3)) {
+			continue;
+		}
+
+		unlocked = true;
+		rawAxis = inputCallback(port, RETRO_DEVICE_ANALOG, RETRO_DEVICE_INDEX_ANALOG_RIGHT, RETRO_DEVICE_ID_ANALOG_X);
+
+		if (rawAxis > 0) {
+			normalized = (float) rawAxis / 32767.0f;
+			if (normalized > 1.0f) {
+				normalized = 1.0f;
+			}
+		}
+
+		if (normalized > maxDeflection) {
+			maxDeflection = normalized;
+		}
+	}
+
+	if (!unlocked) {
+		return;
+	}
+
+	bars = (int) (maxDeflection * numLevels);
+	if (bars > maxBars) {
+		bars = maxBars;
+	}
+
+	if (boktai1Game) {
+		luxLevelIndex = _boktai1BarToStep(bars);
+	} else {
+		luxLevelIndex = bars;
+	}
+}
+
 static void _updateLux(struct GBALuminanceSource* lux) {
 	UNUSED(lux);
 	struct retro_variable var = {
@@ -2509,6 +2572,7 @@ static void _updateLux(struct GBALuminanceSource* lux) {
 
 	if (luxVarUpdated) {
 		luxSensorUsed = strcmp(var.value, "sensor") == 0;
+		luxExternalSensorUsed = strcmp(var.value, "external") == 0;
 	}
 
 	if (luxSensorUsed) {
@@ -2527,7 +2591,7 @@ static void _updateLux(struct GBALuminanceSource* lux) {
 			luxLevel += GBA_LUX_LEVELS[luxLevelIndex - 1];
 		}
 	} else {
-		if (luxVarUpdated) {
+		if (luxVarUpdated && !luxExternalSensorUsed) {
 			char* end;
 			int newLuxLevelIndex = strtol(var.value, &end, 10);
 
