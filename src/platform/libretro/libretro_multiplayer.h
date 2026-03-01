@@ -23,7 +23,6 @@ struct mLibretroLockstepUser {
 	struct mLibretroMultiplayer* multiplayer;
 	unsigned playerIndex;
 	bool blocked;
-	bool stepping;
 };
 
 struct mLibretroMultiplayer {
@@ -42,8 +41,6 @@ struct mLibretroMultiplayer {
 	size_t secondaryRomSize;
 
 	struct mAVStream secondaryStream;
-	bool pumping;
-	bool pumpedThisFrame[2];
 
 	struct mLibretroLockstepUser users[2];
 	struct GBASIOLockstepCoordinator coordinator;

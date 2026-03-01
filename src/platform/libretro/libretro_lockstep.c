@@ -971,7 +971,7 @@ void _lockstepEvent(struct mTiming* timing, void* context, uint32_t cyclesLate) 
 			_verifyAwake(coordinator);
 		}
 	}
-	mASSERT(nextEvent > 0);
+	mASSERT_DEBUG(nextEvent > 0);
 	mTimingSchedule(timing, &lockstep->event, nextEvent);
 }
 

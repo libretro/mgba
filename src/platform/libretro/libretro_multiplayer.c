@@ -11,26 +11,9 @@
 #include <string.h>
 
 #define VIDEO_BYTES_PER_PIXEL sizeof(mColor)
-#define LOCKSTEP_PUMP_WATCHDOG 2000000
+#define COOPERATIVE_WATCHDOG 4000000
 
 static struct mLibretroMultiplayer* sMultiplayer;
-
-static void _stepRunnerCore(struct mCore* core) {
-	if (!core) {
-		return;
-	}
-	if (core->runLoop) {
-		core->runLoop(core);
-		return;
-	}
-	if (core->step) {
-		core->step(core);
-		return;
-	}
-	if (core->runFrame) {
-		core->runFrame(core);
-	}
-}
 
 static void _lockstepSleep(struct mLockstepUser* user) {
 	struct mLibretroLockstepUser* lockstepUser = (struct mLibretroLockstepUser*) user;
@@ -38,37 +21,7 @@ static void _lockstepSleep(struct mLockstepUser* user) {
 		return;
 	}
 
-	if (lockstepUser->stepping || lockstepUser->multiplayer->pumping) {
-		return;
-	}
-
 	lockstepUser->blocked = true;
-
-	struct mCore* runner = lockstepUser->playerIndex == 0 ?
-			lockstepUser->multiplayer->secondaryCore :
-			lockstepUser->multiplayer->primaryCore;
-	unsigned runnerIndex = lockstepUser->playerIndex == 0 ? 1 : 0;
-	if (!runner || (!runner->step && !runner->runLoop && !runner->runFrame)) {
-		return;
-	}
-
-	lockstepUser->multiplayer->pumping = true;
-	lockstepUser->stepping = true;
-	int watchdog = LOCKSTEP_PUMP_WATCHDOG;
-	while (lockstepUser->blocked && watchdog-- > 0) {
-		if (!lockstepUser->multiplayer->active) {
-			break;
-		}
-		lockstepUser->multiplayer->pumpedThisFrame[runnerIndex] = true;
-		_stepRunnerCore(runner);
-	}
-	lockstepUser->stepping = false;
-	lockstepUser->multiplayer->pumping = false;
-	if (watchdog <= 0) {
-		mLOG(GBA_SIO, FATAL, "Lockstep single-thread watchdog expired while waiting for peer wake");
-		mASSERT(false);
-	}
-	mASSERT_LOG(GBA_SIO, !lockstepUser->blocked, "Lockstep single-thread watchdog expired while waiting for peer wake");
 }
 
 static void _lockstepWake(struct mLockstepUser* user) {
@@ -247,7 +200,6 @@ static bool _attachLockstep(void) {
 	sMultiplayer->users[0].multiplayer = sMultiplayer;
 	sMultiplayer->users[0].playerIndex = 0;
 	sMultiplayer->users[0].blocked = false;
-	sMultiplayer->users[0].stepping = false;
 
 	sMultiplayer->users[1].d.sleep = _lockstepSleep;
 	sMultiplayer->users[1].d.wake = _lockstepWake;
@@ -257,7 +209,6 @@ static bool _attachLockstep(void) {
 	sMultiplayer->users[1].multiplayer = sMultiplayer;
 	sMultiplayer->users[1].playerIndex = 1;
 	sMultiplayer->users[1].blocked = false;
-	sMultiplayer->users[1].stepping = false;
 
 	GBASIOLockstepDriverCreate(&sMultiplayer->drivers[0], &sMultiplayer->users[0].d);
 	GBASIOLockstepDriverCreate(&sMultiplayer->drivers[1], &sMultiplayer->users[1].d);
@@ -390,13 +341,52 @@ void mLibretroMultiplayerRunFrame(void) {
 	if (!primaryCore) {
 		return;
 	}
-	sMultiplayer->pumpedThisFrame[0] = false;
-	sMultiplayer->pumpedThisFrame[1] = false;
 
-	primaryCore->runFrame(primaryCore);
+	if (!sMultiplayer->active || !sMultiplayer->secondaryCore) {
+		primaryCore->runFrame(primaryCore);
+		return;
+	}
 
-	if (sMultiplayer->active && sMultiplayer->secondaryCore && !sMultiplayer->pumpedThisFrame[1]) {
-		sMultiplayer->secondaryCore->runFrame(sMultiplayer->secondaryCore);
+	struct mCore* secondaryCore = sMultiplayer->secondaryCore;
+	uint32_t primaryFrame = primaryCore->frameCounter(primaryCore);
+	uint32_t secondaryFrame = secondaryCore->frameCounter(secondaryCore);
+	bool primaryDone = false;
+	bool secondaryDone = false;
+
+	int watchdog = COOPERATIVE_WATCHDOG;
+	while ((!primaryDone || !secondaryDone) && watchdog > 0) {
+		bool ranAny = false;
+
+		// Run primary if it hasn't finished its frame, OR if the secondary
+		// is blocked (needs primary's lockstep events to unblock it)
+		if (!sMultiplayer->users[0].blocked && (!primaryDone || sMultiplayer->users[1].blocked)) {
+			primaryCore->runLoop(primaryCore);
+			--watchdog;
+			ranAny = true;
+			if (!primaryDone && primaryCore->frameCounter(primaryCore) != primaryFrame) {
+				primaryDone = true;
+			}
+		}
+
+		// Same for secondary
+		if (!sMultiplayer->users[1].blocked && (!secondaryDone || sMultiplayer->users[0].blocked)) {
+			secondaryCore->runLoop(secondaryCore);
+			--watchdog;
+			ranAny = true;
+			if (!secondaryDone && secondaryCore->frameCounter(secondaryCore) != secondaryFrame) {
+				secondaryDone = true;
+			}
+		}
+
+		if (!ranAny) {
+			mLOG(GBA_SIO, FATAL, "Both players blocked simultaneously -- deadlock");
+			mASSERT(false);
+			break;
+		}
+	}
+	if (watchdog <= 0) {
+		mLOG(GBA_SIO, FATAL, "Cooperative scheduling watchdog expired");
+		mASSERT(false);
 	}
 }
 
