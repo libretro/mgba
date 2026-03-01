@@ -34,8 +34,6 @@ static void _stepRunnerCore(struct mCore* core) {
 
 static void _lockstepSleep(struct mLockstepUser* user) {
 	struct mLibretroLockstepUser* lockstepUser = (struct mLibretroLockstepUser*) user;
-	lockstepUser->blocked = true;
-
 	if (!lockstepUser->multiplayer || !lockstepUser->multiplayer->active || !lockstepUser->multiplayer->secondaryCore || !lockstepUser->multiplayer->primaryCore) {
 		return;
 	}
@@ -43,6 +41,8 @@ static void _lockstepSleep(struct mLockstepUser* user) {
 	if (lockstepUser->stepping || lockstepUser->multiplayer->pumping) {
 		return;
 	}
+
+	lockstepUser->blocked = true;
 
 	struct mCore* runner = lockstepUser->playerIndex == 0 ?
 			lockstepUser->multiplayer->secondaryCore :
@@ -64,6 +64,10 @@ static void _lockstepSleep(struct mLockstepUser* user) {
 	}
 	lockstepUser->stepping = false;
 	lockstepUser->multiplayer->pumping = false;
+	if (watchdog <= 0) {
+		mLOG(GBA_SIO, FATAL, "Lockstep single-thread watchdog expired while waiting for peer wake");
+		mASSERT(false);
+	}
 	mASSERT_LOG(GBA_SIO, !lockstepUser->blocked, "Lockstep single-thread watchdog expired while waiting for peer wake");
 }
 
