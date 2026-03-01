@@ -1521,8 +1521,7 @@ void retro_run(void) {
 	if (deferredSetup) {
 		_doDeferredSetup();
 	}
-	uint16_t player1Keys;
-	uint16_t player2Keys;
+	uint16_t playerKeys[MAX_GBAS];
 	bool skipFrame = false;
 
 	inputPollCallback();
@@ -1551,9 +1550,11 @@ void retro_run(void) {
 #endif
 	}
 
-	player1Keys = mLibretroInputReadKeys(0, inputCallback, useBitmasks, &turboState);
-	player2Keys = mLibretroInputReadKeys(1, inputCallback, useBitmasks, &turboState);
-	mLibretroMultiplayerSetKeys(player1Keys, player2Keys);
+	int p;
+	for (p = 0; p < MAX_GBAS; ++p) {
+		playerKeys[p] = mLibretroInputReadKeys(p, inputCallback, useBitmasks, &turboState);
+	}
+	mLibretroMultiplayerSetKeys(playerKeys);
 
 	if (!luxSensorUsed) {
 		static bool wasAdjustingLux = false;
@@ -1656,13 +1657,11 @@ void retro_run(void) {
 	}
 
 	if (!skipFrame) {
-		if (multiplayer.active) {
-			size_t outPitch;
-			unsigned outWidth;
-			unsigned outHeight;
-			const mColor* frame = mLibretroMultiplayerComposeFrame(outputBuffer, width, height, &outPitch, &outWidth, &outHeight);
-			videoCallback(frame, outWidth, outHeight, outPitch);
-		} else {
+		size_t outPitch;
+		unsigned outWidth;
+		unsigned outHeight;
+		const mColor* frame = mLibretroMultiplayerComposeFrame(outputBuffer, width, height, &outPitch, &outWidth, &outHeight);
+		if (frame == outputBuffer) {
 #if defined(COLOR_16_BIT) && defined(COLOR_5_6_5)
 			if (videoPostProcess) {
 				videoPostProcess(width, height);
@@ -1670,14 +1669,14 @@ void retro_run(void) {
 			} else
 #endif
 				videoCallback(outputBuffer, width, height, VIDEO_WIDTH_MAX * sizeof(mColor));
+		} else {
+			videoCallback(frame, outWidth, outHeight, outPitch);
 		}
 	} else {
 		size_t outPitch = VIDEO_WIDTH_MAX * sizeof(mColor);
 		unsigned outWidth = width;
 		unsigned outHeight = height;
-		if (multiplayer.active) {
-			mLibretroMultiplayerComposeFrame(outputBuffer, width, height, &outPitch, &outWidth, &outHeight);
-		}
+		mLibretroMultiplayerComposeFrame(outputBuffer, width, height, &outPitch, &outWidth, &outHeight);
 		videoCallback(NULL, outWidth, outHeight, outPitch);
 	}
 
@@ -1911,9 +1910,9 @@ static void _setupMaps(struct mCore* core) {
 }
 
 void retro_reset(void) {
+	mLibretroMultiplayerSetPrimaryCore(core);
 	mLibretroMultiplayerUpdateMode(environCallback);
 	mLibretroMultiplayerApplyMode(data, dataSize, loadedRomPath, logCallback);
-	mLibretroMultiplayerSetPrimaryCore(core);
 	mLibretroMultiplayerReset();
 	mRumbleIntegratorReset(&rumble);
 	_setupMaps(core);

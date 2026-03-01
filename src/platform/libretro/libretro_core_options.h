@@ -105,13 +105,14 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "mgba_multiplayer_splitscreen",
       "Multiplayer Splitscreen (Restart)",
       NULL,
-      "Runs a linked second GBA instance and combines both player views into a single output frame.",
+      "Runs linked GBA instances and combines all player views into a single output frame.",
       NULL,
       "system",
       {
          { "OFF",                 "disabled" },
          { "Side by Side",        "2-Player Side by Side" },
          { "Top/Bottom",          "2-Player Top/Bottom" },
+         { "4-Player Grid",       "4-Player 2x2 Grid" },
          { NULL, NULL },
       },
       "OFF"

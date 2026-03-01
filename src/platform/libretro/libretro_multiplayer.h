@@ -5,6 +5,7 @@
 
 #include <mgba/core/core.h>
 #include <mgba/core/lockstep.h>
+#include <mgba/internal/gba/sio.h>
 #include <mgba/internal/gba/sio/lockstep.h>
 
 #include "libretro.h"
@@ -15,6 +16,7 @@ enum mLibretroSplitscreenMode {
 	mLIBRETRO_SPLITSCREEN_OFF = 0,
 	mLIBRETRO_SPLITSCREEN_2P_VERTICAL,
 	mLIBRETRO_SPLITSCREEN_2P_HORIZONTAL,
+	mLIBRETRO_SPLITSCREEN_4P_GRID,
 };
 
 struct mLibretroLockstepUser {
@@ -27,26 +29,29 @@ struct mLibretroLockstepUser {
 
 struct mLibretroMultiplayer {
 	enum mLibretroSplitscreenMode mode;
-	bool active;
 	unsigned maxVideoWidth;
 	unsigned maxVideoHeight;
-	struct mCore* primaryCore;
 
-	struct mCore* secondaryCore;
-	mColor* secondaryOutputBuffer;
+	int numPlayers;
+	struct mCore* cores[MAX_GBAS];
+	mColor* outputBuffers[MAX_GBAS];
+	struct mAVStream streams[MAX_GBAS];
+
 	mColor* compositeBuffer;
 	size_t compositeBufferPixels;
 
-	void* secondaryRomData;
-	size_t secondaryRomSize;
+	void* romData;
+	size_t romSize;
 
-	struct mAVStream secondaryStream;
-
-	struct mLibretroLockstepUser users[2];
+	struct mLibretroLockstepUser users[MAX_GBAS];
 	struct GBASIOLockstepCoordinator coordinator;
-	struct GBASIOLockstepDriver drivers[2];
+	struct GBASIOLockstepDriver drivers[MAX_GBAS];
 	bool coordinatorInitialized;
 };
+
+static inline struct mCore* mLibretroMultiplayerGetPrimaryCore(struct mLibretroMultiplayer* mp) {
+	return mp->cores[0];
+}
 
 void mLibretroMultiplayerInit(struct mLibretroMultiplayer* multiplayer, unsigned maxVideoWidth, unsigned maxVideoHeight);
 void mLibretroMultiplayerSetPrimaryCore(struct mCore* primaryCore);
@@ -54,7 +59,7 @@ void mLibretroMultiplayerDeinit(void);
 void mLibretroMultiplayerUpdateMode(retro_environment_t environCallback);
 bool mLibretroMultiplayerApplyMode(const void* romData, size_t romSize, const char* romPath, retro_log_printf_t logCallback);
 void mLibretroMultiplayerReset(void);
-void mLibretroMultiplayerSetKeys(uint16_t player1Keys, uint16_t player2Keys);
+void mLibretroMultiplayerSetKeys(uint16_t keys[MAX_GBAS]);
 void mLibretroMultiplayerRunFrame(void);
 void mLibretroMultiplayerAdjustGeometry(struct retro_game_geometry* geometry);
 const mColor* mLibretroMultiplayerComposeFrame(const mColor* primaryFrame, unsigned primaryWidth, unsigned primaryHeight, size_t* outPitch, unsigned* outWidth, unsigned* outHeight);
