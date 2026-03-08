@@ -118,6 +118,20 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "OFF"
    },
    {
+      "mgba_multiplayer_av",
+      "Multiplayer A/V Output",
+      NULL,
+      "Selects whether output shows both player views or only the local player's view/audio.",
+      NULL,
+      "system",
+      {
+         { "All",     NULL },
+         { "Self",     NULL },
+         { NULL, NULL },
+      },
+      "All"
+   },
+   {
       "mgba_use_bios",
       "Use BIOS File if Found (Restart)",
       NULL,

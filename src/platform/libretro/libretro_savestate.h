@@ -11,7 +11,7 @@ CXX_GUARD_START
 
 size_t mLibretroSerializeSize(struct mCore* core);
 bool mLibretroSerialize(struct mCore* core, void* data, size_t size);
-bool mLibretroUnserialize(struct mCore* core, const void* data, size_t size, retro_log_printf_t logCallback);
+bool mLibretroUnserialize(struct mCore* core, const void* data, size_t size);
 
 CXX_GUARD_END
 

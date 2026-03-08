@@ -43,7 +43,9 @@ FS_Archive sdmcArchive;
 
 #include "libretro_core_options.h"
 #include "libretro_input.h"
+#include "libretro_log.h"
 #include "libretro_multiplayer.h"
+#include "libretro_netplay.h"
 #include "libretro_savestate.h"
 
 #define GBA_RESAMPLED_RATE 65536
@@ -87,6 +89,14 @@ static int32_t _readTiltX(struct mRotationSource* source);
 static int32_t _readTiltY(struct mRotationSource* source);
 static int32_t _readGyroZ(struct mRotationSource* source);
 static void _setupMaps(struct mCore* core);
+static bool _syncMultiplayerVideoState(void);
+static bool _applyMultiplayerSessionState(void);
+static bool _syncMultiplayerSelfPlayer(void);
+static void _refreshRuntimeMultiplayerState(void);
+static const char* _multiplayerDisplayLabel(enum mLibretroDisplayPlayers displayPlayers);
+static void _drainCoreAudioBuffer(struct mCore* audioCore);
+static void _updateFrontendAVInfo(void);
+static void _ensureDeferredSetupForStateIO(void);
 
 static struct mCore* core;
 static mColor* outputBuffer = NULL;
@@ -140,6 +150,7 @@ static int32_t audioLowPassLeftPrev = 0;
 static int32_t audioLowPassRightPrev = 0;
 static struct mLibretroTurboState turboState;
 static struct mLibretroMultiplayer multiplayer;
+static struct mLibretroNetplayState netplay;
 static char loadedRomPath[PATH_MAX];
 
 #ifndef GIT_VERSION
@@ -1261,6 +1272,95 @@ static void _reloadSettings(void) {
 	mCoreLoadConfig(core);
 }
 
+static bool _syncMultiplayerVideoState(void) {
+	enum mLibretroDisplayPlayers previousDisplay = multiplayer.numPlayers < 2 ? mLIBRETRO_DISPLAY_SELF : multiplayer.video.displayPlayers;
+
+	mLibretroMultiplayerUpdateDisplayPlayers(environCallback);
+	enum mLibretroDisplayPlayers currentDisplay = multiplayer.numPlayers < 2 ? mLIBRETRO_DISPLAY_SELF : multiplayer.video.displayPlayers;
+	return previousDisplay != currentDisplay;
+}
+
+static bool _applyMultiplayerSessionState(void) {
+	bool wasActive = multiplayer.numPlayers > 1;
+	enum mLibretroSplitscreenMode previousMode = multiplayer.video.mode;
+	enum mLibretroDisplayPlayers previousDisplay = multiplayer.numPlayers < 2 ? mLIBRETRO_DISPLAY_SELF : multiplayer.video.displayPlayers;
+
+	mLibretroMultiplayerSetPrimaryCore(core);
+	mLibretroMultiplayerUpdateMode(environCallback);
+	mLibretroMultiplayerUpdateDisplayPlayers(environCallback);
+	mLibretroMultiplayerApplyMode(data, dataSize, loadedRomPath);
+
+	enum mLibretroDisplayPlayers currentDisplay = multiplayer.numPlayers < 2 ? mLIBRETRO_DISPLAY_SELF : multiplayer.video.displayPlayers;
+	return wasActive != (multiplayer.numPlayers > 1) || previousMode != multiplayer.video.mode || previousDisplay != currentDisplay;
+}
+
+static bool _syncMultiplayerSelfPlayer(void) {
+	if (!environCallback || multiplayer.video.displayPlayers != mLIBRETRO_DISPLAY_SELF) {
+		return false;
+	}
+
+	unsigned localClientIndex = 0;
+	if (!environCallback(RETRO_ENVIRONMENT_GET_NETPLAY_CLIENT_INDEX, &localClientIndex)) {
+		return false;
+	}
+
+	int playerIndex = (int) localClientIndex;
+	if (playerIndex >= MAX_GBAS) {
+		playerIndex = MAX_GBAS - 1;
+	}
+
+	if (multiplayer.video.localPlayerIndex == playerIndex) {
+		return false;
+	}
+
+	multiplayer.video.localPlayerIndex = playerIndex;
+	return true;
+}
+
+static void _drainCoreAudioBuffer(struct mCore* audioCore) {
+	if (!audioCore || !audioSampleBuffer || audioSampleBufferSize < 2) {
+		return;
+	}
+
+	struct mAudioBuffer* buffer = audioCore->getAudioBuffer(audioCore);
+	while (mAudioBufferAvailable(buffer) > 0) {
+		int available = mAudioBufferAvailable(buffer);
+		size_t frames = audioSampleBufferSize / 2;
+		if ((size_t) available < frames) {
+			frames = (size_t) available;
+		}
+		if (!frames) {
+			break;
+		}
+		if (!mAudioBufferRead(buffer, audioSampleBuffer, frames)) {
+			break;
+		}
+	}
+}
+
+static void _updateFrontendAVInfo(void) {
+	if (!environCallback || !core) {
+		return;
+	}
+
+	struct retro_system_av_info info;
+	retro_get_system_av_info(&info);
+	environCallback(RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO, &info);
+}
+
+static void _refreshRuntimeMultiplayerState(void) {
+	mLibretroNetplayRefresh(&netplay, environCallback);
+	bool avChanged = _syncMultiplayerVideoState();
+
+	if (_syncMultiplayerSelfPlayer()) {
+		avChanged = true;
+	}
+
+	if (avChanged) {
+		_updateFrontendAVInfo();
+	}
+}
+
 static void _doDeferredSetup(void) {
 	// Libretro API doesn't let you know when it's done copying data into the save buffers.
 	// On the off-hand chance that a core actually expects its buffers to be populated when
@@ -1280,6 +1380,12 @@ static void _doDeferredSetup(void) {
 		save->close(save);
 	}
 	deferredSetup = false;
+}
+
+static void _ensureDeferredSetupForStateIO(void) {
+	if (deferredSetup) {
+		_doDeferredSetup();
+	}
 }
 
 unsigned retro_api_version(void) {
@@ -1442,6 +1548,7 @@ void retro_init(void) {
 	} else {
 		logCallback = 0;
 	}
+	mLibretroSetLogCallback(logCallback);
 	logger.log = GBARetroLog;
 	mLogSetDefaultLogger(&logger);
 
@@ -1468,6 +1575,7 @@ void retro_init(void) {
 	updateAudioLatency      = false;
 	updateAudioRate         = false;
 	mLibretroTurboStateInit(&turboState);
+	mLibretroNetplayInit(&netplay);
 	mLibretroMultiplayerInit(&multiplayer, VIDEO_WIDTH_MAX, VIDEO_HEIGHT_MAX);
 	loadedRomPath[0] = '\0';
 }
@@ -1520,6 +1628,7 @@ void retro_deinit(void) {
 void retro_run(void) {
 	if (deferredSetup) {
 		_doDeferredSetup();
+		_refreshRuntimeMultiplayerState();
 	}
 	uint16_t playerKeys[MAX_GBAS];
 	bool skipFrame = false;
@@ -1549,6 +1658,8 @@ void retro_run(void) {
 		_updateGbPal();
 #endif
 	}
+
+	_refreshRuntimeMultiplayerState();
 
 	int p;
 	for (p = 0; p < MAX_GBAS; ++p) {
@@ -1690,10 +1801,16 @@ void retro_run(void) {
 
 #ifdef M_CORE_GBA
 	if (core->platform(core) == mPLATFORM_GBA) {
-		struct mAudioBuffer *coreBuffer = core->getAudioBuffer(core);
-        int coreSamplesAvail = mAudioBufferAvailable(coreBuffer);
+		enum mLibretroDisplayPlayers displayPlayers = multiplayer.numPlayers < 2 ? mLIBRETRO_DISPLAY_SELF : multiplayer.video.displayPlayers;
+		int localIdx = multiplayer.video.localPlayerIndex;
+		struct mCore* audioCore = core;
+		if (displayPlayers == mLIBRETRO_DISPLAY_SELF && localIdx >= 0 && localIdx < multiplayer.numPlayers && multiplayer.cores[localIdx]) {
+			audioCore = multiplayer.cores[localIdx];
+		}
+		struct mAudioBuffer *coreBuffer = audioCore->getAudioBuffer(audioCore);
+		int coreSamplesAvail = mAudioBufferAvailable(coreBuffer);
         if (coreSamplesAvail > 0) {
-            unsigned coreSampleRate = core->audioSampleRate(core);
+			unsigned coreSampleRate = audioCore->audioSampleRate(audioCore);
             size_t samplesProduced;
             if (coreSampleRate != targetSampleRate) {
                 /* Resample generated audio */
@@ -1712,6 +1829,14 @@ void retro_run(void) {
                 audioCallback(audioSampleBuffer, samplesProduced);
             }
         }
+
+		for (int i = 0; i < multiplayer.numPlayers; ++i) {
+			struct mCore* otherCore = multiplayer.cores[i];
+			if (!otherCore || otherCore == audioCore) {
+				continue;
+			}
+			_drainCoreAudioBuffer(otherCore);
+		}
 	}
 #endif
 }
@@ -1910,9 +2035,8 @@ static void _setupMaps(struct mCore* core) {
 }
 
 void retro_reset(void) {
-	mLibretroMultiplayerSetPrimaryCore(core);
-	mLibretroMultiplayerUpdateMode(environCallback);
-	mLibretroMultiplayerApplyMode(data, dataSize, loadedRomPath, logCallback);
+	mLibretroNetplayRefresh(&netplay, environCallback);
+	_applyMultiplayerSessionState();
 	mLibretroMultiplayerReset();
 	mRumbleIntegratorReset(&rumble);
 	_setupMaps(core);
@@ -2063,8 +2187,8 @@ bool retro_load_game(const struct retro_game_info* game) {
 	_reloadSettings();
 	core->loadROM(core, rom);
 	deferredSetup = true;
-	mLibretroMultiplayerUpdateMode(environCallback);
-	mLibretroMultiplayerApplyMode(data, dataSize, loadedRomPath, logCallback);
+	mLibretroNetplayRefresh(&netplay, environCallback);
+	_applyMultiplayerSessionState();
 
 	const char* sysDir = 0;
 	const char* biosName = 0;
@@ -2145,24 +2269,18 @@ void retro_unload_game(void) {
 }
 
 size_t retro_serialize_size(void) {
-	if (deferredSetup) {
-		_doDeferredSetup();
-	}
+	_ensureDeferredSetupForStateIO();
 	return mLibretroSerializeSize(core);
 }
 
 bool retro_serialize(void* data, size_t size) {
-	if (deferredSetup) {
-		_doDeferredSetup();
-	}
+	_ensureDeferredSetupForStateIO();
 	return mLibretroSerialize(core, data, size);
 }
 
 bool retro_unserialize(const void* data, size_t size) {
-	if (deferredSetup) {
-		_doDeferredSetup();
-	}
-	return mLibretroUnserialize(core, data, size, logCallback);
+	_ensureDeferredSetupForStateIO();
+	return mLibretroUnserialize(core, data, size);
 }
 
 void retro_cheat_reset(void) {
