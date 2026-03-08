@@ -6,7 +6,7 @@
 #include <mgba/core/core.h>
 #include <mgba/core/lockstep.h>
 #include <mgba/internal/gba/sio.h>
-#include <mgba/internal/gba/sio/lockstep.h>
+#include "libretro_lockstep.h"
 
 #include "libretro.h"
 

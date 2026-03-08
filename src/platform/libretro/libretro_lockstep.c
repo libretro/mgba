@@ -3,7 +3,7 @@
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
-#include <mgba/internal/gba/sio/lockstep.h>
+#include "libretro_lockstep.h"
 
 #include <mgba/internal/gba/gba.h>
 #include <mgba/internal/gba/io.h>
@@ -28,6 +28,7 @@ DECL_BITS(GBASIOLockstepSerializedFlags, Player0Mode, 10, 3);
 DECL_BITS(GBASIOLockstepSerializedFlags, Player1Mode, 13, 3);
 DECL_BITS(GBASIOLockstepSerializedFlags, Player2Mode, 16, 3);
 DECL_BITS(GBASIOLockstepSerializedFlags, Player3Mode, 19, 3);
+DECL_BIT(GBASIOLockstepSerializedFlags, SyncArmed, 22);
 DECL_BITS(GBASIOLockstepSerializedFlags, TransferMode, 28, 3);
 DECL_BIT(GBASIOLockstepSerializedFlags, TransferActive, 31);
 
@@ -186,6 +187,7 @@ static void GBASIOLockstepDriverDeinit(struct GBASIODriver* driver) {
 static void GBASIOLockstepDriverReset(struct GBASIODriver* driver) {
 	struct GBASIOLockstepDriver* lockstep = (struct GBASIOLockstepDriver*) driver;
 	struct GBASIOLockstepCoordinator* coordinator = lockstep->coordinator;
+	coordinator->syncArmed = false;
 	struct GBASIOLockstepPlayer* player;
 	if (!lockstep->lockstepId) {
 		unsigned id;
@@ -379,6 +381,7 @@ static bool GBASIOLockstepDriverLoadState(struct GBASIODriver* driver, const voi
 		}
 		coordinator->transferMode = _modeIntToEnum(GBASIOLockstepSerializedFlagsGetTransferMode(flags));
 		coordinator->transferActive = GBASIOLockstepSerializedFlagsGetTransferActive(flags);
+		coordinator->syncArmed = GBASIOLockstepSerializedFlagsGetSyncArmed(flags);
 	}
 out:
 	if (!error) {
@@ -443,6 +446,7 @@ static void GBASIOLockstepDriverSaveState(struct GBASIODriver* driver, void** st
 		}
 		flags = GBASIOLockstepSerializedFlagsSetTransferMode(flags, _modeEnumToInt(coordinator->transferMode));
 		flags = GBASIOLockstepSerializedFlagsSetTransferActive(flags, coordinator->transferActive);
+		flags = GBASIOLockstepSerializedFlagsSetSyncArmed(flags, coordinator->syncArmed);
 	}
 	STORE_32LE(flags, 0, &state->flags);
 	*stateOut = state;
@@ -469,9 +473,9 @@ static void GBASIOLockstepDriverSetMode(struct GBASIODriver* driver, enum GBASIO
 		}
 		_setReady(coordinator, player, player->playerId, mode);
 		_enqueueEvent(coordinator, &event, TARGET_ALL & ~TARGET(player->playerId));
-		if (waitOnPlayers) {
+		if (waitOnPlayers && coordinator->syncArmed) {
 			GBASIOLockstepCoordinatorWaitOnPlayers(coordinator, player);
-		} else if (player->playerId == 0) {
+		} else if (player->playerId == 0 && coordinator->syncArmed) {
 			mLOG(GBA_SIO, DEBUG, "Deferring mode wait while barrier %X is active", coordinator->waiting);
 		}
 	}
@@ -542,11 +546,16 @@ static bool GBASIOLockstepDriverStart(struct GBASIODriver* driver) {
 	};
 	_enqueueEvent(coordinator, &event, TARGET_SECONDARY);
 	coordinator->transferActive = true;
+	if (player->mode == GBA_SIO_MULTI && !coordinator->syncArmed) {
+		coordinator->syncArmed = true;
+		coordinator->nextHardSync = HARD_SYNC_INTERVAL;
+		mLOG(GBA_SIO, DEBUG, "Arming lockstep sync/watchdog after first MULTI transfer start");
+	}
 	if (coordinator->waiting) {
 		waitOnPlayers = false;
 		mLOG(GBA_SIO, DEBUG, "Deferring transfer wait while barrier %X is active", coordinator->waiting);
 	}
-	if (waitOnPlayers) {
+	if (waitOnPlayers && coordinator->syncArmed) {
 		GBASIOLockstepCoordinatorWaitOnPlayers(coordinator, player);
 	}
 	ret = true;
@@ -572,7 +581,9 @@ static void GBASIOLockstepDriverFinishMultiplayer(struct GBASIODriver* driver, u
 		}
 		player->dataReceived = false;
 		if (player->playerId == 0) {
-			if (coordinator->waiting) {
+			if (!coordinator->syncArmed) {
+				// Sync/watchdog is intentionally inert until first MULTI transfer start.
+			} else if (coordinator->waiting) {
 				mLOG(GBA_SIO, DEBUG, "Deferring hard sync while barrier %X is active", coordinator->waiting);
 				coordinator->nextHardSync = -1;
 			} else {
@@ -598,7 +609,9 @@ static uint8_t GBASIOLockstepDriverFinishNormal8(struct GBASIODriver* driver) {
 		}
 		player->dataReceived = false;
 		if (player->playerId == 0) {
-			if (coordinator->waiting) {
+			if (!coordinator->syncArmed) {
+				// Sync/watchdog is intentionally inert until first MULTI transfer start.
+			} else if (coordinator->waiting) {
 				mLOG(GBA_SIO, DEBUG, "Deferring hard sync while barrier %X is active", coordinator->waiting);
 				coordinator->nextHardSync = -1;
 			} else {
@@ -625,7 +638,9 @@ static uint32_t GBASIOLockstepDriverFinishNormal32(struct GBASIODriver* driver) 
 		}
 		player->dataReceived = false;
 		if (player->playerId == 0) {
-			if (coordinator->waiting) {
+			if (!coordinator->syncArmed) {
+				// Sync/watchdog is intentionally inert until first MULTI transfer start.
+			} else if (coordinator->waiting) {
 				mLOG(GBA_SIO, DEBUG, "Deferring hard sync while barrier %X is active", coordinator->waiting);
 				coordinator->nextHardSync = -1;
 			} else {
@@ -667,6 +682,9 @@ void GBASIOLockstepCoordinatorDetach(struct GBASIOLockstepCoordinator* coordinat
 }
 
 int32_t _untilNextSync(struct GBASIOLockstepCoordinator* coordinator, struct GBASIOLockstepPlayer* player) {
+	if (!coordinator->syncArmed) {
+		return UNLOCKED_INTERVAL;
+	}
 	int32_t cycle = coordinator->cycle - GBASIOLockstepTime(player);
 	if (player->playerId == 0) {
 		if (coordinator->nAttached < 2) {
@@ -695,6 +713,7 @@ void _removePlayer(struct GBASIOLockstepCoordinator* coordinator, struct GBASIOL
 
 	coordinator->waiting = 0;
 	coordinator->transferActive = false;
+	coordinator->syncArmed = false;
 
 	TableRemove(&coordinator->players, player->driver->lockstepId);
 	_reconfigPlayers(coordinator);
@@ -905,7 +924,7 @@ void _lockstepEvent(struct mTiming* timing, void* context, uint32_t cyclesLate) 
 		if (!coordinator->transferActive) {
 			GBASIOLockstepCoordinatorWakePlayers(coordinator);
 		}
-		if (coordinator->nextHardSync < 0) {
+		if (coordinator->syncArmed && coordinator->nextHardSync < 0) {
 			if (!coordinator->waiting) {
 				_hardSync(coordinator, player);
 			}
@@ -978,7 +997,7 @@ void _lockstepEvent(struct mTiming* timing, void* context, uint32_t cyclesLate) 
 		nextEvent = player->queue->timestamp - GBASIOLockstepTime(player);
 	}
 
-	if (player->playerId != 0 && nextEvent <= LOCKSTEP_INTERVAL) {
+	if (coordinator->syncArmed && player->playerId != 0 && nextEvent <= LOCKSTEP_INTERVAL) {
 		if (!player->queue || wasDetach) {
 			GBASIOLockstepPlayerSleep(player);
 			// XXX: Is there a better way to gain sync lock at the beginning?

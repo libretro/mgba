@@ -1,9 +1,9 @@
 #include "libretro_multiplayer.h"
+#include "libretro_lockstep.h"
 
 #include <mgba/core/config.h>
 #include <mgba/core/serialize.h>
 #include <mgba/gba/interface.h>
-#include <mgba/internal/gba/sio/lockstep.h>
 #include <mgba-util/memory.h>
 #include <mgba-util/vfs.h>
 
