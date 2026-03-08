@@ -112,8 +112,18 @@ static void _enqueueEvent(struct GBASIOLockstepCoordinator*, const struct GBASIO
 static void _setData(struct GBASIOLockstepCoordinator*, uint32_t id, struct GBASIO* sio);
 static void _setReady(struct GBASIOLockstepCoordinator*, struct GBASIOLockstepPlayer* activePlayer, int playerId, enum GBASIOMode mode);
 static void _hardSync(struct GBASIOLockstepCoordinator*, struct GBASIOLockstepPlayer*);
+static int32_t _sanitizeDelay(int32_t delay, const char* source, int playerId);
 
 static void _lockstepEvent(struct mTiming*, void* context, uint32_t cyclesLate);
+
+static int32_t _sanitizeDelay(int32_t delay, const char* source, int playerId) {
+	if (delay > 0) {
+		return delay;
+	}
+	mLOG(GBA_SIO, DEBUG, "%s produced delay %d for player %d; clamping to 1",
+	                      source, delay, playerId);
+	return 1;
+}
 
 static void _verifyAwake(struct GBASIOLockstepCoordinator* coordinator) {
 #ifdef NDEBUG
@@ -230,6 +240,7 @@ static void GBASIOLockstepDriverReset(struct GBASIODriver* driver) {
 		_setReady(coordinator, player, 0, coordinator->transferMode);
 		nextEvent = _untilNextSync(lockstep->coordinator, player);
 	}
+	nextEvent = _sanitizeDelay(nextEvent, "reset schedule", player->playerId);
 	mTimingSchedule(&lockstep->d.p->p->timing, &lockstep->event, nextEvent);
 }
 
@@ -301,9 +312,12 @@ static bool GBASIOLockstepDriverLoadState(struct GBASIODriver* driver, const voi
 	player->otherModes[2] = _modeIntToEnum(GBASIOLockstepSerializedFlagsGetPlayer2Mode(flags));
 	player->otherModes[3] = _modeIntToEnum(GBASIOLockstepSerializedFlagsGetPlayer3Mode(flags));
 
+	mTimingDeschedule(&driver->p->p->timing, &lockstep->event);
+
 	if (GBASIOLockstepSerializedFlagsGetEventScheduled(flags)) {
 		int32_t when;
 		LOAD_32LE(when, 0, &state->driver.nextEvent);
+		when = _sanitizeDelay(when, "load state schedule", player->playerId);
 		mTimingSchedule(&driver->p->p->timing, &lockstep->event, when);
 	}
 
@@ -333,6 +347,7 @@ static bool GBASIOLockstepDriverLoadState(struct GBASIODriver* driver, const voi
 		player->freeList = player->freeList->next;
 		*lastEvent = event;
 		lastEvent = &event->next;
+		event->next = NULL;
 
 		GBASIOLockstepSerializedEventFlags flags;
 		LOAD_32LE(flags, 0, &stateEvent->flags);
@@ -352,6 +367,7 @@ static bool GBASIOLockstepDriverLoadState(struct GBASIODriver* driver, const voi
 			break;
 		}
 	}
+	*lastEvent = NULL;
 
 	if (player->playerId == 0) {
 		LOAD_32LE(coordinator->cycle, 0, &state->coordinator.cycle);
@@ -930,6 +946,7 @@ void _lockstepEvent(struct mTiming* timing, void* context, uint32_t cyclesLate) 
 		case SIO_EV_TRANSFER_START:
 			_setData(coordinator, player->playerId, sio);
 			nextEvent = event->finishCycle - GBASIOLockstepTime(player) - cyclesLate;
+			nextEvent = _sanitizeDelay(nextEvent, "transfer completion", player->playerId);
 			player->driver->d.p->siocnt |= 0x80;
 			mTimingDeschedule(&sio->p->timing, &sio->completeEvent);
 			mTimingSchedule(&sio->p->timing, &sio->completeEvent, nextEvent);
@@ -971,6 +988,7 @@ void _lockstepEvent(struct mTiming* timing, void* context, uint32_t cyclesLate) 
 			_verifyAwake(coordinator);
 		}
 	}
+	nextEvent = _sanitizeDelay(nextEvent, "lockstep wake", player->playerId);
 	mASSERT_DEBUG(nextEvent > 0);
 	mTimingSchedule(timing, &lockstep->event, nextEvent);
 }
