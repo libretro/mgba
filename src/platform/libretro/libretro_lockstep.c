@@ -473,9 +473,9 @@ static void GBASIOLockstepDriverSetMode(struct GBASIODriver* driver, enum GBASIO
 		}
 		_setReady(coordinator, player, player->playerId, mode);
 		_enqueueEvent(coordinator, &event, TARGET_ALL & ~TARGET(player->playerId));
-		if (waitOnPlayers && coordinator->syncArmed) {
+			if (waitOnPlayers) {
 			GBASIOLockstepCoordinatorWaitOnPlayers(coordinator, player);
-		} else if (player->playerId == 0 && coordinator->syncArmed) {
+			} else if (player->playerId == 0) {
 			mLOG(GBA_SIO, DEBUG, "Deferring mode wait while barrier %X is active", coordinator->waiting);
 		}
 	}
@@ -555,7 +555,7 @@ static bool GBASIOLockstepDriverStart(struct GBASIODriver* driver) {
 		waitOnPlayers = false;
 		mLOG(GBA_SIO, DEBUG, "Deferring transfer wait while barrier %X is active", coordinator->waiting);
 	}
-	if (waitOnPlayers && coordinator->syncArmed) {
+	if (waitOnPlayers) {
 		GBASIOLockstepCoordinatorWaitOnPlayers(coordinator, player);
 	}
 	ret = true;
