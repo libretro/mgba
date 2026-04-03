@@ -283,5 +283,5 @@ libretro-build-emscripten:
 # webOS
 libretro-build-webos-armv7a:
   extends:
-    - .libretro-webos-armv7a-cmake
+    - .libretro-webos-armv7a-make-default
     - .core-defs
