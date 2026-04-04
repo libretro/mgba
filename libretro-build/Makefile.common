@@ -154,3 +154,8 @@ endif
 else
 SOURCES_C += $(CORE_DIR)/src/util/vfs/vfs-file.c
 endif
+
+ifeq ($(HAVE_DOLPHIN),1)
+SOURCES_C += $(CORE_DIR)/src/gba/sio/dolphin.c
+RETRODEFS += -DENABLE_JOYBUS_DOLPHIN
+endif

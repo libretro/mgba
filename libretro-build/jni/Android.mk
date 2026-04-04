@@ -3,6 +3,8 @@ LOCAL_PATH := $(call my-dir)
 CORE_DIR := $(LOCAL_PATH)/../..
 
 HAVE_VFS_FD = 1
+# Dolphin/JoyBus support
+HAVE_DOLPHIN = 1
 
 include $(CORE_DIR)/libretro-build/Makefile.common
 

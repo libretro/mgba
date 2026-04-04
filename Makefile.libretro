@@ -1,5 +1,7 @@
 DEBUG = 0
 HAVE_VFS_FD := 1
+# Dolphin/JoyBus support
+HAVE_DOLPHIN ?= 0
 CORE_DIR := .
 BUILD_DIR := libretro-build
 
@@ -437,6 +439,13 @@ else
 endif
 
 DEFINES += -DHAVE_STRNDUP -DHAVE_STRDUP -DDISABLE_THREADING -DMINIMAL_CORE=2
+
+# Enable Dolphin/JoyBus support on desktop and Android
+ifeq ($(HAVE_DOLPHIN),0)
+ifneq (,$(or $(findstring unix,$(platform)),$(findstring osx,$(platform)),$(findstring win,$(platform)),$(findstring mingw,$(platform)),$(findstring android,$(platform)),$(findstring linux,$(platform)),$(findstring rpi,$(platform))))
+HAVE_DOLPHIN = 1
+endif
+endif
 
 include $(BUILD_DIR)/Makefile.common
 
