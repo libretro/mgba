@@ -337,22 +337,22 @@ else ifneq (,$(filter $(platform), ngc wii wiiu))
    CC = $(DEVKITPPC)/bin/powerpc-eabi-gcc$(EXE_EXT)
    AR = $(DEVKITPPC)/bin/powerpc-eabi-ar$(EXE_EXT)
    PLATFORM_DEFINES += -DGEKKO -mcpu=750 -meabi -mhard-float -DHAVE_STRTOF_L
-   PLATFORM_DEFINES += -U__INT32_TYPE__ -U __UINT32_TYPE__ -D__INT32_TYPE__=int -D_GNU_SOURCE
+   PLATFORM_DEFINES += -D_GNU_SOURCE
    STATIC_LINKING = 1
    DEFINES += -std=c99
    HAVE_VFS_FD = 0
 
    # Nintendo WiiU
    ifneq (,$(findstring wiiu,$(platform)))
-      PLATFORM_DEFINES += -DWIIU -DHW_RVL -mwup
+      PLATFORM_DEFINES += -DWIIU -DHW_RVL -ffunction-sections -fdata-sections -D__wiiu__ -D__wut__
 
    # Nintendo Wii
    else ifneq (,$(findstring wii,$(platform)))
-      PLATFORM_DEFINES += -DHW_RVL -mrvl
+      PLATFORM_DEFINES += -DHW_RVL -mrvl -U__INT32_TYPE__ -U __UINT32_TYPE__ -D__INT32_TYPE__=int
 
    # Nintendo Game Cube
    else ifneq (,$(findstring ngc,$(platform)))
-      PLATFORM_DEFINES += -DHW_DOL -mrvl
+      PLATFORM_DEFINES += -DHW_DOL -mrvl -U__INT32_TYPE__ -U __UINT32_TYPE__ -D__INT32_TYPE__=int
    endif
 
 	PLATFORM_DEFINES += -DHAVE_LOCALE
