@@ -4,6 +4,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 #include "GIFView.h"
+#include "moc_GIFView.cpp"
 
 #ifdef USE_FFMPEG
 
@@ -60,7 +61,7 @@ void GIFView::startRecording() {
 	}
 	FFmpegEncoderSetLooping(&m_encoder, m_ui.loop->isChecked());
 	if (!FFmpegEncoderOpen(&m_encoder, m_filename.toUtf8().constData())) {
-		qCritical() << tr("Failed to open output file: %1").arg(m_filename);
+		LOG(QT, ERROR) << tr("Failed to open output file: %1").arg(m_filename);
 		return;
 	}
 	m_ui.start->setEnabled(false);

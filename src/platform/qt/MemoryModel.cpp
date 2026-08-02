@@ -4,6 +4,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 #include "MemoryModel.h"
+#include "moc_MemoryModel.cpp"
 
 #include "GBAApp.h"
 #include "CoreController.h"
@@ -225,7 +226,7 @@ void MemoryModel::save() {
 	}
 	QFile outfile(filename);
 	if (!outfile.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-		qWarning() << tr("Failed to open output file: %1").arg(filename);
+		LOG(QT, WARN) << tr("Failed to open output file: %1").arg(filename);
 		return;
 	}
 	QByteArray out(serialize());
@@ -239,7 +240,7 @@ void MemoryModel::load() {
 	}
 	QFile infile(filename);
 	if (!infile.open(QIODevice::ReadOnly)) {
-		qWarning() << tr("Failed to open input file: %1").arg(filename);
+		LOG(QT, WARN) << tr("Failed to open input file: %1").arg(filename);
 		return;
 	}
 	QByteArray bytestring(infile.readAll());

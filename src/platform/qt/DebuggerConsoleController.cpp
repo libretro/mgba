@@ -4,6 +4,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 #include "DebuggerConsoleController.h"
+#include "moc_DebuggerConsoleController.cpp"
 
 #include "ConfigController.h"
 #include "CoreController.h"
@@ -18,6 +19,7 @@ using namespace QGBA;
 
 DebuggerConsoleController::DebuggerConsoleController(QObject* parent)
 	: DebuggerController(&m_cliDebugger.d, parent)
+	, m_history(new QStringListModel(this))
 {
 	m_backend.printf = printf;
 	m_backend.init = init;
@@ -32,6 +34,12 @@ DebuggerConsoleController::DebuggerConsoleController(QObject* parent)
 
 	CLIDebuggerCreate(&m_cliDebugger);
 	CLIDebuggerAttachBackend(&m_cliDebugger, &m_backend);
+}
+
+bool DebuggerConsoleController::isPaused() {
+	CoreController::Interrupter interrupter(m_gameController);
+	QMutexLocker lock(&m_mutex);
+	return m_cliDebugger.d.isPaused;
 }
 
 void DebuggerConsoleController::enterLine(const QString& line) {
@@ -125,10 +133,13 @@ const char* DebuggerConsoleController::historyLast(struct CLIDebuggerBackend* be
 	DebuggerConsoleController* self = consoleBe->self;
 	CoreController::Interrupter interrupter(self->m_gameController);
 	QMutexLocker lock(&self->m_mutex);
-	if (self->m_history.isEmpty()) {
+	int rowCount = self->m_history->rowCount();
+	if (rowCount == 0) {
 		return "i";
 	}
-	self->m_last = self->m_history.last().toUtf8();
+
+	QModelIndex index = self->m_history->index(rowCount - 1, 0);
+	self->m_last = self->m_history->data(index, Qt::DisplayRole).toString().toUtf8();
 	*len = self->m_last.size();
 	return self->m_last.constData();
 }
@@ -138,7 +149,10 @@ void DebuggerConsoleController::historyAppend(struct CLIDebuggerBackend* be, con
 	DebuggerConsoleController* self = consoleBe->self;
 	CoreController::Interrupter interrupter(self->m_gameController);
 	QMutexLocker lock(&self->m_mutex);
-	self->m_history.append(QString::fromUtf8(line));
+	int rowCount = self->m_history->rowCount();
+	self->m_history->insertRows(rowCount, 1);
+	QModelIndex index = self->m_history->index(rowCount, 0);
+	self->m_history->setData(index, QString::fromUtf8(line), Qt::DisplayRole);
 }
 
 void DebuggerConsoleController::interrupt(struct CLIDebuggerBackend* be) {
@@ -167,17 +181,23 @@ void DebuggerConsoleController::historyLoad() {
 		history.append(QString::fromUtf8(line));
 	}
 	QMutexLocker lock(&m_mutex);
-	m_history = std::move(history);
+	m_history->setStringList(history);
 }
 
 void DebuggerConsoleController::historySave() {
 	QFile log(ConfigController::configDir() + "/cli_history.log");
 	if (!log.open(QIODevice::WriteOnly | QIODevice::Text)) {
-		qWarning() << tr("Could not open CLI history for writing");
+		LOG(QT, WARN) << tr("Could not open CLI history for writing");
 		return;
 	}
-	for (const QString& line : m_history) {
+	for (const QString& line : m_history->stringList()) {
 		log.write(line.toUtf8());
 		log.write("\n");
 	}
+}
+
+void DebuggerConsoleController::doContinue() {
+	CoreController::Interrupter interrupter(m_gameController);
+	QMutexLocker lock(&m_mutex);
+	CLIDebuggerContinue(&m_cliDebugger);
 }

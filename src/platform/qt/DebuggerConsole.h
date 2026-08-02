@@ -18,14 +18,12 @@ public:
 	DebuggerConsole(DebuggerConsoleController* controller, QWidget* parent = nullptr);
 
 private slots:
-	void postLine();
-
-protected:
-	bool eventFilter(QObject*, QEvent*) override;
+	void postLine(const QString&);
+	void repeat();
+	void updatePaused();
 
 private:
 	Ui::DebuggerConsole m_ui;
-	int m_historyOffset = 0;
 
 	DebuggerConsoleController* m_consoleController;
 };

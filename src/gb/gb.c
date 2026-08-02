@@ -58,6 +58,11 @@ static const uint8_t _cgbBiosHram[GB_SIZE_HRAM] = {
 #define AGB_BIOS_CHECKSUM 0xFFD6B0F1
 #define AGB0_BIOS_CHECKSUM 0x570337EA
 
+#define FORTUNE_BIOS_CHECKSUM 0x66CC6D94
+#define GAMEFIGHTER_BIOS_CHECKSUM 0x908BA8DE
+#define KONGFENG_GBBC_BIOS_CHECKSUM 0x69236128
+#define MAXSTATION_BIOS_CHECKSUM 0x783E69C2
+
 mLOG_DEFINE_CATEGORY(GB, "GB", "gb");
 
 static void GBInit(void* cpu, struct mCPUComponent* component);
@@ -201,13 +206,26 @@ bool GBLoadROM(struct GB* gb, struct VFile* vf) {
 
 	gb->romVf = vf;
 	vf->seek(vf, 0, SEEK_SET);
-	gb->isPristine = true;
-	gb->memory.rom = vf->map(vf, gb->pristineRomSize, MAP_READ);
-	if (!gb->memory.rom) {
-		return false;
+	if (gb->pristineRomSize > GB_SIZE_CART_MAX) {
+		gb->pristineRomSize = GB_SIZE_CART_MAX;
+	}
+	if (gb->pristineRomSize < GB_SIZE_CART_BANK0) {
+		gb->isPristine = false;
+		gb->memory.rom = anonymousMemoryMap(GB_SIZE_CART_MAX);
+		gb->memory.romSize = GB_SIZE_CART_BANK0;
+		if (vf->read(vf, gb->memory.rom, gb->pristineRomSize) < (ssize_t) gb->pristineRomSize) {
+			mappedMemoryFree(gb->memory.rom, GB_SIZE_CART_MAX);
+			return false;
+		}
+	} else {
+		gb->isPristine = true;
+		gb->memory.rom = vf->map(vf, gb->pristineRomSize, MAP_READ);
+		if (!gb->memory.rom) {
+			return false;
+		}
+		gb->memory.romSize = gb->pristineRomSize;
 	}
 	gb->yankedRomSize = 0;
-	gb->memory.romSize = gb->pristineRomSize;
 	gb->romCrc32 = doCrc32(gb->memory.rom, gb->memory.romSize);
 	GBMBCReset(gb);
 
@@ -394,13 +412,7 @@ void GBSramClean(struct GB* gb, uint32_t frameCount) {
 			}
 		}
 
-		size_t c;
-		for (c = 0; c < mCoreCallbacksListSize(&gb->coreCallbacks); ++c) {
-			struct mCoreCallbacks* callbacks = mCoreCallbacksListGetPointer(&gb->coreCallbacks, c);
-			if (callbacks->savedataUpdated) {
-				callbacks->savedataUpdated(callbacks->context);
-			}
-		}
+		mCALLBACKS_INVOKE(gb, savedataUpdated);
 	}
 }
 
@@ -579,6 +591,11 @@ bool GBIsBIOS(struct VFile* vf) {
 	case CGBE_BIOS_CHECKSUM:
 	case AGB_BIOS_CHECKSUM:
 	case AGB0_BIOS_CHECKSUM:
+	// Bootleg consoles
+	case FORTUNE_BIOS_CHECKSUM:
+	case GAMEFIGHTER_BIOS_CHECKSUM:
+	case KONGFENG_GBBC_BIOS_CHECKSUM:
+	case MAXSTATION_BIOS_CHECKSUM:
 		return true;
 	default:
 		return false;
@@ -592,12 +609,18 @@ bool GBIsCompatibleBIOS(struct VFile* vf, enum GBModel model) {
 	case MGB_BIOS_CHECKSUM:
 	case SGB_BIOS_CHECKSUM:
 	case SGB2_BIOS_CHECKSUM:
+	// Bootleg consoles
+	case FORTUNE_BIOS_CHECKSUM:
+	case GAMEFIGHTER_BIOS_CHECKSUM:
+	case MAXSTATION_BIOS_CHECKSUM:
 		return model < GB_MODEL_CGB;
 	case CGB_BIOS_CHECKSUM:
 	case CGB0_BIOS_CHECKSUM:
 	case CGBE_BIOS_CHECKSUM:
 	case AGB_BIOS_CHECKSUM:
 	case AGB0_BIOS_CHECKSUM:
+	// Bootleg consoles
+	case KONGFENG_GBBC_BIOS_CHECKSUM:
 		return model >= GB_MODEL_CGB;
 	default:
 		return false;
@@ -880,6 +903,10 @@ void GBDetectModel(struct GB* gb) {
 		switch (_GBBiosCRC32(gb->biosVf)) {
 		case DMG_BIOS_CHECKSUM:
 		case DMG0_BIOS_CHECKSUM:
+		// Bootleg consoles
+		case FORTUNE_BIOS_CHECKSUM:
+		case GAMEFIGHTER_BIOS_CHECKSUM:
+		case MAXSTATION_BIOS_CHECKSUM:
 			gb->model = GB_MODEL_DMG;
 			break;
 		case MGB_BIOS_CHECKSUM:
@@ -894,6 +921,8 @@ void GBDetectModel(struct GB* gb) {
 		case CGB_BIOS_CHECKSUM:
 		case CGB0_BIOS_CHECKSUM:
 		case CGBE_BIOS_CHECKSUM:
+		// Bootleg consoles
+		case KONGFENG_GBBC_BIOS_CHECKSUM:
 			gb->model = GB_MODEL_CGB;
 			break;
 		case AGB_BIOS_CHECKSUM:
@@ -972,9 +1001,6 @@ void GBProcessEvents(struct SM83Core* cpu) {
 
 			nextEvent = cycles;
 			do {
-#ifdef ENABLE_DEBUGGERS
-				gb->timing.globalCycles += nextEvent;
-#endif
 				nextEvent = mTimingTick(&gb->timing, nextEvent);
 			} while (gb->cpuBlocked);
 			// This loop cannot early exit until the SM83 run loop properly handles mid-M-cycle-exits
@@ -1174,14 +1200,7 @@ void GBGetGameInfo(const struct GB* gb, struct mGameInfo* info) {
 
 void GBFrameStarted(struct GB* gb) {
 	GBTestKeypadIRQ(gb);
-
-	size_t c;
-	for (c = 0; c < mCoreCallbacksListSize(&gb->coreCallbacks); ++c) {
-		struct mCoreCallbacks* callbacks = mCoreCallbacksListGetPointer(&gb->coreCallbacks, c);
-		if (callbacks->videoFrameStarted) {
-			callbacks->videoFrameStarted(callbacks->context);
-		}
-	}
+	mCALLBACKS_INVOKE(gb, videoFrameStarted);
 }
 
 void GBFrameEnded(struct GB* gb) {
@@ -1199,7 +1218,7 @@ void GBFrameEnded(struct GB* gb) {
 	struct mRumble* rumble = gb->memory.rumble;
 	if (rumble && rumble->integrate) {
 		gb->memory.lastRumble = mTimingCurrentTime(&gb->timing);
-		rumble->integrate(rumble, GB_VIDEO_TOTAL_LENGTH);
+		rumble->integrate(rumble, GB_VIDEO_TOTAL_LENGTH << 1);
 	}
 
 	// TODO: Move to common code
@@ -1209,14 +1228,12 @@ void GBFrameEnded(struct GB* gb) {
 		gb->video.renderer->getPixels(gb->video.renderer, &stride, (const void**) &pixels);
 		gb->stream->postVideoFrame(gb->stream, pixels, stride);
 	}
+	mCALLBACKS_INVOKE(gb, videoFrameEnded);
+}
 
-	size_t c;
-	for (c = 0; c < mCoreCallbacksListSize(&gb->coreCallbacks); ++c) {
-		struct mCoreCallbacks* callbacks = mCoreCallbacksListGetPointer(&gb->coreCallbacks, c);
-		if (callbacks->videoFrameEnded) {
-			callbacks->videoFrameEnded(callbacks->context);
-		}
-	}
+void GBInterrupt(struct GB* gb) {
+	gb->earlyExit = true;
+	mTimingInterrupt(&gb->timing);
 }
 
 enum GBModel GBNameToModel(const char* model) {

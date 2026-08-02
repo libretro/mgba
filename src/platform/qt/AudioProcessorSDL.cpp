@@ -4,6 +4,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 #include "AudioProcessorSDL.h"
+#include "moc_AudioProcessorSDL.cpp"
 
 #include "LogController.h"
 
@@ -31,7 +32,7 @@ void AudioProcessorSDL::stop() {
 
 bool AudioProcessorSDL::start() {
 	if (!input()) {
-		qWarning() << tr("Can't start an audio processor without input");
+		LOG(QT, WARN) << tr("Can't start an audio processor without input");
 		return false;
 	}
 

@@ -250,9 +250,9 @@ static const int _isWSpecialRegister[GBA_REG(INTERNAL_MAX)] = {
 	/* 09 */ 1, 1, 1, 1, 1, 1, 1, 1,
 	/* 0A */ 1, 1, 1, 1, 0, 0, 0, 0,
 	/*    DMA */
-	/* 0B */ 0, 0, 0, 0, 0, 1, 0, 0,
-	/* 0C */ 0, 0, 0, 1, 0, 0, 0, 0,
-	/* 0D */ 0, 1, 0, 0, 0, 0, 0, 1,
+	/* 0B */ 0, 0, 0, 0, 1, 1, 0, 0,
+	/* 0C */ 0, 0, 1, 1, 0, 0, 0, 0,
+	/* 0D */ 1, 1, 0, 0, 0, 0, 1, 1,
 	/* 0E */ 0, 0, 0, 0, 0, 0, 0, 0,
 	/* 0F */ 0, 0, 0, 0, 0, 0, 0, 0,
 	/*    Timers */
@@ -311,9 +311,8 @@ void GBAIOWrite(struct GBA* gba, uint32_t address, uint16_t value) {
 	switch (address) {
 	// Video
 	case GBA_REG_DISPSTAT:
-		value &= 0xFFF8;
-		GBAVideoWriteDISPSTAT(&gba->video, value);
-		return;
+		value = GBAVideoWriteDISPSTAT(&gba->video, value);
+		break;
 
 	case GBA_REG_VCOUNT:
 		mLOG(GBA_IO, GAME_ERROR, "Write to read-only I/O register: %03X", address);
@@ -426,25 +425,20 @@ void GBAIOWrite(struct GBA* gba, uint32_t address, uint16_t value) {
 		break;
 
 	case GBA_REG_DMA0CNT_LO:
-		GBADMAWriteCNT_LO(gba, 0, value & 0x3FFF);
+	case GBA_REG_DMA1CNT_LO:
+	case GBA_REG_DMA2CNT_LO:
+	case GBA_REG_DMA3CNT_LO:
+		// Handled inside of DMA routines
 		break;
+
 	case GBA_REG_DMA0CNT_HI:
 		value = GBADMAWriteCNT_HI(gba, 0, value);
-		break;
-	case GBA_REG_DMA1CNT_LO:
-		GBADMAWriteCNT_LO(gba, 1, value & 0x3FFF);
 		break;
 	case GBA_REG_DMA1CNT_HI:
 		value = GBADMAWriteCNT_HI(gba, 1, value);
 		break;
-	case GBA_REG_DMA2CNT_LO:
-		GBADMAWriteCNT_LO(gba, 2, value & 0x3FFF);
-		break;
 	case GBA_REG_DMA2CNT_HI:
 		value = GBADMAWriteCNT_HI(gba, 2, value);
-		break;
-	case GBA_REG_DMA3CNT_LO:
-		GBADMAWriteCNT_LO(gba, 3, value);
 		break;
 	case GBA_REG_DMA3CNT_HI:
 		value = GBADMAWriteCNT_HI(gba, 3, value);
@@ -1022,16 +1016,10 @@ void GBAIOSerialize(struct GBA* gba, struct GBASerializedState* state) {
 		STORE_32(gba->timers[i].lastEvent - mTimingCurrentTime(&gba->timing), 0, &state->timers[i].lastEvent);
 		STORE_32(gba->timers[i].event.when - mTimingCurrentTime(&gba->timing), 0, &state->timers[i].nextEvent);
 		STORE_32(gba->timers[i].flags, 0, &state->timers[i].flags);
-		STORE_32(gba->memory.dma[i].nextSource, 0, &state->dma[i].nextSource);
-		STORE_32(gba->memory.dma[i].nextDest, 0, &state->dma[i].nextDest);
-		STORE_32(gba->memory.dma[i].nextCount, 0, &state->dma[i].nextCount);
-		STORE_32(gba->memory.dma[i].when, 0, &state->dma[i].when);
 	}
-
-	STORE_32(gba->memory.dmaTransferRegister, 0, &state->dmaTransferRegister);
-	STORE_32(gba->dmaPC, 0, &state->dmaBlockPC);
 	STORE_32(gba->bus, 0, &state->bus);
 
+	GBADMASerialize(gba, state);
 	GBAHardwareSerialize(&gba->memory.hw, state);
 }
 
@@ -1065,21 +1053,11 @@ void GBAIODeserialize(struct GBA* gba, const struct GBASerializedState* state) {
 		} else {
 			gba->timers[i].event.when = when + mTimingCurrentTime(&gba->timing);
 		}
-
-		LOAD_16(gba->memory.dma[i].reg, (GBA_REG_DMA0CNT_HI + i * 12), state->io);
-		LOAD_32(gba->memory.dma[i].nextSource, 0, &state->dma[i].nextSource);
-		LOAD_32(gba->memory.dma[i].nextDest, 0, &state->dma[i].nextDest);
-		LOAD_32(gba->memory.dma[i].nextCount, 0, &state->dma[i].nextCount);
-		LOAD_32(gba->memory.dma[i].when, 0, &state->dma[i].when);
 	}
 	gba->sio.siocnt = gba->memory.io[GBA_REG(SIOCNT)];
 	GBASIOWriteRCNT(&gba->sio, gba->memory.io[GBA_REG(RCNT)]);
 
-	LOAD_32(gba->memory.dmaTransferRegister, 0, &state->dmaTransferRegister);
-	LOAD_32(gba->dmaPC, 0, &state->dmaBlockPC);
 	LOAD_32(gba->bus, 0, &state->bus);
-
-	GBADMARecalculateCycles(gba);
-	GBADMAUpdate(gba);
+	GBADMADeserialize(gba, state);
 	GBAHardwareDeserialize(&gba->memory.hw, state);
 }

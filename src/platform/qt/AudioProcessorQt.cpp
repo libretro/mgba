@@ -4,6 +4,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 #include "AudioProcessorQt.h"
+#include "moc_AudioProcessorQt.cpp"
 
 #include "AudioDevice.h"
 #include "LogController.h"
@@ -53,7 +54,7 @@ void AudioProcessorQt::stop() {
 
 bool AudioProcessorQt::start() {
 	if (!input()) {
-		qWarning() << tr("Can't start an audio processor without input");
+		LOG(QT, WARN) << tr("Can't start an audio processor without input");
 		return false;
 	}
 
@@ -78,7 +79,7 @@ bool AudioProcessorQt::start() {
 
 		QAudioDevice device(QMediaDevices::defaultAudioOutput());
 		m_audioOutput = std::make_unique<QAudioSink>(device, format);
-		qInfo() << "Audio outputting to " << device.description();
+		LOG(QT, INFO) << tr("Audio outputting to %1").arg(device.description());
 		connect(m_audioOutput.get(), &QAudioSink::stateChanged, this, [this](QAudio::State state) {
 			if (state != QAudio::IdleState) {
 				return;

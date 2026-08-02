@@ -4,6 +4,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 #include "LogView.h"
+#include "moc_LogView.cpp"
 
 #include "LogController.h"
 #include "Window.h"
@@ -46,6 +47,7 @@ LogView::LogView(LogController* log, Window* window, QWidget* parent)
 	        this, &LogView::setMaxLines);
 	m_ui.maxLines->setValue(DEFAULT_LINE_LIMIT);
 
+	connect(LogController::global(), &LogController::logPosted, this, &LogView::postLog);
 	connect(log, &LogController::logPosted, this, &LogView::postLog);
 	connect(log, static_cast<void (LogController::*)(int)>(&LogController::levelsSet), this, &LogView::setLevels);
 	connect(log, static_cast<void (LogController::*)(int)>(&LogController::levelsEnabled), [this](int level) {

@@ -19,6 +19,7 @@ namespace QGBA {
 
 class ConfigController;
 class CoreController;
+class Gamepad;
 
 class ReportView : public QDialog {
 Q_OBJECT
@@ -41,9 +42,11 @@ protected:
 private:
 	void addCpuInfo(QStringList&);
 	void addGLInfo(QStringList&);
-	void addGamepadInfo(QStringList&);
+	void addControlsInfo(QStringList&);
+	void addGamepadInfo(QStringList&, const Gamepad*);
 	void addROMInfo(QStringList&, CoreController*);
 	void addScreenInfo(QStringList&, const QScreen*);
+	void addBios(QStringList&, const QString& path, const QString& name);
 
 	void addReport(const QString& filename, const QString& report);
 	void addBinary(const QString& filename, const QByteArray& report);
@@ -56,6 +59,8 @@ private:
 	static unsigned s_cpuidMax;
 	static unsigned s_cpuidExtMax;
 #endif
+
+	static QHash<QString, QHash<QByteArray, QString>> s_bioses;
 
 	ConfigController* m_config;
 
