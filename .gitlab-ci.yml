@@ -25,11 +25,11 @@ include:
 
   # MacOS 64-bit
   - project: 'libretro-infrastructure/ci-templates'
-    file: '/osx-x64.yml'
+    file: '/osx-cmake-x86.yml'
 
-  # MacOS ARM 64-bit
+  # MacOS arm 64-bit
   - project: 'libretro-infrastructure/ci-templates'
-    file: '/osx-arm64.yml'
+    file: '/osx-cmake-arm64.yml'
 
   ################################## CELLULAR ################################
   # Android
@@ -38,11 +38,7 @@ include:
 
   # iOS
   - project: 'libretro-infrastructure/ci-templates'
-    file: '/ios-arm64.yml'
-
-  # iOS (armv7)
-  - project: 'libretro-infrastructure/ci-templates'
-    file: '/ios9.yml'
+    file: '/ios-cmake.yml'
     
   ################################## CONSOLES ################################
     
@@ -86,9 +82,9 @@ include:
   - project: 'libretro-infrastructure/ci-templates'
     file: '/dingux-arm32.yml'
 
-  # tvOS (AppleTV)
+  # tvOS
   - project: 'libretro-infrastructure/ci-templates'
-    file: '/tvos-arm64.yml'
+    file: '/tvos-cmake.yml'
 
   #################################### MISC ##################################
   # Emscripten
@@ -143,13 +139,13 @@ libretro-build-linux-aarch64:
 # MacOS 64-bit
 libretro-build-osx-x64:
   extends:
-    - .libretro-osx-x64-make-10-7
+    - .libretro-osx-cmake-x86_64
     - .core-defs
 
-# MacOS ARM 64-bit
+# MacOS arm 64-bit
 libretro-build-osx-arm64:
   extends:
-    - .libretro-osx-arm64-make-default
+    - .libretro-osx-cmake-arm64
     - .core-defs
 
 ################################### CELLULAR #################################
@@ -177,22 +173,22 @@ android-x86:
     - .libretro-android-jni-x86
     - .core-defs
 
-# iOS
+# iOS arm64
 libretro-build-ios-arm64:
   extends:
-    - .libretro-ios-arm64-make-default
+    - .libretro-ios-cmake-arm64
     - .core-defs
 
-# iOS (armv7) [iOS 9 and up]
+# iOS 9
 libretro-build-ios9:
   extends:
-    - .libretro-ios9-make-default
+    - .libretro-ios-cmake-ios9
     - .core-defs
     
-# tvOS
+# tvOS arm64
 libretro-build-tvos-arm64:
   extends:
-    - .libretro-tvos-arm64-make-default
+    - .libretro-tvos-cmake-arm64
     - .core-defs
     
 ################################### CONSOLES #################################
