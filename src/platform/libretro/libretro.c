@@ -27,6 +27,7 @@
 #endif
 #include <mgba-util/memory.h>
 #include <mgba-util/vfs.h>
+#include "libretro-vfs.h"
 
 #ifndef __LIBRETRO__
 #error "Can't compile the libretro core as anything other than libretro."
@@ -1296,6 +1297,7 @@ unsigned retro_api_version(void) {
 void retro_set_environment(retro_environment_t env)
 {
 	environCallback = env;
+	libretroVFSInit(env);
 
 #ifdef M_CORE_GB
 	const struct GBColorPreset* presets;
