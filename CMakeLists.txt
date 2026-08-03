@@ -1074,6 +1074,12 @@ if(BUILD_LIBRETRO)
 	if(CMAKE_C_FLAGS MATCHES "GEKKO")
 		list(APPEND LIBRETRO_EXTRA_FLAGS -U__INT32_TYPE__ -U__UINT32_TYPE__ -D__INT32_TYPE__=int)
 	endif()
+	# Buildroot-style toolchain files blank CMAKE_C_FLAGS_RELEASE and carry
+	# optimization in cached CMAKE_C_FLAGS, which CI's -DCMAKE_C_FLAGS
+	# override discards — leaving -O0. Pin the optimization level.
+	if(NOT MSVC)
+		list(APPEND LIBRETRO_EXTRA_FLAGS -O3)
+	endif()
 	# PS2's GS wants BGR555; libretro.c has a matching PS2 special case
 	set(LIBRETRO_COLOR_DEFINES "COLOR_16_BIT;COLOR_5_6_5")
 	if(PS2)
