@@ -13,7 +13,7 @@
 #include <mgba/core/serialize.h>
 #include <mgba/core/version.h>
 #include <mgba-util/audio-buffer.h>
-#include <mgba-util/audio-resampler.h>
+#include "libretro-audio.h"
 #ifdef M_CORE_GB
 #include <mgba/gb/core.h>
 #include <mgba/internal/gb/gb.h>
@@ -44,8 +44,7 @@ FS_Archive sdmcArchive;
 
 #include "libretro_core_options.h"
 
-#define GBA_RESAMPLED_RATE 65536
-static unsigned targetSampleRate = GBA_RESAMPLED_RATE;
+#define GBA_AUDIO_CHUNK_FRAMES 1024
 #define GB_SAMPLES 512
 /* An alpha factor of 1/180 is *somewhat* equivalent
  * to calculating the average for the last 180
@@ -88,8 +87,7 @@ static void _setupMaps(struct mCore* core);
 
 static struct mCore* core;
 static mColor* outputBuffer = NULL;
-struct mAudioBuffer audioResampleBuffer;
-struct mAudioResampler audioResampler;
+static struct LibretroAudioConverter audioConverter;
 static int16_t *audioSampleBuffer = NULL;
 static size_t audioSampleBufferSize;
 static void* data;
@@ -1370,7 +1368,7 @@ void retro_get_system_av_info(struct retro_system_av_info* info) {
 
 #ifdef M_CORE_GBA
 	if (core->platform(core) == mPLATFORM_GBA) {
-		info->timing.sample_rate = targetSampleRate;
+		info->timing.sample_rate = GBA_OUTPUT_RATE;
 	} else {
 #endif
 		info->timing.sample_rate = core->audioSampleRate(core);
@@ -1493,9 +1491,6 @@ void retro_deinit(void) {
 #if defined(COLOR_16_BIT) && defined(COLOR_5_6_5)
 	_deinitPostProcessing();
 #endif
-
-	mAudioBufferDeinit(&audioResampleBuffer);
-	mAudioResamplerDeinit(&audioResampler);
 
 	if (audioSampleBuffer) {
 		free(audioSampleBuffer);
@@ -1734,28 +1729,25 @@ void retro_run(void) {
 
 #ifdef M_CORE_GBA
 	if (core->platform(core) == mPLATFORM_GBA) {
-		struct mAudioBuffer *coreBuffer = core->getAudioBuffer(core);
-        int coreSamplesAvail = mAudioBufferAvailable(coreBuffer);
-        if (coreSamplesAvail > 0) {
-            unsigned coreSampleRate = core->audioSampleRate(core);
-            size_t samplesProduced;
-            if (coreSampleRate != targetSampleRate) {
-                /* Resample generated audio */
-                mAudioResamplerSetSource(&audioResampler, coreBuffer, coreSampleRate, true);
-                mAudioResamplerProcess(&audioResampler);
-                /* Output resampled audio */
-                size_t samplesAvail = mAudioBufferAvailable(&audioResampleBuffer);
-                samplesProduced = mAudioBufferRead(&audioResampleBuffer, audioSampleBuffer, samplesAvail);
-            } else {
-                samplesProduced = mAudioBufferRead(coreBuffer, audioSampleBuffer, coreSamplesAvail);
-            }
-            if (samplesProduced > 0) {
-                if (audioLowPassEnabled) {
-                    _audioLowPassFilter(audioSampleBuffer, samplesProduced);
-                }
-                audioCallback(audioSampleBuffer, samplesProduced);
-            }
-        }
+		static int16_t coreSamples[GBA_AUDIO_CHUNK_FRAMES * 2];
+		struct mAudioBuffer* coreBuffer = core->getAudioBuffer(core);
+		unsigned coreSampleRate = core->audioSampleRate(core);
+		if (coreSampleRate != audioConverter.inputRate) {
+			audioConverterReset(&audioConverter, coreSampleRate);
+		}
+		while (true) {
+			size_t read = mAudioBufferRead(coreBuffer, coreSamples, GBA_AUDIO_CHUNK_FRAMES);
+			if (!read) {
+				break;
+			}
+			size_t frames = audioConverterProcess(&audioConverter, coreSamples, read, audioSampleBuffer);
+			if (frames > 0) {
+				if (audioLowPassEnabled) {
+					_audioLowPassFilter(audioSampleBuffer, frames);
+				}
+				audioCallback(audioSampleBuffer, frames);
+			}
+		}
 	}
 #endif
 }
@@ -2047,25 +2039,11 @@ bool retro_load_game(const struct retro_game_info* game) {
 	 * audio samples in retro_run() to achieve the
 	 * best possible frame pacing */
 	if (core->platform(core) == mPLATFORM_GBA) {
-		size_t audioSamplesPerFrame, audioBufferSize;
-        if (!environCallback(RETRO_ENVIRONMENT_GET_TARGET_SAMPLE_RATE, &targetSampleRate))
-            targetSampleRate = GBA_RESAMPLED_RATE;
-		/* Get nominal output samples per frame */
-        audioSamplesPerFrame = (size_t)(
-				((float) targetSampleRate * (float) core->frameCycles(core) /
-						(float)core->frequency(core)) + 0.5f);
-		/* Round up to nearest multiple of 1024
-		 * > This is more than we need, but
-		 *   no harm in being safe... */
-		audioBufferSize = ((audioSamplesPerFrame + 1024 - 1) / 1024) * 1024;
-		/* Initialise resample buffer */
-		mAudioBufferInit(&audioResampleBuffer, audioBufferSize, 2);
-		/* Initialise resampler */
-		mAudioResamplerInit(&audioResampler, mINTERPOLATOR_SINC);
-		mAudioResamplerSetDestination(&audioResampler, &audioResampleBuffer, targetSampleRate);
-		/* Initialise output sample buffer
-		 * > Multiply size by 2 (channels) */
-		audioSampleBufferSize = audioBufferSize * 2;
+		/* Output is a fixed 65536 Hz; the converter turns any of the
+		 * four hardware rates into it with exact power-of-two steps.
+		 * Buffer must hold one chunk after 2x upsampling. */
+		audioConverterReset(&audioConverter, core->audioSampleRate(core));
+		audioSampleBufferSize = GBA_AUDIO_CHUNK_FRAMES * 2 * 2;
 		audioSampleBuffer = malloc(audioSampleBufferSize * sizeof(int16_t));
 	} else
 #endif
