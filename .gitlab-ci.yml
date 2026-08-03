@@ -44,20 +44,20 @@ include:
     
   # PlayStation Portable
   - project: 'libretro-infrastructure/ci-templates'
-    file: '/psp-static.yml'
-    
+    file: '/psp-static-cmake.yml'
+
   # PlayStation Vita
   - project: 'libretro-infrastructure/ci-templates'
-    file: '/vita-static.yml'
-    
+    file: '/vita-static-cmake.yml'
+
   # PlayStation2
   - project: 'libretro-infrastructure/ci-templates'
-    file: '/ps2-static.yml'
-    
+    file: '/ps2-static-cmake.yml'
+
   # Nintendo 3DS
   - project: 'libretro-infrastructure/ci-templates'
     file: '/ctr-static.yml'
-    
+
   # Nintendo GameCube
   - project: 'libretro-infrastructure/ci-templates'
     file: '/ngc-static.yml'
@@ -72,7 +72,7 @@ include:
 
   # Nintendo Switch
   - project: 'libretro-infrastructure/ci-templates'
-    file: '/libnx-static.yml'
+    file: '/libnx-static-cmake.yml'
 
   # OpenDingux
   - project: 'libretro-infrastructure/ci-templates'
@@ -191,19 +191,19 @@ libretro-build-tvos-arm64:
 # PlayStation Portable
 libretro-build-psp:
   extends:
-    - .libretro-psp-static-retroarch-master
+    - .libretro-psp-static-cmake-retroarch-master
     - .core-defs
     
 # PlayStation Vita
 libretro-build-vita:
   extends:
-    - .libretro-vita-static-retroarch-master
+    - .libretro-vita-static-cmake-retroarch-master
     - .core-defs
 
 # PlayStation2
 libretro-build-ps2:
   extends:
-    - .libretro-ps2-static-retroarch-master
+    - .libretro-ps2-static-cmake-retroarch-master
     - .core-defs
     
 # Nintendo 3DS
@@ -233,7 +233,7 @@ libretro-build-wiiu:
 # Nintendo Switch
 libretro-build-libnx-aarch64:
   extends:
-    - .libretro-libnx-static-retroarch-master
+    - .libretro-libnx-static-cmake-retroarch-master
     - .core-defs
     
 # OpenDingux
