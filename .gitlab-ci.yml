@@ -56,19 +56,19 @@ include:
 
   # Nintendo 3DS
   - project: 'libretro-infrastructure/ci-templates'
-    file: '/ctr-static.yml'
+    file: '/ctr-static-cmake.yml'
 
   # Nintendo GameCube
   - project: 'libretro-infrastructure/ci-templates'
-    file: '/ngc-static.yml'
+    file: '/ngc-static-cmake.yml'
 
   # Nintendo Wii
   - project: 'libretro-infrastructure/ci-templates'
-    file: '/wii-static.yml'
+    file: '/wii-static-cmake.yml'
 
   # Nintendo WiiU
   - project: 'libretro-infrastructure/ci-templates'
-    file: '/wiiu-static.yml'
+    file: '/wiiu-static-cmake.yml'
 
   # Nintendo Switch
   - project: 'libretro-infrastructure/ci-templates'
@@ -209,25 +209,27 @@ libretro-build-ps2:
 # Nintendo 3DS
 libretro-build-ctr:
   extends:
-    - .libretro-ctr-static-retroarch-master
+    - .libretro-ctr-static-cmake-retroarch-master
     - .core-defs
+  variables:
+    CMAKE_TOOLCHAIN_FILE_DIR: /opt/cmake_toolchain_files
     
 # Nintendo GameCube
 libretro-build-ngc:
   extends:
-    - .libretro-ngc-static-retroarch-master
+    - .libretro-ngc-static-cmake-retroarch-master
     - .core-defs
 
 # Nintendo Wii
 libretro-build-wii:
   extends:
-    - .libretro-wii-static-retroarch-master
+    - .libretro-wii-static-cmake-retroarch-master
     - .core-defs
 
 # Nintendo WiiU
 libretro-build-wiiu:
   extends:
-    - .libretro-wiiu-static-retroarch-master
+    - .libretro-wiiu-static-cmake-retroarch-master
     - .core-defs
 
 # Nintendo Switch

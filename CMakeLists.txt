@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.12)
+cmake_minimum_required(VERSION 3.7...3.12)
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}/src/platform/cmake/")
 
 if(POLICY CMP0025)
@@ -322,6 +322,7 @@ endif()
 
 include(CheckCCompilerFlag)
 include(CheckIncludeFiles)
+include(CheckSymbolExists)
 
 set(FUNCTION_DEFINES)
 
@@ -605,8 +606,9 @@ if(USE_ZLIB)
 	set(HAVE_CRC32 ON)
 	list(APPEND OS_LIB ${ZLIB_LIBRARIES})
 else()
-	# zlib pulls in crc32
-	check_function_exists(crc32 HAVE_CRC32)
+	# zlib pulls in crc32; probe via the header so a linkable symbol without
+	# reachable zlib headers doesn't false-positive
+	check_symbol_exists(crc32 "zlib.h" HAVE_CRC32)
 endif()
 
 if(HAVE_CRC32)
@@ -893,20 +895,24 @@ source_group("Extra features" FILES ${FEATURE_SRC})
 source_group("Third-party code" FILES ${THIRD_PARTY_SRC})
 
 # Platform binaries
-if(DEFINED 3DS)
-	add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/src/platform/3ds ${CMAKE_CURRENT_BINARY_DIR}/3ds)
-endif()
+# These standalone frontends export OS_DEFINES/OS_LIB expecting their own
+# sources to satisfy them; keep them out of core-only builds
+if(NOT LIBMGBA_ONLY)
+	if(DEFINED 3DS)
+		add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/src/platform/3ds ${CMAKE_CURRENT_BINARY_DIR}/3ds)
+	endif()
 
-if(DEFINED WII)
-	add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/src/platform/wii ${CMAKE_CURRENT_BINARY_DIR}/wii)
-endif()
+	if(DEFINED WII)
+		add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/src/platform/wii ${CMAKE_CURRENT_BINARY_DIR}/wii)
+	endif()
 
-if(DEFINED PSP2)
-	add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/src/platform/psp2 ${CMAKE_CURRENT_BINARY_DIR}/psp2)
-endif()
+	if(DEFINED PSP2)
+		add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/src/platform/psp2 ${CMAKE_CURRENT_BINARY_DIR}/psp2)
+	endif()
 
-if(DEFINED SWITCH)
-	add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/src/platform/switch ${CMAKE_CURRENT_BINARY_DIR}/switch)
+	if(DEFINED SWITCH)
+		add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/src/platform/switch ${CMAKE_CURRENT_BINARY_DIR}/switch)
+	endif()
 endif()
 
 # Binaries
@@ -973,7 +979,7 @@ if(NOT SKIP_LIBRARY)
 
 	file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/include/mgba-util)
 
-	if(BUILD_STATIC)
+	if(BUILD_STATIC AND DEPENDENCY_LIB)
 		# Some versions of CMake are remarkably bad about deduplicating this list,
 		# leading to issues with static linking. Let's do it manually.
 		list(REVERSE DEPENDENCY_LIB)
@@ -1026,7 +1032,12 @@ if(BUILD_LIBRETRO)
 	list(FILTER LIBRETRO_CORE_SRC EXCLUDE REGEX "/core/(scripting|directories|library|mem-search|rewind|input)\\.c$")
 	list(FILTER LIBRETRO_CORE_SRC EXCLUDE REGEX "/util/(audio-resampler|interpolator)\\.c$")
 	list(REMOVE_ITEM LIBRETRO_CORE_SRC ${CMAKE_CURRENT_BINARY_DIR}/version.c)
-	include(CheckSymbolExists)
+	if(CMAKE_TRY_COMPILE_TARGET_TYPE STREQUAL "STATIC_LIBRARY")
+		# Link-based function probes always succeed under static try-compile,
+		# so every find_function result above is untrustworthy; use the set
+		# the make-era console builds shipped
+		set(FUNCTION_DEFINES HAVE_STRDUP HAVE_STRNDUP HAVE_LOCALE HAVE_STRTOF_L HAVE_LOCALTIME_R)
+	endif()
 	check_symbol_exists(PATH_MAX "limits.h" LIBRETRO_HAS_PATH_MAX)
 	set(LIBRETRO_EXTRA_DEFINES "")
 	if(NOT LIBRETRO_HAS_PATH_MAX)
