@@ -1050,9 +1050,8 @@ if(BUILD_LIBRETRO)
 		list(APPEND LIBRETRO_EXTRA_DEFINES "GIT_VERSION=\" ${GIT_COMMIT_SHORT}\"")
 	endif()
 	# Embedded toolchains aren't covered by the OS detection above and need a
-	# VFile backend selected here (mirrors Makefile.common's HAVE_VFS_FD logic:
-	# consoles use stdio vfs-file — their newlibs lack e.g. ftruncate — except
-	# vita and 3DS, which have dedicated backends)
+	# VFile backend selected here: consoles use stdio vfs-file — their newlibs
+	# lack e.g. ftruncate — except vita and 3DS, which have dedicated backends
 	if(NOT "${OS_DEFINES}" MATCHES "ENABLE_VFS")
 		if(VITA)
 			list(APPEND LIBRETRO_CORE_SRC ${CMAKE_CURRENT_SOURCE_DIR}/src/platform/psp2/sce-vfs.c)

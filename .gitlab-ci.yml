@@ -7,8 +7,6 @@
 # Core definitions
 .core-defs:
   variables:
-    JNI_PATH: libretro-build
-    MAKEFILE: Makefile.libretro
     CORENAME: mgba
     CORE_ARGS: -DLIBMGBA_ONLY=ON -DBUILD_LIBRETRO=ON
 
