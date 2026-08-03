@@ -34,7 +34,7 @@ include:
   ################################## CELLULAR ################################
   # Android
   - project: 'libretro-infrastructure/ci-templates'
-    file: '/android-jni.yml'
+    file: '/android-cmake.yml'
 
   # iOS
   - project: 'libretro-infrastructure/ci-templates'
@@ -76,11 +76,7 @@ include:
 
   # OpenDingux
   - project: 'libretro-infrastructure/ci-templates'
-    file: '/dingux-mips32.yml'
-
-  # OpenDingux (ARM)
-  - project: 'libretro-infrastructure/ci-templates'
-    file: '/dingux-arm32.yml'
+    file: '/dingux-cmake.yml'
 
   # tvOS
   - project: 'libretro-infrastructure/ci-templates'
@@ -89,11 +85,11 @@ include:
   #################################### MISC ##################################
   # Emscripten
   - project: 'libretro-infrastructure/ci-templates'
-    file: '/emscripten-static.yml'
+    file: '/emscripten-static-cmake.yml'
 
   # webOS 32-bit (LGTV)
   - project: 'libretro-infrastructure/ci-templates'
-    file: '/webos-make.yml'
+    file: '/webos-cmake.yml'
 
 # Stages for building
 stages:
@@ -152,25 +148,25 @@ libretro-build-osx-arm64:
 # Android ARMv7a
 android-armeabi-v7a:
   extends:
-    - .libretro-android-jni-armeabi-v7a
+    - .libretro-android-cmake-armeabi-v7a
     - .core-defs
 
 # Android ARMv8a
 android-arm64-v8a:
   extends:
-    - .libretro-android-jni-arm64-v8a
+    - .libretro-android-cmake-arm64-v8a
     - .core-defs
 
 # Android 64-bit x86
 android-x86_64:
   extends:
-    - .libretro-android-jni-x86_64
+    - .libretro-android-cmake-x86_64
     - .core-defs
 
 # Android 32-bit x86
 android-x86:
   extends:
-    - .libretro-android-jni-x86
+    - .libretro-android-cmake-x86
     - .core-defs
 
 # iOS arm64
@@ -243,30 +239,30 @@ libretro-build-libnx-aarch64:
 # OpenDingux
 libretro-build-dingux-mips32:
   extends:
-    - .libretro-dingux-mips32-make-default
+    - .libretro-dingux-cmake-mips32
     - .core-defs
 
 # OpenDingux Beta
 libretro-build-dingux-odbeta-mips32:
   extends:
-    - .libretro-dingux-odbeta-mips32-make-default
+    - .libretro-dingux-odbeta-cmake-mips32
     - .core-defs
 
 # Miyoo
 libretro-build-miyoo-arm32:
   extends:
-    - .libretro-miyoo-arm32-make-default
+    - .libretro-miyoo-cmake-arm32
     - .core-defs
 
 #################################### MISC ##################################
 # Emscripten
 libretro-build-emscripten:
   extends:
-    - .libretro-emscripten-static-retroarch-master
+    - .libretro-emscripten-static-cmake-retroarch-master
     - .core-defs
 
 # webOS
 libretro-build-webos-armv7a:
   extends:
-    - .libretro-webos-armv7a-make-default
+    - .libretro-webos-armv7a-cmake
     - .core-defs
