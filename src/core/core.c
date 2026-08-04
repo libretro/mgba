@@ -131,7 +131,6 @@ struct mCore* mCoreFind(const char* path) {
 	return NULL;
 }
 
-#if !defined(__LIBRETRO__)
 bool mCoreLoadFile(struct mCore* core, const char* path) {
 	core->unloadROM(core);
 #ifdef FIXED_ROM_BUFFER
@@ -165,7 +164,6 @@ bool mCorePreloadVF(struct mCore* core, struct VFile* vf) {
 bool mCorePreloadFile(struct mCore* core, const char* path) {
 	return mCorePreloadFileCB(core, path, NULL, NULL);
 }
-#endif
 
 bool mCorePreloadVFCB(struct mCore* core, struct VFile* vf, void (cb)(size_t, size_t, void*), void* context) {
 	struct VFile* vfm;
@@ -222,7 +220,6 @@ bool mCorePreloadVFCB(struct mCore* core, struct VFile* vf, void (cb)(size_t, si
 	return ret;
 }
 
-#if !defined(__LIBRETRO__)
 bool mCorePreloadFileCB(struct mCore* core, const char* path, void (cb)(size_t, size_t, void*), void* context) {
 #if defined(ENABLE_VFS) && defined(ENABLE_DIRECTORIES)
 	struct VFile* rom = mDirectorySetOpenPath(&core->dirs, path, core->isROM);
@@ -311,7 +308,6 @@ bool mCoreAutoloadCheats(struct mCore* core) {
 	}
 	return success;
 }
-#endif
 
 bool mCoreSaveState(struct mCore* core, int slot, int flags) {
 	struct VFile* vf = mCoreGetState(core, slot, true);
@@ -423,7 +419,7 @@ void mCoreInitConfig(struct mCore* core, const char* port) {
 }
 
 void mCoreLoadConfig(struct mCore* core) {
-#if defined(ENABLE_VFS) && !defined(__LIBRETRO__)
+#ifdef ENABLE_VFS
 	mCoreConfigLoad(&core->config);
 #endif
 	mCoreLoadForeignConfig(core, &core->config);
@@ -431,7 +427,7 @@ void mCoreLoadConfig(struct mCore* core) {
 
 void mCoreLoadForeignConfig(struct mCore* core, const struct mCoreConfig* config) {
 	mCoreConfigMap(config, &core->opts);
-#if defined(ENABLE_VFS) && defined(ENABLE_DIRECTORIES) && !defined(__LIBRETRO__)
+#if defined(ENABLE_VFS) && defined(ENABLE_DIRECTORIES)
 	mDirectorySetMapOptions(&core->dirs, &core->opts);
 #endif
 	if (core->opts.audioBuffers) {

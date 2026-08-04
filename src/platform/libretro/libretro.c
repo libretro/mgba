@@ -145,12 +145,6 @@ static const int keymap[] = {
 	RETRO_DEVICE_ID_JOYPAD_L,
 };
 
-#ifndef GIT_VERSION
-#define GIT_VERSION ""
-#endif
-const char* const projectVersion = "0.11-dev" GIT_VERSION;
-const char* const projectName = "mGBA";
-
 /* Maximum number of consecutive frames that
  * can be skipped */
 #define RETRO_FRAMESKIP_MAX 30

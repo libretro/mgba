@@ -227,7 +227,6 @@ void separatePath(const char* path, char* dirname, char* basename, char* extensi
 	}
 }
 
-#if defined(ENABLE_VFS) && !defined(__LIBRETRO__)
 bool isAbsolute(const char* path) {
 	// XXX: Is this robust?
 #ifdef _WIN32
@@ -295,6 +294,7 @@ bool upDirectory(char* path) {
 	}
 }
 
+#if defined(ENABLE_VFS) && defined(ENABLE_DIRECTORIES)
 struct VFile* VDirFindFirst(struct VDir* dir, bool (*filter)(struct VFile*)) {
 	dir->rewind(dir);
 	struct VDirEntry* dirent = dir->listNext(dir);

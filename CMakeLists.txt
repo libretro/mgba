@@ -1028,9 +1028,9 @@ endif()
 if(BUILD_LIBRETRO)
 	file(GLOB RETRO_SRC ${CMAKE_CURRENT_SOURCE_DIR}/src/platform/libretro/*.c)
 	set(LIBRETRO_CORE_SRC ${CORE_SRC})
-	list(FILTER LIBRETRO_CORE_SRC EXCLUDE REGEX "/core/(scripting|directories|library|mem-search|rewind|input)\\.c$")
+	list(APPEND LIBRETRO_CORE_SRC ${VFS_SRC})
+	list(FILTER LIBRETRO_CORE_SRC EXCLUDE REGEX "/core/(scripting|library|mem-search|rewind|input)\\.c$")
 	list(FILTER LIBRETRO_CORE_SRC EXCLUDE REGEX "/util/(audio-resampler|interpolator)\\.c$")
-	list(REMOVE_ITEM LIBRETRO_CORE_SRC ${CMAKE_CURRENT_BINARY_DIR}/version.c)
 	if(CMAKE_TRY_COMPILE_TARGET_TYPE STREQUAL "STATIC_LIBRARY" AND NOT APPLE)
 		# Link-based function probes always succeed under static try-compile,
 		# so every find_function result above is untrustworthy; use the set
@@ -1045,9 +1045,6 @@ if(BUILD_LIBRETRO)
 	endif()
 	# math.h M_PI is not guaranteed on newlib; common.h's fallback is float
 	list(APPEND LIBRETRO_EXTRA_DEFINES "M_PI=3.14159265358979323846")
-	if(GIT_COMMIT_SHORT)
-		list(APPEND LIBRETRO_EXTRA_DEFINES "GIT_VERSION=\" ${GIT_COMMIT_SHORT}\"")
-	endif()
 	# Embedded toolchains aren't covered by the OS detection above and need a
 	# VFile backend selected here: consoles use stdio vfs-file — their newlibs
 	# lack e.g. ftruncate — except vita and 3DS, which have dedicated backends
@@ -1063,6 +1060,7 @@ if(BUILD_LIBRETRO)
 			list(APPEND LIBRETRO_EXTRA_FLAGS -mword-relocations -ffast-math)
 		else()
 			list(APPEND LIBRETRO_CORE_SRC ${CMAKE_CURRENT_SOURCE_DIR}/src/util/vfs/vfs-file.c)
+			list(APPEND LIBRETRO_CORE_SRC ${CMAKE_CURRENT_SOURCE_DIR}/src/util/vfs/vfs-dirent.c)
 			list(APPEND LIBRETRO_EXTRA_DEFINES ENABLE_VFS_FILE)
 		endif()
 	endif()
@@ -1072,6 +1070,8 @@ if(BUILD_LIBRETRO)
 	# devkitPPC's int32_t is long-based; the make builds always overrode it
 	if(CMAKE_C_FLAGS MATCHES "GEKKO")
 		list(APPEND LIBRETRO_EXTRA_FLAGS -U__INT32_TYPE__ -U__UINT32_TYPE__ -D__INT32_TYPE__=int)
+		# vfs-dirent's VDirOpen roots at VDeviceList when __wii__
+		list(APPEND LIBRETRO_CORE_SRC ${CMAKE_CURRENT_SOURCE_DIR}/src/util/vfs/vfs-devlist.c)
 	endif()
 	# Buildroot-style toolchain files blank CMAKE_C_FLAGS_RELEASE and carry
 	# optimization in cached CMAKE_C_FLAGS, which CI's -DCMAKE_C_FLAGS
