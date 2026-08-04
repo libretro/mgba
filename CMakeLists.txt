@@ -1096,7 +1096,7 @@ if(BUILD_LIBRETRO)
 		add_library(${BINARY_NAME}_libretro SHARED ${LIBRETRO_CORE_SRC} ${RETRO_SRC} ${CORE_VFS_SRC})
 		if(NOT APPLE AND NOT WIN32)
 			# Export only the retro_* API, as the make build always did
-			set_property(TARGET ${BINARY_NAME}_libretro APPEND_STRING PROPERTY LINK_FLAGS " -Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/link.T")
+			set_property(TARGET ${BINARY_NAME}_libretro APPEND_STRING PROPERTY LINK_FLAGS " -Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/src/platform/libretro/link.T")
 		endif()
 	endif()
 	add_dependencies(${BINARY_NAME}_libretro ${BINARY_NAME}-version-info)
