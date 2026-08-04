@@ -66,8 +66,6 @@ static retro_set_rumble_state_t rumbleCallback;
 static retro_sensor_get_input_t sensorGetCallback;
 static retro_set_sensor_state_t sensorStateCallback;
 
-static bool libretro_supports_bitmasks = false;
-
 static void GBARetroLog(struct mLogger* logger, int category, enum mLogLevel level, const char* format, va_list args);
 
 static void _postAudioBuffer(struct mAVStream*, struct mAudioBuffer*);
@@ -114,7 +112,6 @@ static unsigned camHeight;
 static unsigned imcapWidth;
 static unsigned imcapHeight;
 static size_t camStride;
-static bool envVarsUpdated;
 static unsigned frameskipType;
 static unsigned frameskipThreshold;
 static uint16_t frameskipCounter;
@@ -270,40 +267,39 @@ static void _loadFrameskipSettings(struct mCoreOptions *opts) {
 }
 
 /* Audio post processing */
-static void _audioLowPassFilter(int16_t *buffer, int count) {
-
-	int samples  = count;
-	int16_t *out = buffer;
+static void _audioLowPassFilter(int16_t* buffer, int count) {
+	int16_t* out = buffer;
 
 	/* Restore previous samples */
-	int32_t audioLowPassLeft  = audioLowPassLeftPrev;
+	int32_t audioLowPassLeft = audioLowPassLeftPrev;
 	int32_t audioLowPassRight = audioLowPassRightPrev;
 
 	/* Single-pole low-pass filter (6 dB/octave) */
 	int32_t factorA = audioLowPassRange;
 	int32_t factorB = 0x10000 - factorA;
 
-	do {
+	int samples;
+	for (samples = 0; samples < count; ++samples) {
 		/* Apply low-pass filter */
-		audioLowPassLeft  = (audioLowPassLeft  * factorA) + (*out       * factorB);
-		audioLowPassRight = (audioLowPassRight * factorA) + (*(out + 1) * factorB);
+		audioLowPassLeft = (audioLowPassLeft * factorA) + (out[0] * factorB);
+		audioLowPassRight = (audioLowPassRight * factorA) + (out[1] * factorB);
 
 		/* 16.16 fixed point */
 		audioLowPassLeft  >>= 16;
 		audioLowPassRight >>= 16;
 
 		/* Update sound buffer */
-		*out++ = (int16_t) audioLowPassLeft;
-		*out++ = (int16_t) audioLowPassRight;
-	} while (--samples);
+		out[0] = (int16_t) audioLowPassLeft;
+		out[1] = (int16_t) audioLowPassRight;
+		out += 2;
+	};
 
 	/* Save last samples for next frame */
-	audioLowPassLeftPrev  = audioLowPassLeft;
+	audioLowPassLeftPrev = audioLowPassLeft;
 	audioLowPassRightPrev = audioLowPassRight;
 }
 
 static void _loadAudioLowPassFilterSettings(void) {
-
 	struct retro_variable var;
 	audioLowPassEnabled = false;
 	audioLowPassRange = (60 * 0x10000) / 100;
@@ -1240,8 +1236,8 @@ static void _reloadSettings(void) {
 	}
 #endif
 
-	_loadFrameskipSettings(&opts);
 	_loadAudioLowPassFilterSettings();
+	_loadFrameskipSettings(&opts);
 
 	var.key = "mgba_idle_optimization";
 	var.value = 0;
@@ -1292,8 +1288,7 @@ unsigned retro_api_version(void) {
 	return RETRO_API_VERSION;
 }
 
-void retro_set_environment(retro_environment_t env)
-{
+void retro_set_environment(retro_environment_t env) {
 	environCallback = env;
 	libretroVFSInit(env);
 
@@ -1465,9 +1460,6 @@ void retro_init(void) {
 	imageSource.stopRequestImage = _stopImage;
 	imageSource.requestImage = _requestImage;
 
-	if (environCallback(RETRO_ENVIRONMENT_GET_INPUT_BITMASKS, NULL))
-		libretro_supports_bitmasks = true;
-
 	frameskipType           = 0;
 	frameskipThreshold      = 0;
 	frameskipCounter        = 0;
@@ -1604,7 +1596,6 @@ void retro_run(void) {
 			inputCallback(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R2)
 		);
 	}
-
 	core->setKeys(core, keys);
 
 	if (!luxSensorUsed) {
@@ -1740,12 +1731,12 @@ void retro_run(void) {
 			if (!read) {
 				break;
 			}
-			size_t frames = audioConverterProcess(&audioConverter, coreSamples, read, audioSampleBuffer);
-			if (frames > 0) {
+			size_t produced = audioConverterProcess(&audioConverter, coreSamples, read, audioSampleBuffer);
+			if (produced > 0) {
 				if (audioLowPassEnabled) {
-					_audioLowPassFilter(audioSampleBuffer, frames);
+					_audioLowPassFilter(audioSampleBuffer, produced);
 				}
-				audioCallback(audioSampleBuffer, frames);
+				audioCallback(audioSampleBuffer, (size_t)produced);
 			}
 		}
 	}
@@ -2032,7 +2023,7 @@ bool retro_load_game(const struct retro_game_info* game) {
 	memset(outputBuffer, 0xFFFF, VIDEO_BUFF_SIZE);
 	core->setVideoBuffer(core, outputBuffer, VIDEO_WIDTH_MAX);
 
-#ifdef M_CORE_GBA
+	#ifdef M_CORE_GBA
 	/* GBA emulation produces a fairly regular number
 	 * of audio samples per frame that is consistent
 	 * with the set sample rate. We therefore consume
@@ -2046,7 +2037,7 @@ bool retro_load_game(const struct retro_game_info* game) {
 		audioSampleBufferSize = GBA_AUDIO_CHUNK_FRAMES * 2 * 2;
 		audioSampleBuffer = malloc(audioSampleBufferSize * sizeof(int16_t));
 	} else
-#endif
+	#endif
 	{
 		/* GB/GBC emulation does not produce a number
 		 * of samples per frame that is consistent with
@@ -2081,6 +2072,7 @@ bool retro_load_game(const struct retro_game_info* game) {
 	if (core->platform(core) == mPLATFORM_GBA) {
 		core->setPeripheral(core, mPERIPH_GBA_LUMINANCE, &lux);
 		biosName = "gba_bios.bin";
+
 	}
 #endif
 
@@ -2233,7 +2225,6 @@ void retro_cheat_set(unsigned index, bool enabled, const char* code) {
 			} else {
 				realCode[pos] = code[i];
 			}
-
 			if (pos == 11 || !realCode[pos]) {
 				realCode[pos] = '\0';
 				mCheatAddLine(cheatSet, realCode, 0);
@@ -2346,7 +2337,7 @@ size_t retro_get_memory_size(unsigned id) {
 			case GB_MBC3_RTC:
 				return sizeof(struct GBMBCRTCSaveBuffer);
 			default:
-				break;
+				return 0;
 			}
 #endif
 		default:

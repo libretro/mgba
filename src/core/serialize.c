@@ -388,7 +388,7 @@ bool mCoreSaveStateNamed(struct mCore* core, struct VFile* vf, int flags) {
 	if (flags & SAVESTATE_METADATA) {
 		uint64_t* creationUsec = malloc(sizeof(*creationUsec));
 		if (creationUsec) {
-#if !defined(_MSC_VER)
+#ifndef _MSC_VER
 			struct timeval tv;
 			if (!gettimeofday(&tv, 0)) {
 				uint64_t usec = tv.tv_usec;
