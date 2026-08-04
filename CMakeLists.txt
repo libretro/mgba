@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.12)
+cmake_minimum_required(VERSION 3.7...3.12)
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_LIST_DIR}/src/platform/cmake/")
 
 if(POLICY CMP0025)
@@ -35,7 +35,7 @@ if(NOT MSVC)
 		set(WARNING_FLAGS "${WARNING_FLAGS} -Wno-format")
 	endif()
 	set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} ${WARNING_FLAGS} -Werror=implicit-function-declaration -Werror=implicit-int -fwrapv")
-	if(CMAKE_C_COMPILER_ID STREQUAL "GNU")
+	if(CMAKE_C_COMPILER_ID STREQUAL "GNU" AND NOT CMAKE_C_COMPILER_VERSION VERSION_LESS "5.0")
 		# TODO: Remove this once mScript KV pairs support const correctness
 		set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Werror=incompatible-pointer-types")
 	endif()
@@ -231,7 +231,7 @@ if(WIN32)
 elseif(UNIX)
 	set(USE_PTHREADS ON)
 
-	if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+	if(CMAKE_SYSTEM_NAME STREQUAL "Linux" OR EMSCRIPTEN)
 		add_definitions(-D_GNU_SOURCE)
 	endif()
 
@@ -252,7 +252,7 @@ if(APPLE)
 	list(APPEND OS_LIB "-framework Foundation")
 
 	# Xcode 15 introduced a warning about duplicate libraries that CMake doesn't disable itself, we do it here globally
-	if(MACOSX_SDK VERSION_GREATER_EQUAL 10.15)
+	if(CMAKE_C_COMPILER_ID STREQUAL "AppleClang" AND NOT CMAKE_C_COMPILER_VERSION VERSION_LESS "15")
 		add_link_options(LINKER:-no_warn_duplicate_libraries)
 	endif()
 
@@ -322,6 +322,7 @@ endif()
 
 include(CheckCCompilerFlag)
 include(CheckIncludeFiles)
+include(CheckSymbolExists)
 
 set(FUNCTION_DEFINES)
 
@@ -605,8 +606,9 @@ if(USE_ZLIB)
 	set(HAVE_CRC32 ON)
 	list(APPEND OS_LIB ${ZLIB_LIBRARIES})
 else()
-	# zlib pulls in crc32
-	check_function_exists(crc32 HAVE_CRC32)
+	# zlib pulls in crc32; probe via the header so a linkable symbol without
+	# reachable zlib headers doesn't false-positive
+	check_symbol_exists(crc32 "zlib.h" HAVE_CRC32)
 endif()
 
 if(HAVE_CRC32)
@@ -893,20 +895,24 @@ source_group("Extra features" FILES ${FEATURE_SRC})
 source_group("Third-party code" FILES ${THIRD_PARTY_SRC})
 
 # Platform binaries
-if(DEFINED 3DS)
-	add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/src/platform/3ds ${CMAKE_CURRENT_BINARY_DIR}/3ds)
-endif()
+# These standalone frontends export OS_DEFINES/OS_LIB expecting their own
+# sources to satisfy them; keep them out of core-only builds
+if(NOT LIBMGBA_ONLY)
+	if(DEFINED 3DS)
+		add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/src/platform/3ds ${CMAKE_CURRENT_BINARY_DIR}/3ds)
+	endif()
 
-if(DEFINED WII)
-	add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/src/platform/wii ${CMAKE_CURRENT_BINARY_DIR}/wii)
-endif()
+	if(DEFINED WII)
+		add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/src/platform/wii ${CMAKE_CURRENT_BINARY_DIR}/wii)
+	endif()
 
-if(DEFINED PSP2)
-	add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/src/platform/psp2 ${CMAKE_CURRENT_BINARY_DIR}/psp2)
-endif()
+	if(DEFINED PSP2)
+		add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/src/platform/psp2 ${CMAKE_CURRENT_BINARY_DIR}/psp2)
+	endif()
 
-if(DEFINED SWITCH)
-	add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/src/platform/switch ${CMAKE_CURRENT_BINARY_DIR}/switch)
+	if(DEFINED SWITCH)
+		add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/src/platform/switch ${CMAKE_CURRENT_BINARY_DIR}/switch)
+	endif()
 endif()
 
 # Binaries
@@ -973,7 +979,7 @@ if(NOT SKIP_LIBRARY)
 
 	file(MAKE_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/include/mgba-util)
 
-	if(BUILD_STATIC)
+	if(BUILD_STATIC AND DEPENDENCY_LIB)
 		# Some versions of CMake are remarkably bad about deduplicating this list,
 		# leading to issues with static linking. Let's do it manually.
 		list(REVERSE DEPENDENCY_LIB)
@@ -1021,14 +1027,93 @@ endif()
 
 if(BUILD_LIBRETRO)
 	file(GLOB RETRO_SRC ${CMAKE_CURRENT_SOURCE_DIR}/src/platform/libretro/*.c)
-	add_library(${BINARY_NAME}_libretro SHARED ${CORE_SRC} ${RETRO_SRC} ${CORE_VFS_SRC})
+	set(LIBRETRO_CORE_SRC ${CORE_SRC})
+	list(FILTER LIBRETRO_CORE_SRC EXCLUDE REGEX "/platform/(posix|windows)/memory\\.c$")
+	list(FILTER LIBRETRO_CORE_SRC EXCLUDE REGEX "/core/(scripting|directories|library|mem-search|rewind|input)\\.c$")
+	list(FILTER LIBRETRO_CORE_SRC EXCLUDE REGEX "/util/(audio-resampler|interpolator)\\.c$")
+	list(REMOVE_ITEM LIBRETRO_CORE_SRC ${CMAKE_CURRENT_BINARY_DIR}/version.c)
+	if(CMAKE_TRY_COMPILE_TARGET_TYPE STREQUAL "STATIC_LIBRARY" AND NOT APPLE)
+		# Link-based function probes always succeed under static try-compile,
+		# so every find_function result above is untrustworthy; use the set
+		# the make-era console builds shipped
+		set(FUNCTION_DEFINES HAVE_STRDUP HAVE_STRNDUP HAVE_LOCALE HAVE_STRTOF_L HAVE_LOCALTIME_R)
+	endif()
+	check_symbol_exists(PATH_MAX "limits.h" LIBRETRO_HAS_PATH_MAX)
+	set(LIBRETRO_EXTRA_DEFINES "")
+	set(LIBRETRO_EXTRA_FLAGS "")
+	if(NOT LIBRETRO_HAS_PATH_MAX)
+		list(APPEND LIBRETRO_EXTRA_DEFINES "PATH_MAX=4096")
+	endif()
+	# math.h M_PI is not guaranteed on newlib; common.h's fallback is float
+	list(APPEND LIBRETRO_EXTRA_DEFINES "M_PI=3.14159265358979323846")
+	if(GIT_COMMIT_SHORT)
+		list(APPEND LIBRETRO_EXTRA_DEFINES "GIT_VERSION=\" ${GIT_COMMIT_SHORT}\"")
+	endif()
+	# Embedded toolchains aren't covered by the OS detection above and need a
+	# VFile backend selected here: consoles use stdio vfs-file — their newlibs
+	# lack e.g. ftruncate — except vita and 3DS, which have dedicated backends
+	if(NOT "${OS_DEFINES}" MATCHES "ENABLE_VFS")
+		if(VITA)
+			list(APPEND LIBRETRO_CORE_SRC ${CMAKE_CURRENT_SOURCE_DIR}/src/platform/psp2/sce-vfs.c)
+			list(APPEND LIBRETRO_EXTRA_DEFINES PSP2 ENABLE_VFS_FD)
+			# Use the sceKernelLibcLocaltime_r shim, not newlib's localtime_r
+			list(REMOVE_ITEM FUNCTION_DEFINES HAVE_LOCALTIME_R)
+		elseif(CMAKE_SYSTEM_PROCESSOR STREQUAL "armv6k")
+			list(APPEND LIBRETRO_CORE_SRC ${CMAKE_CURRENT_SOURCE_DIR}/src/platform/3ds/3ds-vfs.c)
+			list(APPEND LIBRETRO_EXTRA_DEFINES ARM11 _3DS __3DS__ ENABLE_VFS_3DS ENABLE_VFS_FD)
+			list(APPEND LIBRETRO_EXTRA_FLAGS -mword-relocations -ffast-math)
+		else()
+			list(APPEND LIBRETRO_CORE_SRC ${CMAKE_CURRENT_SOURCE_DIR}/src/util/vfs/vfs-file.c)
+			list(APPEND LIBRETRO_EXTRA_DEFINES ENABLE_VFS_FILE)
+		endif()
+	endif()
+	if(NSWITCH)
+		list(APPEND LIBRETRO_EXTRA_FLAGS -ffast-math)
+	endif()
+	# devkitPPC's int32_t is long-based; the make builds always overrode it
+	if(CMAKE_C_FLAGS MATCHES "GEKKO")
+		list(APPEND LIBRETRO_EXTRA_FLAGS -U__INT32_TYPE__ -U__UINT32_TYPE__ -D__INT32_TYPE__=int)
+	endif()
+	# Buildroot-style toolchain files blank CMAKE_C_FLAGS_RELEASE and carry
+	# optimization in cached CMAKE_C_FLAGS, which CI's -DCMAKE_C_FLAGS
+	# override discards — leaving -O0. Pin the optimization level.
+	if(NOT MSVC)
+		list(APPEND LIBRETRO_EXTRA_FLAGS -O3)
+	endif()
+	# PS2's GS wants BGR555; libretro.c has a matching PS2 special case
+	set(LIBRETRO_COLOR_DEFINES "COLOR_16_BIT;COLOR_5_6_5")
+	if(PS2)
+		set(LIBRETRO_COLOR_DEFINES "COLOR_16_BIT")
+		list(APPEND LIBRETRO_EXTRA_DEFINES HAVE_NO_LANGEXTRA)
+	endif()
+	if(LIBRETRO_STATIC)
+		add_library(${BINARY_NAME}_libretro STATIC ${LIBRETRO_CORE_SRC} ${RETRO_SRC} ${CORE_VFS_SRC})
+		if(EMSCRIPTEN)
+			set_target_properties(${BINARY_NAME}_libretro PROPERTIES SUFFIX "${LIBRETRO_SUFFIX}.bc")
+		else()
+			set_target_properties(${BINARY_NAME}_libretro PROPERTIES SUFFIX "${LIBRETRO_SUFFIX}.a")
+		endif()
+	else()
+		add_library(${BINARY_NAME}_libretro SHARED ${LIBRETRO_CORE_SRC} ${RETRO_SRC} ${CORE_VFS_SRC})
+		if(NOT APPLE AND NOT WIN32)
+			# Export only the retro_* API, as the make build always did
+			set_property(TARGET ${BINARY_NAME}_libretro APPEND_STRING PROPERTY LINK_FLAGS " -Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/link.T")
+		endif()
+	endif()
 	add_dependencies(${BINARY_NAME}_libretro ${BINARY_NAME}-version-info)
-	set_target_properties(${BINARY_NAME}_libretro PROPERTIES PREFIX "" COMPILE_DEFINITIONS "__LIBRETRO__;COLOR_16_BIT;COLOR_5_6_5;DISABLE_THREADING;MGBA_STANDALONE;${OS_DEFINES};${FUNCTION_DEFINES};ENABLE_VFS;MINIMAL_CORE=2")
+	# The make-era libretro builds all used the gnu dialect (-std=gnu99) plus
+	# _GNU_SOURCE; newlib toolchains hide POSIX declarations under strict c11
+	set_target_properties(${BINARY_NAME}_libretro PROPERTIES PREFIX "" C_EXTENSIONS ON COMPILE_DEFINITIONS "__LIBRETRO__;_GNU_SOURCE;${LIBRETRO_COLOR_DEFINES};DISABLE_THREADING;MGBA_STANDALONE;${OS_DEFINES};${FUNCTION_DEFINES};ENABLE_VFS;ENABLE_DIRECTORIES;MINIMAL_CORE=2;${LIBRETRO_EXTRA_DEFINES}")
+	if(LIBRETRO_EXTRA_FLAGS)
+		target_compile_options(${BINARY_NAME}_libretro PRIVATE ${LIBRETRO_EXTRA_FLAGS})
+	endif()
 	target_link_libraries(${BINARY_NAME}_libretro ${OS_LIB})
 	if(MSVC)
 		install(TARGETS ${BINARY_NAME}_libretro RUNTIME DESTINATION ${LIBRETRO_LIBDIR} COMPONENT ${BINARY_NAME}_libretro)
 	else()
-		install(TARGETS ${BINARY_NAME}_libretro LIBRARY DESTINATION ${LIBRETRO_LIBDIR} COMPONENT ${BINARY_NAME}_libretro NAMELINK_SKIP)
+		install(TARGETS ${BINARY_NAME}_libretro
+			LIBRARY DESTINATION ${LIBRETRO_LIBDIR} COMPONENT ${BINARY_NAME}_libretro NAMELINK_SKIP
+			ARCHIVE DESTINATION ${LIBRETRO_LIBDIR} COMPONENT ${BINARY_NAME}_libretro)
 	endif()
 endif()
 
