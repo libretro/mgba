@@ -2117,12 +2117,18 @@ bool retro_load_game(const struct retro_game_info* game) {
 #endif
 
 #ifdef ENABLE_VFS
-    if (core->opts.useBios && sysDir && biosName) {
+    // Explicitly check that sysDir is valid and not empty/null before attempting BIOS load
+    if (core->opts.useBios && sysDir && sysDir[0] != '\0' && biosName) {
         snprintf(biosPath, sizeof(biosPath), "%s%s%s", sysDir, PATH_SEP, biosName);
         struct VFile* bios = VFileOpen(biosPath, O_RDONLY);
         if (bios) {
             core->loadBIOS(core, bios, 0);
+        } else {
+            // If the BIOS file is missing, turn off useBios to stop continuous retry loops
+            core->opts.useBios = 0;
         }
+    } else {
+        core->opts.useBios = 0;
     }
 #endif
 
