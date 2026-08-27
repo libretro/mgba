@@ -1982,8 +1982,8 @@ bool retro_load_game(const struct retro_game_info* game) {
         dataSize = game->size;
         printf("[mGBA debug] game->size is: %u\n", (unsigned int)dataSize);
         
-        // Use memalign for PS2 memory alignment safety (64-byte boundary)
-        data = memalign(64, dataSize);
+        // Use standard malloc to avoid header/prototype mismatches
+        data = malloc(dataSize);
         if (!data) {
             printf("[mGBA error] Failed to allocate game data buffer\n");
             return false;
@@ -2062,7 +2062,6 @@ bool retro_load_game(const struct retro_game_info* game) {
     core->setPeripheral(core, mPERIPH_RUMBLE, &rumble);
     core->setPeripheral(core, mPERIPH_ROTATION, &rotation);
 
-    // Safe allocation for save data heap block
     savedata = malloc(GBA_SIZE_FLASH1M);
     if (!savedata) {
         printf("[mGBA error] Failed to allocate savedata buffer\n");
