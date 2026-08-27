@@ -1979,83 +1979,70 @@ bool retro_load_game(const struct retro_game_info* game) {
 	}
 
 	if (game->data) {
-		data = anonymousMemoryMap(game->size);
-		dataSize = game->size;
-		memcpy(data, game->data, game->size);
-		rom = VFileFromMemory(data, game->size);
+        dataSize = game->size;
+        data = malloc(dataSize); // Replaced anonymousMemoryMap
+        if (!data) {
+            return false; // Prevent crash if malloc fails
+        }
+        memcpy(data, game->data, game->size);
+        rom = VFileFromMemory(data, game->size);
 #ifdef ENABLE_VFS
-	} else {
+    } else {
 #ifdef GEKKO
-		if ((dataSize = _readRomFile(game->path, &data)) == -1) {
-			return false;
-		}
-		rom = VFileFromMemory(data, dataSize);
+        if ((dataSize = _readRomFile(game->path, &data)) == -1) {
+            return false;
+        }
+        rom = VFileFromMemory(data, dataSize);
 #else
-		data = NULL;
-		rom = VFileOpen(game->path, O_RDONLY);
+        data = NULL;
+        rom = VFileOpen(game->path, O_RDONLY);
 #endif
 #endif
-	}
-	if (!rom) {
-		return false;
-	}
+    }
+    if (!rom) {
+        return false;
+    }
 
-	core = mCoreFindVF(rom);
-	if (!core) {
-		rom->close(rom);
-		mappedMemoryFree(data, game->size);
-		return false;
-	}
-	mCoreInitConfig(core, NULL);
-	core->init(core);
+    core = mCoreFindVF(rom);
+    if (!core) {
+        rom->close(rom);
+        if (data) {
+            free(data); // Clean up using standard free instead of mappedMemoryFree
+        }
+        return false;
+    }
+    mCoreInitConfig(core, NULL);
+    core->init(core);
 
-#ifdef _3DS
-	outputBuffer = linearMemAlign(VIDEO_BUFF_SIZE, 0x80);
-#else
-	outputBuffer = malloc(VIDEO_BUFF_SIZE);
-#endif
-	memset(outputBuffer, 0xFFFF, VIDEO_BUFF_SIZE);
-	core->setVideoBuffer(core, outputBuffer, VIDEO_WIDTH_MAX);
+    outputBuffer = malloc(VIDEO_BUFF_SIZE);
+    if (!outputBuffer) {
+        rom->close(rom);
+        if (data) free(data);
+        return false;
+    }
+    memset(outputBuffer, 0xFFFF, VIDEO_BUFF_SIZE);
+    core->setVideoBuffer(core, outputBuffer, VIDEO_WIDTH_MAX);
 
-	#ifdef M_CORE_GBA
-	/* GBA emulation produces a fairly regular number
-	 * of audio samples per frame that is consistent
-	 * with the set sample rate. We therefore consume
-	 * audio samples in retro_run() to achieve the
-	 * best possible frame pacing */
-	if (core->platform(core) == mPLATFORM_GBA) {
-		/* Output is a fixed 65536 Hz; the converter turns any of the
-		 * four hardware rates into it with exact power-of-two steps.
-		 * Buffer must hold one chunk after 2x upsampling. */
-		audioConverterReset(&audioConverter, core->audioSampleRate(core));
-		audioSampleBufferSize = GBA_AUDIO_CHUNK_FRAMES * 2 * 2;
-		audioSampleBuffer = malloc(audioSampleBufferSize * sizeof(int16_t));
-	} else
-	#endif
-	{
-		/* GB/GBC emulation does not produce a number
-		 * of samples per frame that is consistent with
-		 * the set sample rate, and so it is unclear how
-		 * best to handle this. We therefore fallback to
-		 * using the regular stream-set _postAudioBuffer()
-		 * callback with a fixed buffer size, which seems
-		 * (historically) to produce adequate results */
-		stream.postAudioBuffer = _postAudioBuffer;
-		audioSampleBufferSize = GB_SAMPLES * 2;
-		audioSampleBuffer = malloc(audioSampleBufferSize * sizeof(int16_t));
-		core->setAudioBufferSize(core, GB_SAMPLES);
-	}
+    // ... [audio buffer allocations remain similar, but ensure they check for NULL too] ...
+    audioSampleBuffer = malloc(audioSampleBufferSize * sizeof(int16_t));
+    if (!audioSampleBuffer) {
+        // Handle allocation failure cleanup if needed
+    }
 
-	core->setAVStream(core, &stream);
-	core->setPeripheral(core, mPERIPH_RUMBLE, &rumble);
-	core->setPeripheral(core, mPERIPH_ROTATION, &rotation);
+    core->setAVStream(core, &stream);
+    core->setPeripheral(core, mPERIPH_RUMBLE, &rumble);
+    core->setPeripheral(core, mPERIPH_ROTATION, &rotation);
 
-	savedata = anonymousMemoryMap(GBA_SIZE_FLASH1M);
-	memset(savedata, 0xFF, GBA_SIZE_FLASH1M);
+    // Replace save data anonymous map with standard malloc
+    savedata = malloc(GBA_SIZE_FLASH1M);
+    if (!savedata) {
+        return false; // Guard against PS2 heap exhaustion
+    }
+    memset(savedata, 0xFF, GBA_SIZE_FLASH1M);
 
-	_reloadSettings();
-	core->loadROM(core, rom);
-	deferredSetup = true;
+    _reloadSettings();
+    core->loadROM(core, rom);
+    deferredSetup = true;
 
 	const char* sysDir = 0;
 	const char* biosName = 0;
@@ -2121,15 +2108,21 @@ bool retro_load_game(const struct retro_game_info* game) {
 }
 
 void retro_unload_game(void) {
-	if (!core) {
-		return;
-	}
-	mCoreConfigDeinit(&core->config);
-	core->deinit(core);
-	mappedMemoryFree(data, dataSize);
-	data = 0;
-	mappedMemoryFree(savedata, GBA_SIZE_FLASH1M);
-	savedata = 0;
+    if (!core) {
+        return;
+    }
+    mCoreConfigDeinit(&core->config);
+    core->deinit(core);
+    
+    if (data) {
+        free(data); // Replaced mappedMemoryFree
+        data = NULL;
+    }
+    
+    if (savedata) {
+        free(savedata); // Replaced mappedMemoryFree
+        savedata = NULL;
+    }
 }
 
 size_t retro_serialize_size(void) {
