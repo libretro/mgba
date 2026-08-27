@@ -1978,11 +1978,16 @@ bool retro_load_game(const struct retro_game_info* game) {
         return false;
     }
 
-    if (game->data) {
+    // Force path-based VFS loading on PS2 to avoid massive heap allocations (16MB malloc fails)
+    data = NULL;
+    dataSize = 0;
+    
+    if (game->path) {
+        printf("[mGBA debug] Opening ROM via VFS path: %s\n", game->path);
+        rom = VFileOpen(game->path, O_RDONLY);
+    } else if (game->data) {
+        // Fallback only if path isn't available
         dataSize = game->size;
-        printf("[mGBA debug] game->size is: %u\n", (unsigned int)dataSize);
-        
-        // Use standard malloc to avoid header/prototype mismatches
         data = malloc(dataSize);
         if (!data) {
             printf("[mGBA error] Failed to allocate game data buffer\n");
@@ -1990,21 +1995,10 @@ bool retro_load_game(const struct retro_game_info* game) {
         }
         memcpy(data, game->data, dataSize);
         rom = VFileFromMemory(data, dataSize);
-#ifdef ENABLE_VFS
     } else {
-#ifdef GEKKO
-        if ((dataSize = _readRomFile(game->path, &data)) == -1) {
-            printf("[mGBA error] _readRomFile failed\n");
-            return false;
-        }
-        rom = VFileFromMemory(data, dataSize);
-#else
-        data = NULL;
-        printf("[mGBA debug] Attempting to open path: %s\n", game->path ? game->path : "NULL");
-        rom = VFileOpen(game->path, O_RDONLY);
-#endif
-#endif
+        return false;
     }
+
     if (!rom) {
         printf("[mGBA error] VFileOpen failed to create rom handle\n");
         return false;
