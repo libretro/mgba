@@ -1972,21 +1972,24 @@ error:
 #endif
 
 bool retro_load_game(const struct retro_game_info* game) {
-	struct VFile* rom;
+    struct VFile* rom;
 
-	if (!game) {
-		return false;
-	}
+    if (!game) {
+        return false;
+    }
 
-	if (game->data) {
+    if (game->data) {
         dataSize = game->size;
-        data = malloc(dataSize);
+        printf("[mGBA debug] game->size is: %u\n", (unsigned int)dataSize);
+        
+        // Use memalign for PS2 memory alignment safety (64-byte boundary)
+        data = memalign(64, dataSize);
         if (!data) {
             printf("[mGBA error] Failed to allocate game data buffer\n");
             return false;
         }
-        memcpy(data, game->data, game->size);
-        rom = VFileFromMemory(data, game->size);
+        memcpy(data, game->data, dataSize);
+        rom = VFileFromMemory(data, dataSize);
 #ifdef ENABLE_VFS
     } else {
 #ifdef GEKKO
@@ -2011,35 +2014,59 @@ bool retro_load_game(const struct retro_game_info* game) {
     if (!core) {
         printf("[mGBA error] mCoreFindVF could not identify core for ROM\n");
         rom->close(rom);
-        if (data) free(data);
+        if (data) {
+            free(data);
+            data = NULL;
+        }
         return false;
     }
     mCoreInitConfig(core, NULL);
     core->init(core);
 
+#ifdef _3DS
+    outputBuffer = linearMemAlign(VIDEO_BUFF_SIZE, 0x80);
+#else
     outputBuffer = malloc(VIDEO_BUFF_SIZE);
+#endif
     if (!outputBuffer) {
+        printf("[mGBA error] Failed to allocate outputBuffer\n");
         rom->close(rom);
-        if (data) free(data);
+        if (data) {
+            free(data);
+            data = NULL;
+        }
         return false;
     }
     memset(outputBuffer, 0xFFFF, VIDEO_BUFF_SIZE);
     core->setVideoBuffer(core, outputBuffer, VIDEO_WIDTH_MAX);
 
-    // ... [audio buffer allocations remain similar, but ensure they check for NULL too] ...
-    audioSampleBuffer = malloc(audioSampleBufferSize * sizeof(int16_t));
+    #ifdef M_CORE_GBA
+    if (core->platform(core) == mPLATFORM_GBA) {
+        audioConverterReset(&audioConverter, core->audioSampleRate(core));
+        audioSampleBufferSize = GBA_AUDIO_CHUNK_FRAMES * 2 * 2;
+        audioSampleBuffer = malloc(audioSampleBufferSize * sizeof(int16_t));
+    } else
+    #endif
+    {
+        stream.postAudioBuffer = _postAudioBuffer;
+        audioSampleBufferSize = GB_SAMPLES * 2;
+        audioSampleBuffer = malloc(audioSampleBufferSize * sizeof(int16_t));
+        core->setAudioBufferSize(core, GB_SAMPLES);
+    }
+
     if (!audioSampleBuffer) {
-        // Handle allocation failure cleanup if needed
+        printf("[mGBA error] Failed to allocate audioSampleBuffer\n");
     }
 
     core->setAVStream(core, &stream);
     core->setPeripheral(core, mPERIPH_RUMBLE, &rumble);
     core->setPeripheral(core, mPERIPH_ROTATION, &rotation);
 
-    // Replace save data anonymous map with standard malloc
+    // Safe allocation for save data heap block
     savedata = malloc(GBA_SIZE_FLASH1M);
     if (!savedata) {
-        return false; // Guard against PS2 heap exhaustion
+        printf("[mGBA error] Failed to allocate savedata buffer\n");
+        return false;
     }
     memset(savedata, 0xFF, GBA_SIZE_FLASH1M);
 
@@ -2047,69 +2074,67 @@ bool retro_load_game(const struct retro_game_info* game) {
     core->loadROM(core, rom);
     deferredSetup = true;
 
-	const char* sysDir = 0;
-	const char* biosName = 0;
-	char biosPath[PATH_MAX];
-	environCallback(RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY, &sysDir);
+    const char* sysDir = 0;
+    const char* biosName = 0;
+    char biosPath[PATH_MAX];
+    environCallback(RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY, &sysDir);
 
 #ifdef M_CORE_GBA
-	if (core->platform(core) == mPLATFORM_GBA) {
-		core->setPeripheral(core, mPERIPH_GBA_LUMINANCE, &lux);
-		biosName = "gba_bios.bin";
-
-	}
+    if (core->platform(core) == mPLATFORM_GBA) {
+        core->setPeripheral(core, mPERIPH_GBA_LUMINANCE, &lux);
+        biosName = "gba_bios.bin";
+    }
 #endif
 
 #ifdef M_CORE_GB
-	if (core->platform(core) == mPLATFORM_GB) {
-		memset(&cam, 0, sizeof(cam));
-		cam.height = GBCAM_HEIGHT;
-		cam.width = GBCAM_WIDTH;
-		cam.caps = 1 << RETRO_CAMERA_BUFFER_RAW_FRAMEBUFFER;
-		cam.frame_raw_framebuffer = _updateCamera;
-		if (environCallback(RETRO_ENVIRONMENT_GET_CAMERA_INTERFACE, &cam)) {
-			core->setPeripheral(core, mPERIPH_IMAGE_SOURCE, &imageSource);
-		}
+    if (core->platform(core) == mPLATFORM_GB) {
+        memset(&cam, 0, sizeof(cam));
+        cam.height = GBCAM_HEIGHT;
+        cam.width = GBCAM_WIDTH;
+        cam.caps = 1 << RETRO_CAMERA_BUFFER_RAW_FRAMEBUFFER;
+        cam.frame_raw_framebuffer = _updateCamera;
+        if (environCallback(RETRO_ENVIRONMENT_GET_CAMERA_INTERFACE, &cam)) {
+            core->setPeripheral(core, mPERIPH_IMAGE_SOURCE, &imageSource);
+        }
 
-		const char* modelName = mCoreConfigGetValue(&core->config, "gb.model");
-		struct GB* gb = core->board;
+        const char* modelName = mCoreConfigGetValue(&core->config, "gb.model");
+        struct GB* gb = core->board;
 
-		if (modelName) {
-			gb->model = GBNameToModel(modelName);
-		} else {
-			GBDetectModel(gb);
-		}
+        if (modelName) {
+            gb->model = GBNameToModel(modelName);
+        } else {
+            GBDetectModel(gb);
+        }
 
-		switch (gb->model) {
-		case GB_MODEL_AGB:
-		case GB_MODEL_CGB:
-		case GB_MODEL_SCGB:
-			biosName = "gbc_bios.bin";
-			break;
-		case GB_MODEL_SGB:
-			biosName = "sgb_bios.bin";
-			break;
-		case GB_MODEL_DMG:
-		default:
-			biosName = "gb_bios.bin";
-			break;
-		}
-	}
+        switch (gb->model) {
+        case GB_MODEL_AGB:
+        case GB_MODEL_CGB:
+        case GB_MODEL_SCGB:
+            biosName = "gbc_bios.bin";
+            break;
+        case GB_MODEL_SGB:
+            biosName = "sgb_bios.bin";
+            break;
+        case GB_MODEL_DMG:
+        default:
+            biosName = "gb_bios.bin";
+            break;
+        }
+    }
 #endif
 
 #ifdef ENABLE_VFS
-	if (core->opts.useBios && sysDir && biosName) {
-		snprintf(biosPath, sizeof(biosPath), "%s%s%s", sysDir, PATH_SEP, biosName);
-		struct VFile* bios = VFileOpen(biosPath, O_RDONLY);
-		if (bios) {
-			core->loadBIOS(core, bios, 0);
-		}
-	}
+    if (core->opts.useBios && sysDir && biosName) {
+        snprintf(biosPath, sizeof(biosPath), "%s%s%s", sysDir, PATH_SEP, biosName);
+        struct VFile* bios = VFileOpen(biosPath, O_RDONLY);
+        if (bios) {
+            core->loadBIOS(core, bios, 0);
+        }
+    }
 #endif
 
-	return true;
+    return true;
 }
-
 void retro_unload_game(void) {
     if (!core) {
         return;
