@@ -1980,9 +1980,10 @@ bool retro_load_game(const struct retro_game_info* game) {
 
 	if (game->data) {
         dataSize = game->size;
-        data = malloc(dataSize); // Replaced anonymousMemoryMap
+        data = malloc(dataSize);
         if (!data) {
-            return false; // Prevent crash if malloc fails
+            printf("[mGBA error] Failed to allocate game data buffer\n");
+            return false;
         }
         memcpy(data, game->data, game->size);
         rom = VFileFromMemory(data, game->size);
@@ -1990,25 +1991,27 @@ bool retro_load_game(const struct retro_game_info* game) {
     } else {
 #ifdef GEKKO
         if ((dataSize = _readRomFile(game->path, &data)) == -1) {
+            printf("[mGBA error] _readRomFile failed\n");
             return false;
         }
         rom = VFileFromMemory(data, dataSize);
 #else
         data = NULL;
+        printf("[mGBA debug] Attempting to open path: %s\n", game->path ? game->path : "NULL");
         rom = VFileOpen(game->path, O_RDONLY);
 #endif
 #endif
     }
     if (!rom) {
+        printf("[mGBA error] VFileOpen failed to create rom handle\n");
         return false;
     }
 
     core = mCoreFindVF(rom);
     if (!core) {
+        printf("[mGBA error] mCoreFindVF could not identify core for ROM\n");
         rom->close(rom);
-        if (data) {
-            free(data); // Clean up using standard free instead of mappedMemoryFree
-        }
+        if (data) free(data);
         return false;
     }
     mCoreInitConfig(core, NULL);
