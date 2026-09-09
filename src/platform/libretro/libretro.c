@@ -1276,7 +1276,7 @@ static bool _applyMultiplayerSessionState(void) {
 	mLibretroMultiplayerSetPrimaryCore(core);
 	mLibretroMultiplayerUpdateMode(environCallback);
 	mLibretroMultiplayerUpdateDisplayPlayers(environCallback);
-	mLibretroMultiplayerApplyMode(data, dataSize, loadedRomPath);
+	mLibretroMultiplayerApplyMode(environCallback, data, dataSize, loadedRomPath);
 
 	enum mLibretroDisplayPlayers currentDisplay = multiplayer.numPlayers < 2 ? mLIBRETRO_DISPLAY_SELF : multiplayer.video.displayPlayers;
 	return wasActive != (multiplayer.numPlayers > 1) || previousMode != multiplayer.video.mode || previousDisplay != currentDisplay;
