@@ -117,6 +117,19 @@ static int32_t _sanitizeDelay(int32_t delay, const char* source, int playerId);
 
 static void _lockstepEvent(struct mTiming*, void* context, uint32_t cyclesLate);
 
+// Cycle counters here are a free-running uint32 (mTiming::masterCycles) read
+// back through an int32 API, so they go negative every 2^31 cycles -- about
+// 128 seconds of emulated time. Any two of them must therefore be compared by
+// their difference, and that subtraction must be done in unsigned: done in
+// int32 it overflows whenever the two straddle the wrap, which is undefined
+// behaviour. At -O2/-O3 the compiler folds such a test to a constant (it may
+// assume "large positive minus negative" is positive), so the wrap silently
+// turns into a stuck event queue and a hung core -- and it does so differently
+// per compiler, which is why this used to fail on one platform but not another.
+static inline int32_t _cyclesBetween(int32_t later, int32_t earlier) {
+	return (int32_t) ((uint32_t) later - (uint32_t) earlier);
+}
+
 static int32_t _sanitizeDelay(int32_t delay, const char* source, int playerId) {
 	if (delay > 0) {
 		return delay;
@@ -215,7 +228,7 @@ static void GBASIOLockstepDriverReset(struct GBASIODriver* driver) {
 			}
 		}
 		_reconfigPlayers(coordinator);
-		player->cycleOffset = mTimingCurrentTime(&driver->p->p->timing) - coordinator->cycle;
+		player->cycleOffset = _cyclesBetween(mTimingCurrentTime(&driver->p->p->timing), coordinator->cycle);
 		if (player->playerId != 0) {
 			struct GBASIOLockstepEvent event = {
 				.type = SIO_EV_ATTACH,
@@ -226,7 +239,7 @@ static void GBASIOLockstepDriverReset(struct GBASIODriver* driver) {
 		}
 	} else {
 		player = TableLookup(&coordinator->players, lockstep->lockstepId);
-		player->cycleOffset = mTimingCurrentTime(&driver->p->p->timing) - coordinator->cycle;
+		player->cycleOffset = _cyclesBetween(mTimingCurrentTime(&driver->p->p->timing), coordinator->cycle);
 	}
 
 	if (mTimingIsScheduled(&lockstep->d.p->p->timing, &lockstep->event)) {
@@ -397,7 +410,7 @@ static void GBASIOLockstepDriverSaveState(struct GBASIODriver* driver, void** st
 
 	STORE_32LE(DRIVER_STATE_VERSION, 0, &state->version);
 
-	STORE_32LE(lockstep->event.when - mTimingCurrentTime(&driver->p->p->timing), 0, &state->driver.nextEvent);
+	STORE_32LE(_cyclesBetween(lockstep->event.when, mTimingCurrentTime(&driver->p->p->timing)), 0, &state->driver.nextEvent);
 
 	struct GBASIOLockstepPlayer* player = TableLookup(&coordinator->players, lockstep->lockstepId);
 	GBASIOLockstepSerializedFlags flags = 0;
@@ -473,9 +486,9 @@ static void GBASIOLockstepDriverSetMode(struct GBASIODriver* driver, enum GBASIO
 		}
 		_setReady(coordinator, player, player->playerId, mode);
 		_enqueueEvent(coordinator, &event, TARGET_ALL & ~TARGET(player->playerId));
-			if (waitOnPlayers) {
+		if (waitOnPlayers) {
 			GBASIOLockstepCoordinatorWaitOnPlayers(coordinator, player);
-			} else if (player->playerId == 0) {
+		} else if (player->playerId == 0) {
 			mLOG(GBA_SIO, DEBUG, "Deferring mode wait while barrier %X is active", coordinator->waiting);
 		}
 	}
@@ -685,7 +698,7 @@ int32_t _untilNextSync(struct GBASIOLockstepCoordinator* coordinator, struct GBA
 	if (!coordinator->syncArmed) {
 		return UNLOCKED_INTERVAL;
 	}
-	int32_t cycle = coordinator->cycle - GBASIOLockstepTime(player);
+	int32_t cycle = _cyclesBetween(coordinator->cycle, GBASIOLockstepTime(player));
 	if (player->playerId == 0) {
 		if (coordinator->nAttached < 2) {
 			cycle += UNLOCKED_INTERVAL;
@@ -698,8 +711,9 @@ int32_t _untilNextSync(struct GBASIOLockstepCoordinator* coordinator, struct GBA
 
 void _advanceCycle(struct GBASIOLockstepCoordinator* coordinator, struct GBASIOLockstepPlayer* player) {
 	int32_t newCycle = GBASIOLockstepTime(player);
-	mASSERT_DEBUG(newCycle - coordinator->cycle >= 0);
-	coordinator->nextHardSync -= newCycle - coordinator->cycle;
+	int32_t elapsed = _cyclesBetween(newCycle, coordinator->cycle);
+	mASSERT_DEBUG(elapsed >= 0);
+	coordinator->nextHardSync -= elapsed;
 	coordinator->cycle = newCycle;
 }
 
@@ -891,7 +905,7 @@ void _enqueueEvent(struct GBASIOLockstepCoordinator* coordinator, const struct G
 		struct GBASIOLockstepEvent** previous = &player->queue;
 		struct GBASIOLockstepEvent* next = player->queue;
 		while (next) {
-			int32_t until = newEvent->timestamp - next->timestamp;
+			int32_t until = _cyclesBetween(newEvent->timestamp, next->timestamp);
 			if (until < 0) {
 				break;
 			}
@@ -916,7 +930,7 @@ void _lockstepEvent(struct mTiming* timing, void* context, uint32_t cyclesLate) 
 		                      player->queue->playerId, player->queue->timestamp);
 		wasDetach = true;
 	}
-	if (player->playerId == 0 && GBASIOLockstepTime(player) - coordinator->cycle >= 0) {
+	if (player->playerId == 0 && _cyclesBetween(GBASIOLockstepTime(player), coordinator->cycle) >= 0) {
 		// We are the clock owner; advance the shared clock. However, if we just became
 		// the clock owner (by the previous one disconnecting) we might be slightly
 		// behind the shared clock. We should wait a bit if needed in that case.
@@ -938,7 +952,7 @@ void _lockstepEvent(struct mTiming* timing, void* context, uint32_t cyclesLate) 
 		if (!event) {
 			break;
 		}
-		if (event->timestamp > GBASIOLockstepTime(player)) {
+		if (_cyclesBetween(event->timestamp, GBASIOLockstepTime(player)) > 0) {
 			break;
 		}
 		player->queue = event->next;
@@ -964,7 +978,7 @@ void _lockstepEvent(struct mTiming* timing, void* context, uint32_t cyclesLate) 
 			break;
 		case SIO_EV_TRANSFER_START:
 			_setData(coordinator, player->playerId, sio);
-			nextEvent = event->finishCycle - GBASIOLockstepTime(player) - cyclesLate;
+			nextEvent = _cyclesBetween(event->finishCycle, GBASIOLockstepTime(player)) - (int32_t) cyclesLate;
 			nextEvent = _sanitizeDelay(nextEvent, "transfer completion", player->playerId);
 			player->driver->d.p->siocnt |= 0x80;
 			mTimingDeschedule(&sio->p->timing, &sio->completeEvent);
@@ -993,8 +1007,8 @@ void _lockstepEvent(struct mTiming* timing, void* context, uint32_t cyclesLate) 
 		event->next = player->freeList;
 		player->freeList = event;
 	}
-	if (player->queue && player->queue->timestamp - GBASIOLockstepTime(player) < nextEvent) {
-		nextEvent = player->queue->timestamp - GBASIOLockstepTime(player);
+	if (player->queue && _cyclesBetween(player->queue->timestamp, GBASIOLockstepTime(player)) < nextEvent) {
+		nextEvent = _cyclesBetween(player->queue->timestamp, GBASIOLockstepTime(player));
 	}
 
 	if (coordinator->syncArmed && player->playerId != 0 && nextEvent <= LOCKSTEP_INTERVAL) {
@@ -1013,7 +1027,7 @@ void _lockstepEvent(struct mTiming* timing, void* context, uint32_t cyclesLate) 
 }
 
 int32_t GBASIOLockstepTime(struct GBASIOLockstepPlayer* player) {
-	return mTimingCurrentTime(&player->driver->d.p->p->timing) - player->cycleOffset;
+	return _cyclesBetween(mTimingCurrentTime(&player->driver->d.p->p->timing), player->cycleOffset);
 }
 
 void GBASIOLockstepCoordinatorWaitOnPlayers(struct GBASIOLockstepCoordinator* coordinator, struct GBASIOLockstepPlayer* player) {
