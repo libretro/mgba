@@ -87,11 +87,8 @@ static int32_t _readTiltX(struct mRotationSource* source);
 static int32_t _readTiltY(struct mRotationSource* source);
 static int32_t _readGyroZ(struct mRotationSource* source);
 static void _setupMaps(struct mCore* core);
-static bool _syncMultiplayerVideoState(void);
 static bool _applyMultiplayerSessionState(void);
-static bool _syncMultiplayerSelfPlayer(void);
 static void _refreshRuntimeMultiplayerState(void);
-static void _drainCoreAudioBuffer(struct mCore* audioCore);
 static void _updateFrontendAVInfo(void);
 static void _ensureDeferredSetupForStateIO(void);
 
@@ -144,7 +141,6 @@ static int32_t audioLowPassRange = 0;
 static int32_t audioLowPassLeftPrev = 0;
 static int32_t audioLowPassRightPrev = 0;
 static struct mLibretroTurboState turboState;
-static struct mLibretroMultiplayer multiplayer;
 static struct mLibretroNetplayState netplay;
 static char loadedRomPath[PATH_MAX];
 
@@ -1260,72 +1256,6 @@ static void _reloadSettings(void) {
 	mCoreLoadConfig(core);
 }
 
-static bool _syncMultiplayerVideoState(void) {
-	enum mLibretroDisplayPlayers previousDisplay = multiplayer.numPlayers < 2 ? mLIBRETRO_DISPLAY_SELF : multiplayer.video.displayPlayers;
-
-	mLibretroMultiplayerUpdateDisplayPlayers(environCallback);
-	enum mLibretroDisplayPlayers currentDisplay = multiplayer.numPlayers < 2 ? mLIBRETRO_DISPLAY_SELF : multiplayer.video.displayPlayers;
-	return previousDisplay != currentDisplay;
-}
-
-static bool _applyMultiplayerSessionState(void) {
-	bool wasActive = multiplayer.numPlayers > 1;
-	enum mLibretroSplitscreenMode previousMode = multiplayer.video.mode;
-	enum mLibretroDisplayPlayers previousDisplay = multiplayer.numPlayers < 2 ? mLIBRETRO_DISPLAY_SELF : multiplayer.video.displayPlayers;
-
-	mLibretroMultiplayerSetPrimaryCore(core);
-	mLibretroMultiplayerUpdateMode(environCallback);
-	mLibretroMultiplayerUpdateDisplayPlayers(environCallback);
-	mLibretroMultiplayerApplyMode(environCallback, data, dataSize, loadedRomPath);
-
-	enum mLibretroDisplayPlayers currentDisplay = multiplayer.numPlayers < 2 ? mLIBRETRO_DISPLAY_SELF : multiplayer.video.displayPlayers;
-	return wasActive != (multiplayer.numPlayers > 1) || previousMode != multiplayer.video.mode || previousDisplay != currentDisplay;
-}
-
-static bool _syncMultiplayerSelfPlayer(void) {
-	if (!environCallback || multiplayer.video.displayPlayers != mLIBRETRO_DISPLAY_SELF) {
-		return false;
-	}
-
-	unsigned localClientIndex = 0;
-	if (!environCallback(RETRO_ENVIRONMENT_GET_NETPLAY_CLIENT_INDEX, &localClientIndex)) {
-		return false;
-	}
-
-	int playerIndex = (int) localClientIndex;
-	if (playerIndex >= MAX_GBAS) {
-		playerIndex = MAX_GBAS - 1;
-	}
-
-	if (multiplayer.video.localPlayerIndex == playerIndex) {
-		return false;
-	}
-
-	multiplayer.video.localPlayerIndex = playerIndex;
-	return true;
-}
-
-static void _drainCoreAudioBuffer(struct mCore* audioCore) {
-	if (!audioCore || !audioSampleBuffer || audioSampleBufferSize < 2) {
-		return;
-	}
-
-	struct mAudioBuffer* buffer = audioCore->getAudioBuffer(audioCore);
-	while (mAudioBufferAvailable(buffer) > 0) {
-		int available = mAudioBufferAvailable(buffer);
-		size_t frames = audioSampleBufferSize / 2;
-		if ((size_t) available < frames) {
-			frames = (size_t) available;
-		}
-		if (!frames) {
-			break;
-		}
-		if (!mAudioBufferRead(buffer, audioSampleBuffer, frames)) {
-			break;
-		}
-	}
-}
-
 static void _updateFrontendAVInfo(void) {
 	if (!environCallback || !core) {
 		return;
@@ -1336,15 +1266,13 @@ static void _updateFrontendAVInfo(void) {
 	environCallback(RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO, &info);
 }
 
+static bool _applyMultiplayerSessionState(void) {
+	return mLibretroMultiplayerApplySessionState(environCallback, core, data, dataSize, loadedRomPath);
+}
+
 static void _refreshRuntimeMultiplayerState(void) {
 	mLibretroNetplayRefresh(&netplay, environCallback);
-	bool avChanged = _syncMultiplayerVideoState();
-
-	if (_syncMultiplayerSelfPlayer()) {
-		avChanged = true;
-	}
-
-	if (avChanged) {
+	if (mLibretroMultiplayerRefreshDisplayState(environCallback)) {
 		_updateFrontendAVInfo();
 	}
 }
@@ -1566,7 +1494,7 @@ void retro_init(void) {
 	updateAudioRate         = false;
 	mLibretroTurboStateInit(&turboState);
 	mLibretroNetplayInit(&netplay);
-	mLibretroMultiplayerInit(&multiplayer, VIDEO_WIDTH_MAX, VIDEO_HEIGHT_MAX);
+	mLibretroMultiplayerInit(VIDEO_WIDTH_MAX, VIDEO_HEIGHT_MAX);
 	loadedRomPath[0] = '\0';
 }
 
@@ -1789,15 +1717,7 @@ void retro_run(void) {
 #ifdef M_CORE_GBA
 	if (core->platform(core) == mPLATFORM_GBA) {
 		static int16_t coreSamples[GBA_AUDIO_CHUNK_FRAMES * 2];
-		/* In "Self" mode only the local player is audible, so the converter is
-		 * fed from that player's core rather than the primary one. */
-		enum mLibretroDisplayPlayers displayPlayers = multiplayer.numPlayers < 2 ? mLIBRETRO_DISPLAY_SELF : multiplayer.video.displayPlayers;
-		int localIdx = multiplayer.video.localPlayerIndex;
-		struct mCore* audioCore = core;
-		if (displayPlayers == mLIBRETRO_DISPLAY_SELF && localIdx >= 0 && localIdx < multiplayer.numPlayers && multiplayer.cores[localIdx]) {
-			audioCore = multiplayer.cores[localIdx];
-		}
-
+		struct mCore* audioCore = mLibretroMultiplayerAudioCore(core);
 		struct mAudioBuffer* coreBuffer = audioCore->getAudioBuffer(audioCore);
 		unsigned coreSampleRate = audioCore->audioSampleRate(audioCore);
 		if (coreSampleRate != audioConverter.inputRate) {
@@ -1817,15 +1737,7 @@ void retro_run(void) {
 			}
 		}
 
-		/* The other players keep filling their own audio buffers even though we
-		 * are not playing them; drain those or they back up. */
-		for (int i = 0; i < multiplayer.numPlayers; ++i) {
-			struct mCore* otherCore = multiplayer.cores[i];
-			if (!otherCore || otherCore == audioCore) {
-				continue;
-			}
-			_drainCoreAudioBuffer(otherCore);
-		}
+		mLibretroMultiplayerDrainInaudibleCores(audioCore, coreSamples, GBA_AUDIO_CHUNK_FRAMES);
 	}
 #endif
 }
@@ -2029,10 +1941,7 @@ void retro_reset(void) {
 	mLibretroMultiplayerReset();
 	mRumbleIntegratorReset(&rumble);
 	_setupMaps(core);
-
-	struct retro_system_av_info info;
-	retro_get_system_av_info(&info);
-	environCallback(RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO, &info);
+	_updateFrontendAVInfo();
 }
 
 #ifdef GEKKO

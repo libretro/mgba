@@ -8,7 +8,6 @@ void mLibretroNetplayInit(struct mLibretroNetplayState* state) {
 	}
 
 	state->rollbackContextActive = false;
-	state->contextKnown = false;
 }
 
 bool mLibretroNetplayRefresh(struct mLibretroNetplayState* state, retro_environment_t environCallback) {
@@ -31,8 +30,6 @@ bool mLibretroNetplayRefresh(struct mLibretroNetplayState* state, retro_environm
 		return false;
 	}
 
-	state->contextKnown = true;
-
 	if (!netplayActive) {
 		if (!state->rollbackContextActive) {
 			return false;
@@ -50,11 +47,4 @@ bool mLibretroNetplayRefresh(struct mLibretroNetplayState* state, retro_environm
 	mLibretroLog(RETRO_LOG_INFO, "libretro: rollback netplay context detected\n");
 
 	return true;
-}
-
-bool mLibretroNetplayRollbackContextActive(const struct mLibretroNetplayState* state) {
-	if (!state) {
-		return false;
-	}
-	return state->rollbackContextActive;
 }
