@@ -15,7 +15,7 @@ jobs:
 
     - name: Install dependencies
       run: |
-        apk add build-base
+        apk add build-base cmake
 
     - name: Get Information Variables
       id: core
@@ -26,7 +26,13 @@ jobs:
 
     - name: Compile project
       run: |
-        make platform=${{ steps.core.outputs.platform }} clean all
+        cmake -DCMAKE_BUILD_TYPE=Release -DLIBMGBA_ONLY=ON -DBUILD_LIBRETRO=ON \
+          -DLIBRETRO_STATIC=ON -DLIBRETRO_SUFFIX=_${{ steps.core.outputs.platform }} \
+          -DBUILD_SHARED_LIBS=OFF -DPS2=ON \
+          -DCMAKE_C_FLAGS="-DPS2 -DUSE_RGB565 -G0" -DCMAKE_CXX_FLAGS="-DPS2 -DUSE_RGB565 -G0" \
+          -DCMAKE_TOOLCHAIN_FILE=/usr/local/ps2dev/ps2sdk/ps2dev.cmake . -Bbuild
+        cmake --build build --target ${{ steps.core.outputs.info }}_libretro -- -j$(nproc)
+        cp build/${{ steps.core.outputs.info }}_libretro_${{ steps.core.outputs.platform }}.a .
 
     - name: Upload artifacts
       if: ${{ success() }}

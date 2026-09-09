@@ -4,6 +4,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 #include "MemoryDump.h"
+#include "moc_MemoryDump.cpp"
 
 #include "CoreController.h"
 #include "GBAApp.h"
@@ -27,7 +28,7 @@ void MemoryDump::save() {
 	}
 	QFile outfile(filename);
 	if (!outfile.open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-		qWarning() << tr("Failed to open output file: %1").arg(filename);
+		LOG(QT, WARN) << tr("Failed to open output file: %1").arg(filename);
 		return;
 	}
 	QByteArray out(serialize());

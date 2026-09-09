@@ -18,7 +18,6 @@ struct VFile3DS {
 	u64 offset;
 };
 
-#ifdef ENABLE_VFS
 struct VDirEntry3DS {
 	struct VDirEntry d;
 	FS_DirectoryEntry ent[MAX_ENT];
@@ -34,7 +33,6 @@ struct VDir3DS {
 	Handle handle;
 	struct VDirEntry3DS vde;
 };
-#endif
 
 static bool _vf3dClose(struct VFile* vf);
 static off_t _vf3dSeek(struct VFile* vf, off_t offset, int whence);
@@ -46,7 +44,6 @@ static void _vf3dTruncate(struct VFile* vf, size_t size);
 static ssize_t _vf3dSize(struct VFile* vf);
 static bool _vf3dSync(struct VFile* vf, void* buffer, size_t size);
 
-#ifdef ENABLE_VFS
 static bool _vd3dClose(struct VDir* vd);
 static void _vd3dRewind(struct VDir* vd);
 static struct VDirEntry* _vd3dListNext(struct VDir* vd);
@@ -56,7 +53,6 @@ static bool _vd3dDeleteFile(struct VDir* vd, const char* path);
 
 static const char* _vd3deName(struct VDirEntry* vde);
 static enum VFSType _vd3deType(struct VDirEntry* vde);
-#endif
 
 struct VFile* VFileOpen3DS(FS_Archive* archive, const char* path, int flags) {
 	struct VFile3DS* vf3d = malloc(sizeof(struct VFile3DS));
@@ -182,7 +178,6 @@ static bool _vf3dSync(struct VFile* vf, void* buffer, size_t size) {
 	return true;
 }
 
-#ifdef ENABLE_VFS
 struct VDir* VDirOpen(const char* path) {
 	struct VDir3DS* vd3d = malloc(sizeof(struct VDir3DS));
 	if (!vd3d) {
@@ -330,5 +325,4 @@ bool VDirCreate(const char* path) {
 	Result rc = FSUSER_CreateDirectory(sdmcArchive, fsMakePath(PATH_ASCII, path), 0);
 	return R_SUCCEEDED(rc) || rc == 0xC82044BE;
 }
-#endif
 #endif

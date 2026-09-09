@@ -4,6 +4,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 #include "CheatsView.h"
+#include "moc_CheatsView.cpp"
 
 #include "GBAApp.h"
 #include "CoreController.h"
@@ -183,7 +184,7 @@ void CheatsView::enterCheat() {
 		set->refresh(set, m_controller->cheatDevice());
 	}
 	if (failure) {
-		qCritical() << tr("Some cheats could not be added. Please ensure they're formatted correctly and/or try other cheat types.");
+		LOG(QT, ERROR) << tr("Some cheats could not be added. Please ensure they're formatted correctly and/or try other cheat types.");
 	}
 	m_ui.codeEntry->clear();
 }

@@ -622,7 +622,7 @@ bool mCheatSaveFile(struct mCheatDevice* device, struct VFile* vf) {
 	return true;
 }
 
-#if defined(ENABLE_VFS) && defined(ENABLE_DIRECTORIES) && !defined(__LIBRETRO__)
+#if defined(ENABLE_VFS) && defined(ENABLE_DIRECTORIES)
 void mCheatAutosave(struct mCheatDevice* device) {
 	if (!device->autosave) {
 		return;
@@ -685,6 +685,10 @@ void mCheatRefresh(struct mCheatDevice* device, struct mCheatSet* cheats) {
 				value = _readMem(device->p, address, cheat->width) + operand;
 				performAssignment = true;
 				break;
+			case CHEAT_SUB:
+				value = _readMem(device->p, address, cheat->width) - operand;
+				performAssignment = true;
+				break;
 			case CHEAT_OR:
 				value = _readMem(device->p, address, cheat->width) | operand;
 				performAssignment = true;
@@ -709,6 +713,18 @@ void mCheatRefresh(struct mCheatDevice* device, struct mCheatSet* cheats) {
 				break;
 			case CHEAT_IF_GT:
 				condition = _readMem(device->p, address, cheat->width) > operand;
+				conditionRemaining = cheat->repeat;
+				negativeConditionRemaining = cheat->negativeRepeat;
+				operationsRemaining = 1;
+				break;
+			case CHEAT_IF_LE:
+				condition = _readMem(device->p, address, cheat->width) <= operand;
+				conditionRemaining = cheat->repeat;
+				negativeConditionRemaining = cheat->negativeRepeat;
+				operationsRemaining = 1;
+				break;
+			case CHEAT_IF_GE:
+				condition = _readMem(device->p, address, cheat->width) >= operand;
 				conditionRemaining = cheat->repeat;
 				negativeConditionRemaining = cheat->negativeRepeat;
 				operationsRemaining = 1;

@@ -105,6 +105,7 @@ void GBAAudioResizeBuffer(struct GBAAudio* audio, size_t samples) {
 void GBAAudioScheduleFifoDma(struct GBAAudio* audio, int number, struct GBADMA* info) {
 	info->reg = GBADMARegisterSetDestControl(info->reg, GBA_DMA_FIXED);
 	info->reg = GBADMARegisterSetWidth(info->reg, 1);
+	info->destOffset = 0;
 	switch (info->dest) {
 	case GBA_BASE_IO | GBA_REG_FIFO_A_LO:
 		audio->chA.dmaSource = number;
@@ -310,7 +311,8 @@ void GBAAudioSampleFIFO(struct GBAAudio* audio, int fifoId, int32_t cycles) {
 			dma->when = mTimingCurrentTime(&audio->p->timing) - cycles;
 			dma->nextCount = 4;
 			GBADMARecalculateCycles(audio->p);
-			GBADMASchedule(audio->p, channel->dmaSource, dma);
+			GBAAudioScheduleFifoDma(audio, channel->dmaSource, dma);
+			GBADMAUpdate(audio->p);
 		}
 	}
 	if (!channel->internalRemaining && fifoSize) {
@@ -423,9 +425,8 @@ static void _sample(struct mTiming* timing, void* user, uint32_t cyclesLate) {
 	}
 	if (!mCoreSyncProduceAudio(audio->p->sync, &audio->psg.buffer)) {
 		// Interrupted
-		audio->p->earlyExit = true;
+		GBAInterrupt(audio->p);
 	}
-
 	mTimingSchedule(timing, &audio->sampleEvent, SAMPLE_INTERVAL - cyclesLate);
 }
 

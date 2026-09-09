@@ -4,6 +4,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 #include "PaletteView.h"
+#include "moc_PaletteView.cpp"
 
 #include "CoreController.h"
 #include "GBAApp.h"
@@ -139,7 +140,7 @@ void PaletteView::exportPalette(int start, int length) {
 	}
 	VFile* vf = VFileDevice::open(filename, O_WRONLY | O_CREAT | O_TRUNC);
 	if (!vf) {
-		qCritical() << tr("Failed to open output palette file: %1").arg(filename);
+		LOG(QT, ERROR) << tr("Failed to open output palette file: %1").arg(filename);
 		return;
 	}
 	if (filename.endsWith(".pal", Qt::CaseInsensitive)) {

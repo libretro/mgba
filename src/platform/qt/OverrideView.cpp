@@ -4,6 +4,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 #include "OverrideView.h"
+#include "moc_OverrideView.cpp"
 
 #include <QPushButton>
 #include <QStandardItemModel>
@@ -36,6 +37,19 @@ OverrideView::OverrideView(ConfigController* config, QWidget* parent)
 		m_ui.hwLight->setEnabled(!enabled);
 		m_ui.hwTilt->setEnabled(!enabled);
 		m_ui.hwRumble->setEnabled(!enabled);
+	});
+
+	// These two settings are mutually exclusive and break if both are enabled
+	connect(m_ui.hwRTC, &QAbstractButton::toggled, this, [this] (bool checked) {
+		if (checked) {
+			m_ui.hwGyro->setChecked(false);
+		}
+	});
+
+	connect(m_ui.hwGyro, &QAbstractButton::toggled, this, [this] (bool checked) {
+		if (checked) {
+			m_ui.hwRTC->setChecked(false);
+		}
 	});
 
 #ifdef M_CORE_GB
@@ -236,7 +250,11 @@ void OverrideView::gameStarted() {
 	case mPLATFORM_GBA: {
 		m_ui.tabWidget->setCurrentWidget(m_ui.tabGBA);
 		GBA* gba = static_cast<GBA*>(thread->core->board);
+		QSignalBlocker rtc(m_ui.hwRTC);
+		QSignalBlocker gyro(m_ui.hwGyro);
+
 		m_ui.savetype->setCurrentIndex(gba->memory.savedata.type + 1);
+		m_ui.hwAutodetect->setChecked(gba->memory.hw.devices & HW_NO_OVERRIDE);
 		m_ui.hwRTC->setChecked(gba->memory.hw.devices & HW_RTC);
 		m_ui.hwGyro->setChecked(gba->memory.hw.devices & HW_GYRO);
 		m_ui.hwLight->setChecked(gba->memory.hw.devices & HW_LIGHT_SENSOR);

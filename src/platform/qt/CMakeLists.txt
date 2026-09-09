@@ -11,6 +11,9 @@ if(BUILD_SDL)
 	if(SDL2_FOUND)
 		link_directories(${SDL2_LIBDIR})
 	endif()
+	if (SDL_VERSION EQUAL "3")
+		find_package(SDL3)
+	endif()
 	list(APPEND PLATFORM_LIBRARY ${SDL_LIBRARY})
 	list(APPEND PLATFORM_SRC ${PLATFORM_SRC} ${PROJECT_SOURCE_DIR}/src/platform/sdl/sdl-events.c ${PROJECT_SOURCE_DIR}/src/platform/sdl/sdl-audio.c)
 	include_directories(${SDL_INCLUDE_DIR} ${PROJECT_SOURCE_DIR}/src/platform/sdl)
@@ -104,6 +107,7 @@ set(SOURCE_FILES
 	AssetTile.cpp
 	AssetView.cpp
 	AudioProcessor.cpp
+	AudioProcessorDummy.cpp
 	CheatsModel.cpp
 	CheatsView.cpp
 	CheckBoxDelegate.cpp
@@ -123,6 +127,7 @@ set(SOURCE_FILES
 	GBAApp.cpp
 	GBAKeyEditor.cpp
 	GIFView.cpp
+	HistoryLineEdit.cpp
 	IOViewer.cpp
 	input/Gamepad.cpp
 	input/GamepadAxisEvent.cpp
@@ -136,6 +141,7 @@ set(SOURCE_FILES
 	InputProfile.cpp
 	KeyEditor.cpp
 	LoadSaveState.cpp
+	Log.cpp
 	LogController.cpp
 	LogConfigModel.cpp
 	LogView.cpp
@@ -309,6 +315,7 @@ if(ENABLE_SCRIPTING)
 		scripting/ScriptingView.ui)
 
 	set(TEST_QT_autoscript_SRC
+		Log.cpp
 		test/autoscript.cpp
 		scripting/AutorunScriptModel.cpp)
 endif()
@@ -470,7 +477,7 @@ if(QT_STATIC)
 			set(QWINDOWS_DEPS ${QT}EventDispatcherSupport ${QT}FontDatabaseSupport ${QT}ThemeSupport ${QT}WindowsUIAutomationSupport)
 		endif()
 		list(APPEND QT_LIBRARIES ${QT}::QWindowsIntegrationPlugin ${QWINDOWS_DEPS} amstrmid uxtheme imm32 -static-libgcc -static-libstdc++)
-		set_target_properties(${QT}::Core PROPERTIES INTERFACE_LINK_LIBRARIES "${QTPCRE};version;winmm;ssl;crypto;ws2_32;iphlpapi;crypt32;userenv;netapi32;wtsapi32")
+		set_target_properties(${QT}::Core PROPERTIES INTERFACE_LINK_LIBRARIES "${QTPCRE};version;winmm;ssl;crypto;ws2_32;iphlpapi;crypt32;userenv;netapi32;wtsapi32;ncrypt;secur32")
 		set_target_properties(${QT}::Gui PROPERTIES INTERFACE_LINK_LIBRARIES ${OPENGL_LIBRARY} ${OPENGLES2_LIBRARY})
 	elseif(APPLE)
 		find_package(Cups)
@@ -483,7 +490,7 @@ if(QT_STATIC)
 		list(APPEND QT_LIBRARIES "-framework AVFoundation" "-framework CoreMedia" "-framework SystemConfiguration" "-framework Security")
 		set_target_properties(${QT}::Core PROPERTIES INTERFACE_LINK_LIBRARIES "${QTPCRE}")
 	elseif(UNIX)
-		list(APPEND QT_LIBRARIES ${QT}::FontDatabaseSupport ${QT}::XcbQpa ${QT}::QWaylandIntegrationPlugin)
+		list(APPEND QT_LIBRARIES ${QT}::QXcbIntegrationPlugin ${QT}::QWaylandIntegrationPlugin)
 	endif()
 endif()
 target_link_libraries(${BINARY_NAME}-qt ${PLATFORM_LIBRARY} ${BINARY_NAME} ${QT_LIBRARIES})
@@ -491,6 +498,34 @@ set(CPACK_DEBIAN_PACKAGE_DEPENDS "${CPACK_DEBIAN_PACKAGE_DEPENDS}" PARENT_SCOPE)
 
 if(UNIX AND NOT APPLE)
 	install(FILES ${PROJECT_SOURCE_DIR}/res/mgba-qt.desktop DESTINATION share/applications RENAME io.mgba.${PROJECT_NAME}.desktop COMPONENT ${BINARY_NAME}-qt)
+
+	set(APPSTREAM_RELEASES "")
+	find_program(GIT git)
+	if(GIT AND NOT SKIP_GIT)
+		execute_process(COMMAND ${GIT} tag -l --sort=-version:refname "--format=%(refname:strip=2) %(creatordate:short)" WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" OUTPUT_VARIABLE RELEASE_TAGS OUTPUT_STRIP_TRAILING_WHITESPACE)
+		string(REPLACE "\n" ";" TAGS_LIST ${RELEASE_TAGS})
+		foreach(TAG ${TAGS_LIST})
+			string(REPLACE " " ";" TAG_LIST ${TAG})
+			list(GET TAG_LIST 0 TAG_REF)
+			list(GET TAG_LIST 1 TAG_DATE)
+
+			# Check dash usually signifies an alpha or a beta tag
+			string(FIND ${TAG_REF} "-" TAG_UNSTABLE)
+
+			if (NOT ${TAG_UNSTABLE} EQUAL -1)
+				continue()
+			endif()
+			list(APPEND RELEASE_LIST "<release version=\"${TAG_REF}\" date=\"${TAG_DATE}\" />")
+		endforeach()
+
+		list(LENGTH RELEASE_LIST RELEASE_COUNT)
+		if (NOT RELEASE_COUNT EQUAL 0)
+			list(JOIN RELEASE_LIST "\n" RELEASE_STR)
+			set(APPSTREAM_RELEASES "<releases>\n${RELEASE_STR}\n</releases>")
+		endif()
+	endif()
+	configure_file(${CMAKE_SOURCE_DIR}/res/io.mgba.mGBA.metainfo.xml.in ${CMAKE_CURRENT_BINARY_DIR}/io.mgba.mGBA.metainfo.xml)
+	install(FILES ${CMAKE_CURRENT_BINARY_DIR}/io.mgba.mGBA.metainfo.xml DESTINATION share/metainfo COMPONENT ${BINARY_NAME}-qt)
 endif()
 if(UNIX AND NOT (APPLE AND DISTBUILD))
 	install(FILES ${PROJECT_SOURCE_DIR}/doc/mgba-qt.6 DESTINATION ${MANDIR}/man6 COMPONENT ${BINARY_NAME}-qt)
@@ -568,7 +603,7 @@ if(BUILD_SUITE)
 		foreach(TEST_SRC ${ALL_TESTS})
 			string(REGEX REPLACE "^TEST_QT_(.*)_SRC$" "\\1" TEST_NAME ${TEST_SRC})
 			add_executable(test-qt-${TEST_NAME} WIN32 ${${TEST_SRC}})
-			target_link_libraries(test-qt-${TEST_NAME} ${PLATFORM_LIBRARY} ${BINARY_NAME} ${QT_LIBRARIES} ${QT}::Test)
+			target_link_libraries(test-qt-${TEST_NAME} ${BINARY_NAME} ${QT_LIBRARIES} ${QT}::Test)
 			set_target_properties(test-qt-${TEST_NAME} PROPERTIES COMPILE_DEFINITIONS "${FEATURE_DEFINES};${FUNCTION_DEFINES};${OS_DEFINES};${QT_DEFINES}" COMPILE_OPTIONS "${FEATURE_FLAGS}")
 			add_test(platform-qt-${TEST_NAME} test-qt-${TEST_NAME})
 		endforeach()

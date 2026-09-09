@@ -26,6 +26,8 @@
 #include <mgba-util/math.h>
 #include <mgba-util/string.h>
 
+#include "scripting/moc_ScriptingController.cpp"
+
 using namespace QGBA;
 
 ScriptingController::ScriptingController(ConfigController* config, QObject* parent)
@@ -86,8 +88,10 @@ void ScriptingController::setController(std::shared_ptr<CoreController> controll
 	m_controller->thread()->scriptContext = &m_scriptContext;
 	if (m_controller->hasStarted()) {
 		attach();
+#ifdef ENABLE_DEBUGGERS
 	} else {
 		m_controller->attachDebugger(false);
+#endif
 	}
 	updateVideoScale();
 	connect(m_controller.get(), &CoreController::stopping, this, &ScriptingController::clearController);
@@ -428,7 +432,7 @@ uint32_t ScriptingController::qtToScriptingKey(const QKeyEvent* event) {
 		{Qt::Key_Right, mSCRIPT_KEY_RIGHT},
 		{Qt::Key_Down, mSCRIPT_KEY_DOWN},
 		{Qt::Key_PageUp, mSCRIPT_KEY_PAGE_UP},
-		{Qt::Key_PageDown, mSCRIPT_KEY_DOWN},
+		{Qt::Key_PageDown, mSCRIPT_KEY_PAGE_DOWN},
 		{Qt::Key_Shift, mSCRIPT_KEY_SHIFT},
 		{Qt::Key_Control, mSCRIPT_KEY_CONTROL},
 		{Qt::Key_Meta, mSCRIPT_KEY_SUPER},

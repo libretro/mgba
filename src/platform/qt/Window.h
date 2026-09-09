@@ -76,7 +76,7 @@ signals:
 	void shaderSelectorAdded(ShaderSelector*);
 
 public slots:
-	void setController(CoreController* controller, const QString& fname);
+	void setController(CoreController* controller);
 	void selectROM();
 	void bootBIOS();
 #ifdef USE_SQLITE3
@@ -110,6 +110,7 @@ public slots:
 	void startVideoLog();
 
 	void openView(QWidget* widget);
+	void showMenu(bool);
 
 #ifdef ENABLE_DEBUGGERS
 	void consoleOpen();
@@ -134,6 +135,9 @@ protected:
 	virtual void focusOutEvent(QFocusEvent*) override;
 	virtual void dragEnterEvent(QDragEnterEvent*) override;
 	virtual void dropEvent(QDropEvent*) override;
+#ifndef Q_OS_MAC
+	virtual void changeEvent(QEvent*) override;
+#endif
 
 private slots:
 	void gameStarted();
@@ -159,6 +163,8 @@ private slots:
 	void updateMute();
 
 	void setLogo();
+
+	void delayedCleanup();
 
 private:
 	static const int FPS_TIMER_INTERVAL = 2000;
@@ -240,6 +246,7 @@ private:
 	bool m_hitUnimplementedBiosCall;
 
 	bool m_inactiveMute = false;
+	bool m_minimizedMute = false;
 	bool m_multiActive = true;
 	int m_playerId;
 
@@ -264,6 +271,9 @@ private:
 #ifdef ENABLE_SCRIPTING
 	std::unique_ptr<ScriptingController> m_scripting;
 #endif
+
+	std::unique_ptr<QGBA::Display> m_cleanupDisplay;
+	std::shared_ptr<CoreController> m_cleanupController;
 };
 
 class WindowBackground : public QWidget {

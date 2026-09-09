@@ -4,6 +4,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 #include "DisplayGL.h"
+#include "moc_DisplayGL.cpp"
 
 #if defined(BUILD_GL) || defined(BUILD_GLES2) || defined(BUILD_GLES3) || defined(USE_EPOXY)
 
@@ -198,7 +199,6 @@ DisplayGL::DisplayGL(const QSurfaceFormat& format, QWidget* parent)
 #ifdef USE_SHARE_WIDGET
 	bool useShareWidget = true;
 #else
-	// TODO: Does using this on Wayland help?
 	bool useShareWidget = false;
 #endif
 
@@ -264,11 +264,7 @@ void DisplayGL::startDrawing(std::shared_ptr<CoreController> controller) {
 	showFrameCounter(isShowFrameCounter());
 	filter(isFiltered());
 
-#if (QT_VERSION >= QT_VERSION_CHECK(5, 6, 0))
 	messagePainter()->resize(size(), devicePixelRatioF());
-#else
-	messagePainter()->resize(size(), devicePixelRatio());
-#endif
 
 	CoreController::Interrupter interrupter(m_context);
 	QMetaObject::invokeMethod(m_painter.get(), "start");
@@ -287,6 +283,7 @@ void DisplayGL::startDrawing(std::shared_ptr<CoreController> controller) {
 bool DisplayGL::highestCompatible(QSurfaceFormat& format) {
 #if defined(BUILD_GLES2) || defined(BUILD_GLES3) || defined(USE_EPOXY)
 	if (QOpenGLContext::openGLModuleType() == QOpenGLContext::LibGL) {
+		format.setRenderableType(QSurfaceFormat::OpenGL);
 		format.setVersion(3, 3);
 		format.setProfile(QSurfaceFormat::CoreProfile);
 		if (DisplayGL::supportsFormat(format)) {
@@ -310,7 +307,7 @@ bool DisplayGL::highestCompatible(QSurfaceFormat& format) {
 
 #ifdef BUILD_GL
 #if defined(BUILD_GLES2) || defined(BUILD_GLES3) || defined(USE_EPOXY)
-	qWarning() << tr("Failed to create an OpenGL 3 context, trying old-style...");
+	LOG(QT, WARN) << tr("Failed to create an OpenGL 3 context, trying old-style...");
 #endif
 	if (QOpenGLContext::openGLModuleType() == QOpenGLContext::LibGL) {
 		format.setVersion(1, 4);
@@ -506,6 +503,9 @@ bool DisplayGL::shouldDisableUpdates() {
 		return true;
 	}
 	if (QGuiApplication::platformName() == "xcb") {
+		return true;
+	}
+	if (QGuiApplication::platformName() == "wayland") {
 		return true;
 	}
 	return false;
@@ -854,6 +854,12 @@ void PainterGL::draw() {
 		swapInterval(wantSwap);
 	}
 	dequeue();
+	if (m_drawFrametimes) {
+		m_starttimes.append(m_delayTimer.elapsed());
+		if (m_starttimes.count() > MAX_FRAME_HISTORY) {
+			m_starttimes.erase(m_starttimes.begin(), m_starttimes.end() - MAX_FRAME_HISTORY);
+		}
+	}
 	bool forceRedraw = true;
 	if (!m_delayTimer.isValid()) {
 		m_delayTimer.start();
@@ -871,7 +877,13 @@ void PainterGL::draw() {
 	mCoreSyncWaitFrameEnd(sync);
 
 	if (forceRedraw) {
-		m_delayTimer.restart();
+		qint64 frametime = m_delayTimer.restart();
+		if (m_drawFrametimes) {
+			m_frametimes.append(frametime);
+			if (m_frametimes.count() > MAX_FRAME_HISTORY) {
+				m_frametimes.erase(m_frametimes.begin(), m_frametimes.end() - MAX_FRAME_HISTORY);
+			}
+		}
 		performDraw();
 		m_backend->swap(m_backend);
 	}
@@ -883,7 +895,13 @@ void PainterGL::forceDraw() {
 		if (m_delayTimer.elapsed() < 1000 / m_window->screen()->refreshRate()) {
 			return;
 		}
-		m_delayTimer.restart();
+		qint64 frametime = m_delayTimer.restart();
+		if (m_drawFrametimes) {
+			m_frametimes.append(frametime);
+			if (m_frametimes.count() > MAX_FRAME_HISTORY) {
+				m_frametimes.erase(m_frametimes.begin(), m_frametimes.end() - MAX_FRAME_HISTORY);
+			}
+		}
 	}
 	m_backend->swap(m_backend);
 }
@@ -899,9 +917,6 @@ void PainterGL::doStop() {
 	m_started = false;
 	dequeueAll(false);
 	if (m_context) {
-		if (m_videoProxy) {
-			m_videoProxy->detach(m_context.get());
-		}
 		m_context->setFramebufferHandle(-1);
 		m_context.reset();
 		if (m_videoProxy) {
@@ -941,6 +956,38 @@ void PainterGL::performDraw() {
 	if (m_showOSD && m_messagePainter && m_paintDev && !glContextHasBug(OpenGLBug::IG4ICD_CRASH)) {
 		m_painter.begin(m_paintDev.get());
 		m_messagePainter->paint(&m_painter);
+
+		if (m_drawFrametimes) {
+			m_painter.setPen(Qt::gray);
+			m_painter.drawLine(0, 13, MAX_FRAME_HISTORY, 13);
+			m_painter.drawLine(0, 58, MAX_FRAME_HISTORY, 58);
+
+			int i;
+			qint64 last;
+
+			i = 0;
+			last = -1;
+			m_painter.setPen(Qt::green);
+			for (qint64 time : m_frametimes) {
+				if (last >= 0) {
+					m_painter.drawLine(i, 45 - std::min(last * 2, 45LL), i + 1, 45 - std::min(time * 2, 45LL));
+					++i;
+				}
+				last = time;
+			}
+
+			i = 0;
+			last = -1;
+			m_painter.setPen(Qt::red);
+			for (qint64 time : m_starttimes) {
+				if (last >= 0) {
+					m_painter.drawLine(i, 90 - std::min(last * 2, 45LL), i + 1, 90 - std::min(time * 2, 45LL));
+					++i;
+				}
+				last = time;
+			}
+		}
+
 		m_painter.end();
 	}
 }
