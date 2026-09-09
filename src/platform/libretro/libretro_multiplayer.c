@@ -6,6 +6,7 @@
 #include "libretro_log.h"
 
 #include <mgba/core/config.h>
+#include <mgba-util/audio-buffer.h>
 #include <mgba/gba/interface.h>
 #include <mgba-util/memory.h>
 #include <mgba-util/vfs.h>
@@ -321,10 +322,11 @@ static bool _startSession(retro_environment_t environCallback, int numPlayers, c
 	return true;
 }
 
-void mLibretroMultiplayerInit(struct mLibretroMultiplayer* multiplayer, unsigned maxVideoWidth, unsigned maxVideoHeight) {
-	memset(multiplayer, 0, sizeof(*multiplayer));
-	mLibretroMultiplayerDisplayInit(multiplayer, maxVideoWidth, maxVideoHeight);
-	sMultiplayer = multiplayer;
+void mLibretroMultiplayerInit(unsigned maxVideoWidth, unsigned maxVideoHeight) {
+	static struct mLibretroMultiplayer instance;
+	memset(&instance, 0, sizeof(instance));
+	mLibretroMultiplayerDisplayInit(&instance, maxVideoWidth, maxVideoHeight);
+	sMultiplayer = &instance;
 }
 
 void mLibretroMultiplayerSetPrimaryCore(struct mCore* primaryCore) {
@@ -489,6 +491,103 @@ void mLibretroMultiplayerAdjustGeometry(struct retro_game_geometry* geometry) {
 const mColor* mLibretroMultiplayerComposeFrame(const mColor* primaryFrame, unsigned primaryWidth, unsigned primaryHeight, size_t* outPitch, unsigned* outWidth, unsigned* outHeight) {
 	mASSERT(sMultiplayer);
 	return mLibretroMultiplayerDisplayComposeFrame(sMultiplayer, primaryFrame, primaryWidth, primaryHeight, outPitch, outWidth, outHeight);
+}
+
+static enum mLibretroDisplayPlayers _effectiveDisplayPlayers(void) {
+	return sMultiplayer->numPlayers < 2 ? mLIBRETRO_DISPLAY_SELF : sMultiplayer->video.displayPlayers;
+}
+
+// The frontend only tells us which player we are while netplay is up, and the
+// answer can change mid-session, so it is re-read every frame.
+static bool _updateLocalPlayer(retro_environment_t environCallback) {
+	if (!environCallback || sMultiplayer->video.displayPlayers != mLIBRETRO_DISPLAY_SELF) {
+		return false;
+	}
+
+	unsigned localClientIndex = 0;
+	if (!environCallback(RETRO_ENVIRONMENT_GET_NETPLAY_CLIENT_INDEX, &localClientIndex)) {
+		return false;
+	}
+
+	int playerIndex = (int) localClientIndex;
+	if (playerIndex >= MAX_GBAS) {
+		playerIndex = MAX_GBAS - 1;
+	}
+
+	if (sMultiplayer->video.localPlayerIndex == playerIndex) {
+		return false;
+	}
+
+	sMultiplayer->video.localPlayerIndex = playerIndex;
+	return true;
+}
+
+bool mLibretroMultiplayerRefreshDisplayState(retro_environment_t environCallback) {
+	mASSERT(sMultiplayer);
+	enum mLibretroDisplayPlayers previousDisplay = _effectiveDisplayPlayers();
+
+	mLibretroMultiplayerUpdateDisplayPlayers(environCallback);
+	bool changed = previousDisplay != _effectiveDisplayPlayers();
+
+	if (_updateLocalPlayer(environCallback)) {
+		changed = true;
+	}
+
+	return changed;
+}
+
+bool mLibretroMultiplayerApplySessionState(retro_environment_t environCallback, struct mCore* primaryCore, const void* romData, size_t romSize, const char* romPath) {
+	mASSERT(sMultiplayer);
+	bool wasActive = sMultiplayer->numPlayers > 1;
+	enum mLibretroSplitscreenMode previousMode = sMultiplayer->video.mode;
+	enum mLibretroDisplayPlayers previousDisplay = _effectiveDisplayPlayers();
+
+	mLibretroMultiplayerSetPrimaryCore(primaryCore);
+	mLibretroMultiplayerUpdateMode(environCallback);
+	mLibretroMultiplayerUpdateDisplayPlayers(environCallback);
+	mLibretroMultiplayerApplyMode(environCallback, romData, romSize, romPath);
+
+	return wasActive != (sMultiplayer->numPlayers > 1) || previousMode != sMultiplayer->video.mode || previousDisplay != _effectiveDisplayPlayers();
+}
+
+// In "Self" mode only the local player is audible, so the converter is fed
+// from that player's core rather than the primary one.
+struct mCore* mLibretroMultiplayerAudioCore(struct mCore* primaryCore) {
+	mASSERT(sMultiplayer);
+	int local = sMultiplayer->video.localPlayerIndex;
+	if (_effectiveDisplayPlayers() != mLIBRETRO_DISPLAY_SELF || local < 0 || local >= sMultiplayer->numPlayers || !sMultiplayer->cores[local]) {
+		return primaryCore;
+	}
+	return sMultiplayer->cores[local];
+}
+
+// The players we are not listening to keep filling their own audio buffers;
+// drain those or they back up.
+void mLibretroMultiplayerDrainInaudibleCores(struct mCore* audioCore, int16_t* scratch, size_t scratchFrames) {
+	mASSERT(sMultiplayer);
+	if (!scratch || !scratchFrames) {
+		return;
+	}
+
+	int i;
+	for (i = 0; i < sMultiplayer->numPlayers; ++i) {
+		struct mCore* core = sMultiplayer->cores[i];
+		if (!core || core == audioCore) {
+			continue;
+		}
+
+		struct mAudioBuffer* buffer = core->getAudioBuffer(core);
+		while (true) {
+			size_t available = mAudioBufferAvailable(buffer);
+			if (!available) {
+				break;
+			}
+			size_t frames = available < scratchFrames ? available : scratchFrames;
+			if (!mAudioBufferRead(buffer, scratch, frames)) {
+				break;
+			}
+		}
+	}
 }
 
 bool mLibretroMultiplayerStateActive(void) {

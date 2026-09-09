@@ -59,16 +59,16 @@ struct mLibretroMultiplayer {
 	bool coordinatorInitialized;
 };
 
-static inline struct mCore* mLibretroMultiplayerGetPrimaryCore(struct mLibretroMultiplayer* mp) {
-	return mp->cores[0];
-}
-
-void mLibretroMultiplayerInit(struct mLibretroMultiplayer* multiplayer, unsigned maxVideoWidth, unsigned maxVideoHeight);
+void mLibretroMultiplayerInit(unsigned maxVideoWidth, unsigned maxVideoHeight);
 void mLibretroMultiplayerSetPrimaryCore(struct mCore* primaryCore);
 void mLibretroMultiplayerDeinit(void);
 void mLibretroMultiplayerUpdateMode(retro_environment_t environCallback);
 void mLibretroMultiplayerUpdateDisplayPlayers(retro_environment_t environCallback);
 bool mLibretroMultiplayerApplyMode(retro_environment_t environCallback, const void* romData, size_t romSize, const char* romPath);
+bool mLibretroMultiplayerApplySessionState(retro_environment_t environCallback, struct mCore* primaryCore, const void* romData, size_t romSize, const char* romPath);
+bool mLibretroMultiplayerRefreshDisplayState(retro_environment_t environCallback);
+struct mCore* mLibretroMultiplayerAudioCore(struct mCore* primaryCore);
+void mLibretroMultiplayerDrainInaudibleCores(struct mCore* audioCore, int16_t* scratch, size_t scratchFrames);
 void mLibretroMultiplayerReset(void);
 void mLibretroMultiplayerSetKeys(uint16_t keys[MAX_GBAS]);
 void mLibretroMultiplayerRunFrame(void);
