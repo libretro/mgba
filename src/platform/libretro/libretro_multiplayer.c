@@ -159,7 +159,45 @@ static void _stopSession(void) {
 	sMultiplayer->numPlayers = sMultiplayer->cores[0] ? 1 : 0;
 }
 
-static bool _initSecondaryCores(int numPlayers, const void* romData, size_t romSize, const char* romPath) {
+// Players 2..4 emulate separate cartridges, so each needs its own save file.
+// The libretro API only has one SAVE_RAM region and the frontend manages that
+// one for player 1, so the extra players' saves are opened by the core itself,
+// next to player 1's, as "<basename>.p2.srm" and so on.
+static bool _loadSecondarySave(retro_environment_t environCallback, struct mCore* core, const char* romPath, int player) {
+	if (!environCallback || !romPath || !*romPath) {
+		return false;
+	}
+
+	const char* saveDir = NULL;
+	if (!environCallback(RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY, &saveDir) || !saveDir || !*saveDir) {
+		return false;
+	}
+
+	char base[PATH_MAX];
+	separatePath(romPath, NULL, base, NULL);
+	if (!base[0]) {
+		return false;
+	}
+
+	char savePath[PATH_MAX];
+	snprintf(savePath, sizeof(savePath), "%s" PATH_SEP "%s.p%i.srm", saveDir, base, player + 1);
+
+	struct VFile* save = VFileOpen(savePath, O_RDWR | O_CREAT);
+	if (!save) {
+		mLibretroLog(RETRO_LOG_WARN, "libretro: could not open save file for player %i at %s\n", player + 1, savePath);
+		return false;
+	}
+
+	if (!core->loadSave(core, save)) {
+		save->close(save);
+		return false;
+	}
+
+	mLibretroLog(RETRO_LOG_INFO, "libretro: player %i save file %s\n", player + 1, savePath);
+	return true;
+}
+
+static bool _initSecondaryCores(retro_environment_t environCallback, int numPlayers, const void* romData, size_t romSize, const char* romPath) {
 	if (numPlayers < 2 || numPlayers > MAX_GBAS) {
 		return false;
 	}
@@ -211,7 +249,10 @@ static bool _initSecondaryCores(int numPlayers, const void* romData, size_t romS
 			return false;
 		}
 
+		// Reset first, then hand over the save file, matching what
+		// _doDeferredSetup does for player 1.
 		sMultiplayer->cores[i]->reset(sMultiplayer->cores[i]);
+		_loadSecondarySave(environCallback, sMultiplayer->cores[i], romPath, i);
 		sMultiplayer->numPlayers = i + 1;
 	}
 
@@ -254,7 +295,7 @@ static bool _attachLockstep(void) {
 	return true;
 }
 
-static bool _startSession(int numPlayers, const void* romData, size_t romSize, const char* romPath) {
+static bool _startSession(retro_environment_t environCallback, int numPlayers, const void* romData, size_t romSize, const char* romPath) {
 	struct mCore* primary = sMultiplayer->cores[0];
 	if (!primary || primary->platform(primary) != mPLATFORM_GBA || !romData || !romSize) {
 		if (!(romPath && *romPath)) {
@@ -262,7 +303,7 @@ static bool _startSession(int numPlayers, const void* romData, size_t romSize, c
 		}
 	}
 
-	if (!_initSecondaryCores(numPlayers, romData, romSize, romPath)) {
+	if (!_initSecondaryCores(environCallback, numPlayers, romData, romSize, romPath)) {
 		_stopSession();
 		return false;
 	}
@@ -312,7 +353,7 @@ void mLibretroMultiplayerUpdateDisplayPlayers(retro_environment_t environCallbac
 	sMultiplayer->video.displayPlayers = _parseDisplayPlayers(environCallback);
 }
 
-bool mLibretroMultiplayerApplyMode(const void* romData, size_t romSize, const char* romPath) {
+bool mLibretroMultiplayerApplyMode(retro_environment_t environCallback, const void* romData, size_t romSize, const char* romPath) {
 	mASSERT(sMultiplayer);
 	bool wantsSession = sMultiplayer->video.mode != mLIBRETRO_SPLITSCREEN_OFF;
 	int desiredPlayers = wantsSession ? _modePlayerCount(sMultiplayer->video.mode) : 1;
@@ -330,7 +371,7 @@ bool mLibretroMultiplayerApplyMode(const void* romData, size_t romSize, const ch
 		return true;
 	}
 
-	if (!_startSession(desiredPlayers, romData, romSize, romPath)) {
+	if (!_startSession(environCallback, desiredPlayers, romData, romSize, romPath)) {
 		mLibretroLog(RETRO_LOG_WARN, "libretro: failed to start multiplayer lockstep session; continuing in single-player mode\n");
 		return false;
 	}
