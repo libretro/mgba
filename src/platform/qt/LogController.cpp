@@ -4,18 +4,18 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 #include "LogController.h"
+#include "moc_LogController.cpp"
 
+#include <QLoggingCategory>
 #include <QMessageBox>
-#if (QT_VERSION >= QT_VERSION_CHECK(6, 0, 0))
-#include <QtLogging>
-#endif
+#include <QTextStream>
 
 #include "ConfigController.h"
 
 using namespace QGBA;
 
-#if (QT_VERSION >= QT_VERSION_CHECK(5, 14, 0))
-#define endl Qt::endl
+#if (QT_VERSION >= QT_VERSION_CHECK(6, 0, 0))
+using Qt::endl;
 #endif
 
 LogController LogController::s_global(mLOG_ALL);
@@ -53,10 +53,20 @@ LogController::LogController(int levels, QObject* parent)
 	mLogFilterSet(&m_filter, "gba.bios", mLOG_STUB | mLOG_FATAL);
 	mLogFilterSet(&m_filter, "core.status", mLOG_ALL & ~mLOG_DEBUG);
 	m_filter.defaultLevels = levels;
+	m_logger.self = this;
+	m_logger.filter = &m_filter;
+	m_logger.log = [](struct mLogger* logger, int category, mLogLevel level, const char* format, va_list args) {
+		Logger* logContext = static_cast<Logger*>(logger);
+
+		QString message = QString::vasprintf(format, args);
+		QMetaObject::invokeMethod(logContext->self, "logPosted", Q_ARG(int, level), Q_ARG(int, category), Q_ARG(const QString&, message));
+	};
 	s_qtCat = mLogCategoryById("platform.qt");
 
-	if (this != &s_global) {
-		connect(&s_global, &LogController::logPosted, this, &LogController::postLog);
+	if (this == &s_global) {
+		mLogSetThreadLogger(&m_logger);
+		setDefaultTarget(this);
+	} else {
 		connect(this, static_cast<void (LogController::*)(int)>(&LogController::levelsSet), &s_global, static_cast<void (LogController::*)(int)>(&LogController::setLevels));
 		connect(this, static_cast<void (LogController::*)(int)>(&LogController::levelsEnabled), &s_global, static_cast<void (LogController::*)(int)>(&LogController::enableLevels));
 		connect(this, static_cast<void (LogController::*)(int)>(&LogController::levelsDisabled), &s_global, static_cast<void (LogController::*)(int)>(&LogController::disableLevels));
@@ -71,10 +81,6 @@ int LogController::levels(int category) const {
 	return mLogFilterLevels(&m_filter, category);
 }
 
-LogController::Stream LogController::operator()(int category, int level) {
-	return Stream(this, category, level);
-}
-
 void LogController::load(const ConfigController* config) {
 	mLogFilterLoad(&m_filter, config->config());
 	if (!levels(mLogCategoryById("gba.bios"))) {
@@ -86,6 +92,10 @@ void LogController::load(const ConfigController* config) {
 	setLogFile(config->getOption("logFile"));
 	logToStdout(config->getOption("logToStdout").toInt());
 	logToFile(config->getOption("logToFile").toInt());
+
+	if (this != &s_global) {
+		s_global.load(config);
+	}
 }
 
 void LogController::save(ConfigController* config) const {
@@ -195,20 +205,4 @@ QString LogController::toString(int level) {
 		return tr("GAME ERROR");
 	}
 	return QString();
-}
-
-LogController::Stream::Stream(LogController* controller, int level, int category)
-	: m_level(level)
-	, m_category(category)
-	, m_log(controller)
-{
-}
-
-LogController::Stream::~Stream() {
-	m_log->postLog(m_level, m_category, m_queue.join(" "));
-}
-
-LogController::Stream& LogController::Stream::operator<<(const QString& string) {
-	m_queue.append(string);
-	return *this;
 }

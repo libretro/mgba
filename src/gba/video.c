@@ -21,6 +21,9 @@ mLOG_DEFINE_CATEGORY(GBA_VIDEO, "GBA Video", "gba.video");
 static void GBAVideoDummyRendererInit(struct GBAVideoRenderer* renderer);
 static void GBAVideoDummyRendererReset(struct GBAVideoRenderer* renderer);
 static void GBAVideoDummyRendererDeinit(struct GBAVideoRenderer* renderer);
+static uint32_t GBAVideoDummyRendererId(const struct GBAVideoRenderer* renderer);
+static bool GBAVideoDummyRendererLoadState(struct GBAVideoRenderer* renderer, const void* state, size_t size);
+static void GBAVideoDummyRendererSaveState(struct GBAVideoRenderer* renderer, void** state, size_t* size);
 static uint16_t GBAVideoDummyRendererWriteVideoRegister(struct GBAVideoRenderer* renderer, uint32_t address, uint16_t value);
 static void GBAVideoDummyRendererWriteVRAM(struct GBAVideoRenderer* renderer, uint32_t address);
 static void GBAVideoDummyRendererWritePalette(struct GBAVideoRenderer* renderer, uint32_t address, uint16_t value);
@@ -83,6 +86,7 @@ void GBAVideoReset(struct GBAVideo* video) {
 
 	memset(video->palette, 0, sizeof(video->palette));
 	memset(video->oam.raw, 0, sizeof(video->oam.raw));
+	memset(video->vram, 0, GBA_SIZE_VRAM);
 
 	if (!video->renderer) {
 		mLOG(GBA_VIDEO, FATAL, "No renderer associated");
@@ -102,6 +106,9 @@ void GBAVideoDummyRendererCreate(struct GBAVideoRenderer* renderer) {
 		.init = GBAVideoDummyRendererInit,
 		.reset = GBAVideoDummyRendererReset,
 		.deinit = GBAVideoDummyRendererDeinit,
+		.rendererId = GBAVideoDummyRendererId,
+		.loadState = GBAVideoDummyRendererLoadState,
+		.saveState = GBAVideoDummyRendererSaveState,
 		.writeVideoRegister = GBAVideoDummyRendererWriteVideoRegister,
 		.writeVRAM = GBAVideoDummyRendererWriteVRAM,
 		.writePalette = GBAVideoDummyRendererWritePalette,
@@ -187,7 +194,7 @@ void _startHdraw(struct mTiming* timing, void* context, uint32_t cyclesLate) {
 			video->frameskipCounter = video->frameskip;
 		}
 		++video->frameCounter;
-		video->p->earlyExit = true;
+		GBAInterrupt(video->p);
 		break;
 	case VIDEO_VERTICAL_TOTAL_PIXELS - 1:
 		video->p->memory.io[GBA_REG(DISPSTAT)] = GBARegisterDISPSTATClearInVblank(dispstat);
@@ -220,10 +227,20 @@ void _startHblank(struct mTiming* timing, void* context, uint32_t cyclesLate) {
 	video->p->memory.io[GBA_REG(DISPSTAT)] = dispstat;
 }
 
-void GBAVideoWriteDISPSTAT(struct GBAVideo* video, uint16_t value) {
-	video->p->memory.io[GBA_REG(DISPSTAT)] &= 0x7;
-	video->p->memory.io[GBA_REG(DISPSTAT)] |= value;
-	// TODO: Does a VCounter IRQ trigger on write?
+uint16_t GBAVideoWriteDISPSTAT(struct GBAVideo* video, uint16_t value) {
+	GBARegisterDISPSTAT dispstat = video->p->memory.io[GBA_REG(DISPSTAT)] & 0x7;
+	dispstat |= value & 0xFFF8;
+
+	if (video->vcount == GBARegisterDISPSTATGetVcountSetting(dispstat)) {
+		// Edge trigger only
+		if (GBARegisterDISPSTATIsVcounterIRQ(dispstat) && !GBARegisterDISPSTATIsVcounter(dispstat)) {
+			GBARaiseIRQ(video->p, GBA_IRQ_VCOUNTER, 0);
+		}
+		dispstat = GBARegisterDISPSTATFillVcounter(dispstat);
+	} else {
+		dispstat = GBARegisterDISPSTATClearVcounter(dispstat);
+	}
+	return dispstat;
 }
 
 static unsigned _calculateStallMask(struct GBA* gba, unsigned dispcnt) {
@@ -312,6 +329,23 @@ static void GBAVideoDummyRendererInit(struct GBAVideoRenderer* renderer) {
 static void GBAVideoDummyRendererReset(struct GBAVideoRenderer* renderer) {
 	UNUSED(renderer);
 	// Nothing to do
+}
+
+static uint32_t GBAVideoDummyRendererId(const struct GBAVideoRenderer* renderer) {
+	UNUSED(renderer);
+	return 0xDEADBEEF;
+}
+
+static bool GBAVideoDummyRendererLoadState(struct GBAVideoRenderer* renderer, const void* state, size_t size) {
+	UNUSED(renderer);
+	UNUSED(state);
+	return size == 0;
+}
+
+static void GBAVideoDummyRendererSaveState(struct GBAVideoRenderer* renderer, void** state, size_t* size) {
+	UNUSED(renderer);
+	*state = NULL;
+	*size = 0;
 }
 
 static void GBAVideoDummyRendererDeinit(struct GBAVideoRenderer* renderer) {

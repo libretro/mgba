@@ -4,6 +4,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 #include "ActionMapper.h"
+#include "moc_ActionMapper.cpp"
 
 #include "ConfigController.h"
 #include "ShortcutController.h"
@@ -32,6 +33,7 @@ void ActionMapper::clearMenu(const QString& name) {
 
 void ActionMapper::rebuildMenu(QMenuBar* menubar, QWidget* context, const ShortcutController& shortcuts) {
 	menubar->clear();
+	m_menu.clear();
 	for (QAction* action : context->actions()) {
 		context->removeAction(action);
 	}
@@ -43,6 +45,7 @@ void ActionMapper::rebuildMenu(QMenuBar* menubar, QWidget* context, const Shortc
 		QMenu* qmenu = menubar->addMenu(m_menuNames[menu]);
 
 		rebuildMenu(menu, qmenu, context, shortcuts);
+		m_menu.addMenu(qmenu);
 	}
 }
 
@@ -123,6 +126,14 @@ void ActionMapper::rebuildMenu(const QString& menu, QMenu* qmenu, QWidget* conte
 		}
 		context->addAction(qaction);
 	}
+	connect(this, &ActionMapper::menuCleared, qmenu, [qmenu, menu](const QString& name) {
+		if (name != menu) {
+			return;
+		}
+		for (QAction* action : qmenu->actions()) {
+			qmenu->removeAction(action);
+		}
+	});
 }
 
 void ActionMapper::addSeparator(const QString& menu) {
@@ -193,4 +204,8 @@ std::shared_ptr<Action> ActionMapper::getAction(const QString& itemName) {
 
 QKeySequence ActionMapper::defaultShortcut(const QString& itemName) {
 	return m_defaultShortcuts[itemName];
+}
+
+void ActionMapper::exec(const QPoint& pos) {
+	m_menu.exec(pos);
 }

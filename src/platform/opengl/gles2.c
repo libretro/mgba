@@ -359,6 +359,15 @@ static void _drawShaderEx(struct mGLES2Context* context, struct mGLES2Shader* sh
 	}
 
 	glBindFramebuffer(GL_FRAMEBUFFER, shader->fbo);
+	if (!shader->fbo) {
+#ifdef GL_BACK_LEFT
+		// Desktop OpenGL
+		glDrawBuffers(1, (GLenum[]) { GL_BACK_LEFT });
+#else
+		// Actual OpenGL|ES
+		glDrawBuffers(1, (GLenum[]) { GL_BACK });
+#endif
+	}
 	if (shader->blend) {
 		glEnable(GL_BLEND);
 		glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
@@ -1100,7 +1109,7 @@ bool mGLES2ShaderLoad(struct VideoShader* shader, struct VDir* dir) {
 			struct mGLES2Shader* shaderBlock = calloc(inShaders, sizeof(struct mGLES2Shader));
 			int n;
 			for (n = 0; n < inShaders; ++n) {
-				char passName[12];
+				char passName[16];
 				snprintf(passName, sizeof(passName), "pass.%u", n);
 				const char* fs = ConfigurationGetValue(&description, passName, "fragmentShader");
 				const char* vs = ConfigurationGetValue(&description, passName, "vertexShader");

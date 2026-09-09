@@ -8,7 +8,7 @@
 #include "DebuggerController.h"
 
 #include <QMutex>
-#include <QStringList>
+#include <QStringListModel>
 #include <QWaitCondition>
 
 #include <mgba/internal/debugger/cli-debugger.h>
@@ -23,7 +23,9 @@ Q_OBJECT
 public:
 	DebuggerConsoleController(QObject* parent = nullptr);
 
-	QStringList history() const { return m_history; }
+	QStringListModel* history() { return m_history; }
+
+	bool isPaused();
 
 signals:
 	void log(const QString&);
@@ -34,6 +36,7 @@ public slots:
 	virtual void detach() override;
 	void historyLoad();
 	void historySave();
+	void doContinue();
 
 protected:
 	virtual void attachInternal() override;
@@ -53,7 +56,7 @@ private:
 
 	QMutex m_mutex;
 	QWaitCondition m_cond;
-	QStringList m_history;
+	QStringListModel* m_history;
 	QStringList m_lines;
 	QByteArray m_last;
 
