@@ -38,7 +38,6 @@ struct GBASIOLockstepCoordinator {
 	uint32_t waiting;
 
 	bool transferActive;
-	bool syncArmed;
 	enum GBASIOMode transferMode;
 
 	int32_t cycle;
