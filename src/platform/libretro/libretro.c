@@ -91,7 +91,6 @@ static bool _syncMultiplayerVideoState(void);
 static bool _applyMultiplayerSessionState(void);
 static bool _syncMultiplayerSelfPlayer(void);
 static void _refreshRuntimeMultiplayerState(void);
-static const char* _multiplayerDisplayLabel(enum mLibretroDisplayPlayers displayPlayers);
 static void _drainCoreAudioBuffer(struct mCore* audioCore);
 static void _updateFrontendAVInfo(void);
 static void _ensureDeferredSetupForStateIO(void);
