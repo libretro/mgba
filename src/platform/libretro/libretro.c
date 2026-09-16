@@ -2372,15 +2372,13 @@ void GBARetroLog(struct mLogger* logger, int category, enum mLogLevel level, con
 		break;
 	case mLOG_GAME_ERROR:
 	case mLOG_STUB:
+	case mLOG_DEBUG:
 #ifdef NDEBUG
 		return;
 #else
 		retroLevel = RETRO_LOG_DEBUG;
 		break;
 #endif
-	case mLOG_DEBUG:
-		retroLevel = RETRO_LOG_DEBUG;
-		break;
 	}
 #ifdef NDEBUG
 	static int biosCat = -1;
