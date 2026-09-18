@@ -1,29 +1,22 @@
-/* Copyright (c) 2013-2023 Jeffrey Pfau
+/* Copyright (c) 2013-2014 Jeffrey Pfau
  *
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 #include "InputController.h"
-#include "moc_InputController.cpp"
 
 #include "ConfigController.h"
-#include "input/Gamepad.h"
-#include "input/GamepadButtonEvent.h"
+#include "GamepadAxisEvent.h"
+#include "GamepadButtonEvent.h"
 #include "InputProfile.h"
 #include "LogController.h"
-#include "utils.h"
 
 #include <QApplication>
 #include <QTimer>
 #include <QWidget>
 #ifdef BUILD_QT_MULTIMEDIA
-#if (QT_VERSION < QT_VERSION_CHECK(6, 0, 0))
 #include <QCameraInfo>
 #include <QVideoSurfaceFormat>
-#else
-#include <QCameraDevice>
-#include <QMediaDevices>
-#endif
 #endif
 
 #include <mgba/core/interface.h>
@@ -31,33 +24,41 @@
 
 using namespace QGBA;
 
-int InputController::s_claimedPlayers = 0;
+#ifdef BUILD_SDL
+int InputController::s_sdlInited = 0;
+mSDLEvents InputController::s_sdlEvents;
+#endif
 
-InputController::InputController(QWidget* topLevel, QObject* parent)
+InputController::InputController(int playerId, QWidget* topLevel, QObject* parent)
 	: QObject(parent)
-	, m_playerId(claimPlayer())
+	, m_playerId(playerId)
 	, m_topLevel(topLevel)
 	, m_focusParent(topLevel)
 {
 	mInputMapInit(&m_inputMap, &GBAInputInfo);
 
-	connect(&m_gamepadTimer, &QTimer::timeout, [this]() {
-		for (auto& driver : m_inputDrivers) {
-			if (driver->supportsPolling() && driver->supportsGamepads()) {
-				testGamepad(driver->type());
-			}
-		}
-		update();
-	});
+#ifdef BUILD_SDL
+	if (s_sdlInited == 0) {
+		mSDLInitEvents(&s_sdlEvents);
+	}
+	++s_sdlInited;
+	m_sdlPlayer.bindings = &m_inputMap;
+	mSDLInitBindingsGBA(&m_inputMap);
+	updateJoysticks();
+#endif
 
-	m_gamepadTimer.setInterval(POLL_INTERVAL_MS);
+#ifdef BUILD_SDL
+	connect(&m_gamepadTimer, &QTimer::timeout, [this]() {
+		testGamepad(SDL_BINDING_BUTTON);
+		if (m_playerId == 0) {
+			updateJoysticks();
+		}
+	});
+#endif
+	m_gamepadTimer.setInterval(50);
 	m_gamepadTimer.start();
 
 #ifdef BUILD_QT_MULTIMEDIA
-#if (QT_VERSION >= QT_VERSION_CHECK(6, 0, 0))
-	m_captureSession.setVideoSink(&m_videoSink);
-	connect(&m_videoSink, &QVideoSink::videoFrameChanged, &m_videoDumper, &VideoDumper::present);
-#endif
 	connect(&m_videoDumper, &VideoDumper::imageAvailable, this, &InputController::setCamImage);
 #endif
 
@@ -96,32 +97,20 @@ InputController::InputController(QWidget* topLevel, QObject* parent)
 			image->image.load(":/res/no-cam.png");
 		}
 #ifdef BUILD_QT_MULTIMEDIA
-		image->p->m_cameraActive = true;
-		QByteArray camera = image->p->m_config->getQtOption("camera").toByteArray();
-#if (QT_VERSION < QT_VERSION_CHECK(6, 0, 0))
-		if (!camera.isNull()) {
-			image->p->m_cameraDevice = camera;
-		}
-#else
-		if (!camera.isNull()) {
-			for (const auto& cam : QMediaDevices::videoInputs()) {
-				if (cam.id() == camera) {
-					image->p->m_cameraDevice = cam;
-				}
+		if (image->p->m_config->getQtOption("cameraDriver").toInt() == static_cast<int>(CameraDriver::QT_MULTIMEDIA)) {
+			QByteArray camera = image->p->m_config->getQtOption("camera").toByteArray();
+			if (!camera.isNull()) {
+				QMetaObject::invokeMethod(image->p, "setCamera", Q_ARG(QByteArray, camera));
 			}
+			QMetaObject::invokeMethod(image->p, "setupCam");
 		}
-#endif
-		QMetaObject::invokeMethod(image->p, "setupCam");
 #endif
 	};
 
 	m_image.stopRequestImage = [](mImageSource* context) {
-#ifdef BUILD_QT_MULTIMEDIA
 		InputControllerImage* image = static_cast<InputControllerImage*>(context);
-		image->p->m_cameraActive = false;
+#ifdef BUILD_QT_MULTIMEDIA
 		QMetaObject::invokeMethod(image->p, "teardownCam");
-#else
-		UNUSED(context);
 #endif
 	};
 
@@ -152,319 +141,428 @@ InputController::InputController(QWidget* topLevel, QObject* parent)
 
 InputController::~InputController() {
 	mInputMapDeinit(&m_inputMap);
-	freePlayer(m_playerId);
-}
 
-void InputController::addInputDriver(std::shared_ptr<InputDriver> driver) {
-	m_inputDrivers[driver->type()] = driver;
-	driver->setPlayerId(m_playerId);
-	if (!m_sensorDriver && driver->supportsSensors()) {
-		m_sensorDriver = driver->type();
+#ifdef BUILD_SDL
+	if (m_playerAttached) {
+		mSDLDetachPlayer(&s_sdlEvents, &m_sdlPlayer);
 	}
+
+	--s_sdlInited;
+	if (s_sdlInited == 0) {
+		mSDLDeinitEvents(&s_sdlEvents);
+	}
+#endif
 }
 
 void InputController::setConfiguration(ConfigController* config) {
 	m_config = config;
 	loadConfiguration(KEYBOARD);
-	for (auto& driver : m_inputDrivers) {
-		driver->loadConfiguration(config);
+#ifdef BUILD_SDL
+	mSDLEventsLoadConfig(&s_sdlEvents, config->input());
+	if (!m_playerAttached) {
+		m_playerAttached = mSDLAttachPlayer(&s_sdlEvents, &m_sdlPlayer);
 	}
+	loadConfiguration(SDL_BINDING_BUTTON);
+	loadProfile(SDL_BINDING_BUTTON, profileForType(SDL_BINDING_BUTTON));
+#endif
 }
 
-bool InputController::loadConfiguration(uint32_t type) {
-	bool loaded = mInputMapLoad(&m_inputMap, type, m_config->input());
-	auto driver = m_inputDrivers.value(type);
-	if (!driver) {
-		return false;
+void InputController::loadConfiguration(uint32_t type) {
+	mInputMapLoad(&m_inputMap, type, m_config->input());
+#ifdef BUILD_SDL
+	if (m_playerAttached) {
+		mSDLPlayerLoadConfig(&m_sdlPlayer, m_config->input());
 	}
-	if (!loaded) {
-		driver->bindDefaults(this);
-	}
-	driver->loadConfiguration(m_config);
-	return loaded;
+#endif
 }
 
-bool InputController::loadProfile(uint32_t type, const QString& profile) {
-	if (profile.isEmpty()) {
-		return false;
-	}
+void InputController::loadProfile(uint32_t type, const QString& profile) {
 	bool loaded = mInputProfileLoad(&m_inputMap, type, m_config->input(), profile.toUtf8().constData());
+	recalibrateAxes();
 	if (!loaded) {
 		const InputProfile* ip = InputProfile::findProfile(profile);
 		if (ip) {
 			ip->apply(this);
-			loaded = true;
 		}
 	}
 	emit profileLoaded(profile);
-	return loaded;
 }
 
 void InputController::saveConfiguration() {
 	saveConfiguration(KEYBOARD);
-	for (auto& driver : m_inputDrivers) {
-		driver->saveConfiguration(m_config);
+#ifdef BUILD_SDL
+	saveConfiguration(SDL_BINDING_BUTTON);
+	saveProfile(SDL_BINDING_BUTTON, profileForType(SDL_BINDING_BUTTON));
+	if (m_playerAttached) {
+		mSDLPlayerSaveConfig(&m_sdlPlayer, m_config->input());
 	}
+#endif
 	m_config->write();
 }
 
 void InputController::saveConfiguration(uint32_t type) {
 	mInputMapSave(&m_inputMap, type, m_config->input());
-	auto driver = m_inputDrivers.value(type);
-	if (driver) {
-		driver->saveConfiguration(m_config);
-	}
 	m_config->write();
 }
 
 void InputController::saveProfile(uint32_t type, const QString& profile) {
-	if (profile.isEmpty()) {
-		return;
-	}
 	mInputProfileSave(&m_inputMap, type, m_config->input(), profile.toUtf8().constData());
 	m_config->write();
 }
 
-QString InputController::profileForType(uint32_t type) {
-	auto driver = m_inputDrivers.value(type);
-	if (!driver) {
-		return {};
+const char* InputController::profileForType(uint32_t type) {
+	UNUSED(type);
+#ifdef BUILD_SDL
+	if (type == SDL_BINDING_BUTTON && m_sdlPlayer.joystick) {
+#if SDL_VERSION_ATLEAST(2, 0, 0)
+		return SDL_JoystickName(m_sdlPlayer.joystick->joystick);
+#else
+		return SDL_JoystickName(SDL_JoystickIndex(m_sdlPlayer.joystick->joystick));
+#endif
 	}
-	return driver->currentProfile();
-}
-
-void InputController::setGamepadDriver(uint32_t type) {
-	auto driver = m_inputDrivers.value(type);
-	if (!driver || !driver->supportsGamepads()) {
-		return;
-	}
-	m_gamepadDriver = type;
+#endif
+	return 0;
 }
 
 QStringList InputController::connectedGamepads(uint32_t type) const {
-	if (!type) {
-		type = m_gamepadDriver;
-	}
-	const auto& driver = m_inputDrivers.value(type);
-	if (!driver) {
-		return {};
-	}
+	UNUSED(type);
 
-	QStringList pads;
-	for (auto& pad : driver->connectedGamepads()) {
-		pads.append(pad->visibleName());
+#ifdef BUILD_SDL
+	if (type == SDL_BINDING_BUTTON) {
+		QStringList pads;
+		for (size_t i = 0; i < SDL_JoystickListSize(&s_sdlEvents.joysticks); ++i) {
+			const char* name;
+#if SDL_VERSION_ATLEAST(2, 0, 0)
+			name = SDL_JoystickName(SDL_JoystickListGetPointer(&s_sdlEvents.joysticks, i)->joystick);
+#else
+			name = SDL_JoystickName(SDL_JoystickIndex(SDL_JoystickListGetPointer(&s_sdlEvents.joysticks, i)->joystick));
+#endif
+			if (name) {
+				pads.append(QString(name));
+			} else {
+				pads.append(QString());
+			}
+		}
+		return pads;
 	}
-	return pads;
+#endif
+
+	return QStringList();
 }
 
-int InputController::gamepadIndex(uint32_t type) const {
-	if (!type) {
-		type = m_gamepadDriver;
+int InputController::gamepad(uint32_t type) const {
+#ifdef BUILD_SDL
+	if (type == SDL_BINDING_BUTTON) {
+		return m_sdlPlayer.joystick ? m_sdlPlayer.joystick->index : 0;
 	}
-	const auto& driver = m_inputDrivers.value(type);
-	if (!driver) {
-		return -1;
-	}
-	return driver->activeGamepadIndex();
+#endif
+	return 0;
 }
 
 void InputController::setGamepad(uint32_t type, int index) {
-	if (!type) {
-		type = m_gamepadDriver;
+#ifdef BUILD_SDL
+	if (type == SDL_BINDING_BUTTON) {
+		mSDLPlayerChangeJoystick(&s_sdlEvents, &m_sdlPlayer, index);
 	}
-	auto driver = m_inputDrivers.value(type);
-	if (!driver) {
-		return;
-	}
-	driver->setActiveGamepad(index);
-}
-
-void InputController::setGamepad(int index) {
-	setGamepad(0, index);
+#endif
 }
 
 void InputController::setPreferredGamepad(uint32_t type, int index) {
 	if (!m_config) {
 		return;
 	}
-	if (!type) {
-		type = m_gamepadDriver;
-	}
-	auto driver = m_inputDrivers.value(type);
-	if (!driver) {
+#ifdef BUILD_SDL
+	char name[34] = {0};
+#if SDL_VERSION_ATLEAST(2, 0, 0)
+	SDL_JoystickGetGUIDString(SDL_JoystickGetGUID(SDL_JoystickListGetPointer(&s_sdlEvents.joysticks, index)->joystick), name, sizeof(name));
+#else
+	const char* name = SDL_JoystickName(SDL_JoystickIndex(SDL_JoystickListGetPointer(&s_sdlEvents.joysticks, index)->joystick));
+	if (!name) {
 		return;
 	}
-
-	auto pads = driver->connectedGamepads();
-	if (index >= pads.count()) {
-		return;
-	}
-
-	QString name = pads[index]->name();
-	if (name.isEmpty()) {
-		return;
-	}
-	mInputSetPreferredDeviceType(m_config->input(), "gba", type, m_playerId, name.toUtf8().constData());
-
-	QString serial = pads[index]->serial();
-	if (serial.isEmpty()) {
-		return;
-	}
-	mInputSetPreferredDeviceSerial(m_config->input(), "gba", type, m_playerId, serial.toUtf8().constData());
+#endif
+	mInputSetPreferredDevice(m_config->input(), "gba", type, m_playerId, name);
+#else
+	UNUSED(type);
+	UNUSED(index);
+#endif
 }
-
-void InputController::setPreferredGamepad(int index) {
-	setPreferredGamepad(0, index);
-}
-
-InputMapper InputController::mapper(uint32_t type) {
-	return InputMapper(&m_inputMap, type);
-}
-
-InputMapper InputController::mapper(InputDriver* driver) {
-	return InputMapper(&m_inputMap, driver->type());
-}
-
-InputMapper InputController::mapper(InputSource* source) {
-	return InputMapper(&m_inputMap, source->type());
-}
-
-void InputController::setSensorDriver(uint32_t type) {
-	auto driver = m_inputDrivers.value(type);
-	if (!driver || !driver->supportsSensors()) {
-		return;
-	}
-	m_sensorDriver = type;
-}
-
 
 mRumble* InputController::rumble() {
-	auto driver = m_inputDrivers.value(m_sensorDriver);
-	if (driver) {
-		return driver->rumble();
+#ifdef BUILD_SDL
+#if SDL_VERSION_ATLEAST(2, 0, 0)
+	if (m_playerAttached) {
+		return &m_sdlPlayer.rumble.d;
 	}
+#endif
+#endif
 	return nullptr;
 }
 
 mRotationSource* InputController::rotationSource() {
-	auto driver = m_inputDrivers.value(m_sensorDriver);
-	if (driver) {
-		return driver->rotationSource();
+#ifdef BUILD_SDL
+	if (m_playerAttached) {
+		return &m_sdlPlayer.rotation.d;
 	}
+#endif
 	return nullptr;
 }
 
-int InputController::mapKeyboard(int key) const {
-	return mInputMapKey(&m_inputMap, KEYBOARD, key);
+void InputController::registerTiltAxisX(int axis) {
+#ifdef BUILD_SDL
+	if (m_playerAttached) {
+		m_sdlPlayer.rotation.axisX = axis;
+	}
+#endif
 }
 
-void InputController::update() {
-	for (auto& driver : m_inputDrivers) {
-		QString profile = profileForType(driver->type());
-		driver->update();
-		QString newProfile = profileForType(driver->type());
-		if (profile != newProfile) {
-			loadProfile(driver->type(), newProfile);
-		}
+void InputController::registerTiltAxisY(int axis) {
+#ifdef BUILD_SDL
+	if (m_playerAttached) {
+		m_sdlPlayer.rotation.axisY = axis;
 	}
-	emit updated();
+#endif
+}
+
+void InputController::registerGyroAxisX(int axis) {
+#ifdef BUILD_SDL
+	if (m_playerAttached) {
+		m_sdlPlayer.rotation.gyroX = axis;
+	}
+#endif
+}
+
+void InputController::registerGyroAxisY(int axis) {
+#ifdef BUILD_SDL
+	if (m_playerAttached) {
+		m_sdlPlayer.rotation.gyroY = axis;
+	}
+#endif
+}
+
+float InputController::gyroSensitivity() const {
+#ifdef BUILD_SDL
+	if (m_playerAttached) {
+		return m_sdlPlayer.rotation.gyroSensitivity;
+	}
+#endif
+	return 0;
+}
+
+void InputController::setGyroSensitivity(float sensitivity) {
+#ifdef BUILD_SDL
+	if (m_playerAttached) {
+		m_sdlPlayer.rotation.gyroSensitivity = sensitivity;
+	}
+#endif
+}
+
+GBAKey InputController::mapKeyboard(int key) const {
+	return static_cast<GBAKey>(mInputMapKey(&m_inputMap, KEYBOARD, key));
+}
+
+void InputController::bindKey(uint32_t type, int key, GBAKey gbaKey) {
+	return mInputBindKey(&m_inputMap, type, key, gbaKey);
+}
+
+void InputController::updateJoysticks() {
+#ifdef BUILD_SDL
+	QString profile = profileForType(SDL_BINDING_BUTTON);
+	mSDLUpdateJoysticks(&s_sdlEvents, m_config->input());
+	QString newProfile = profileForType(SDL_BINDING_BUTTON);
+	if (profile != newProfile) {
+		loadProfile(SDL_BINDING_BUTTON, newProfile);
+	}
+#endif
 }
 
 int InputController::pollEvents() {
 	int activeButtons = 0;
-	for (auto& pad : gamepads()) {
-		InputMapper im(mapper(pad.get()));
-		activeButtons |= im.mapKeys(pad->currentButtons());
-		activeButtons |= im.mapAxes(pad->currentAxes());
-		activeButtons |= im.mapHats(pad->currentHats());
-	}
-	QReadLocker l(&m_eventsLock);
-	for (int i = 0; i < GBA_KEY_MAX; ++i) {
-		if ((activeButtons & (1 << i)) && hasPendingEvent(i)) {
-			activeButtons ^= 1 << i;
+#ifdef BUILD_SDL
+	if (m_playerAttached && m_sdlPlayer.joystick) {
+		SDL_Joystick* joystick = m_sdlPlayer.joystick->joystick;
+		SDL_JoystickUpdate();
+		int numButtons = SDL_JoystickNumButtons(joystick);
+		int i;
+		QReadLocker l(&m_eventsLock);
+		for (i = 0; i < numButtons; ++i) {
+			GBAKey key = static_cast<GBAKey>(mInputMapKey(&m_inputMap, SDL_BINDING_BUTTON, i));
+			if (key == GBA_KEY_NONE) {
+				continue;
+			}
+			if (hasPendingEvent(key)) {
+				continue;
+			}
+			if (SDL_JoystickGetButton(joystick, i)) {
+				activeButtons |= 1 << key;
+			}
+		}
+		l.unlock();
+		int numHats = SDL_JoystickNumHats(joystick);
+		for (i = 0; i < numHats; ++i) {
+			int hat = SDL_JoystickGetHat(joystick, i);
+			activeButtons |= mInputMapHat(&m_inputMap, SDL_BINDING_BUTTON, i, hat);
+		}
+
+		int numAxes = SDL_JoystickNumAxes(joystick);
+		for (i = 0; i < numAxes; ++i) {
+			int value = SDL_JoystickGetAxis(joystick, i);
+
+			enum GBAKey key = static_cast<GBAKey>(mInputMapAxis(&m_inputMap, SDL_BINDING_BUTTON, i, value));
+			if (key != GBA_KEY_NONE) {
+				activeButtons |= 1 << key;
+			}
 		}
 	}
+#endif
 	return activeButtons;
 }
 
-std::shared_ptr<Gamepad> InputController::gamepad(uint32_t type) {
-	auto driver = m_inputDrivers.value(type);
-	if (!driver) {
-		return nullptr;
-	}
-	if (!driver->supportsGamepads()) {
-		return nullptr;
-	}
-
-	return driver->activeGamepad();
-}
-
-QList<std::shared_ptr<Gamepad>> InputController::gamepads() {
-	QList<std::shared_ptr<Gamepad>> pads;
-	for (auto& driver : m_inputDrivers) {
-		if (!driver->supportsGamepads()) {
-			continue;
-		}
-		std::shared_ptr<Gamepad> pad = driver->activeGamepad();
-		if (pad) {
-			pads.append(pad);
-		}
-	}
-	return pads;
-}
-
-QSet<int> InputController::activeGamepadButtons(uint32_t type) {
+QSet<int> InputController::activeGamepadButtons(int type) {
 	QSet<int> activeButtons;
-	std::shared_ptr<Gamepad> pad = gamepad(type);
-	if (!pad) {
-		return {};
-	}
-	auto allButtons = pad->currentButtons();
-	for (int i = 0; i < allButtons.size(); ++i) {
-		if (allButtons[i]) {
-			activeButtons.insert(i);
+#ifdef BUILD_SDL
+	if (m_playerAttached && type == SDL_BINDING_BUTTON && m_sdlPlayer.joystick) {
+		SDL_Joystick* joystick = m_sdlPlayer.joystick->joystick;
+		SDL_JoystickUpdate();
+		int numButtons = SDL_JoystickNumButtons(joystick);
+		int i;
+		for (i = 0; i < numButtons; ++i) {
+			if (SDL_JoystickGetButton(joystick, i)) {
+				activeButtons.insert(i);
+			}
 		}
 	}
+#endif
 	return activeButtons;
 }
 
-QSet<QPair<int, GamepadAxisEvent::Direction>> InputController::activeGamepadAxes(uint32_t type) {
+void InputController::recalibrateAxes() {
+#ifdef BUILD_SDL
+	if (m_playerAttached && m_sdlPlayer.joystick) {
+		SDL_Joystick* joystick = m_sdlPlayer.joystick->joystick;
+		SDL_JoystickUpdate();
+		int numAxes = SDL_JoystickNumAxes(joystick);
+		if (numAxes < 1) {
+			return;
+		}
+		m_deadzones.resize(numAxes);
+		int i;
+		for (i = 0; i < numAxes; ++i) {
+			m_deadzones[i] = SDL_JoystickGetAxis(joystick, i);
+		}
+	}
+#endif
+}
+
+QSet<QPair<int, GamepadAxisEvent::Direction>> InputController::activeGamepadAxes(int type) {
 	QSet<QPair<int, GamepadAxisEvent::Direction>> activeAxes;
-	std::shared_ptr<Gamepad> pad = gamepad(type);
-	if (!pad) {
-		return {};
-	}
-	InputMapper im(mapper(type));
-	auto allAxes = pad->currentAxes();
-	for (int i = 0; i < allAxes.size(); ++i) {
-		if (allAxes[i] - im.axisCenter(i) >= im.axisThreshold(i)) {
-			activeAxes.insert(qMakePair(i, GamepadAxisEvent::POSITIVE));
-			continue;
+#ifdef BUILD_SDL
+	if (m_playerAttached && type == SDL_BINDING_BUTTON && m_sdlPlayer.joystick) {
+		SDL_Joystick* joystick = m_sdlPlayer.joystick->joystick;
+		SDL_JoystickUpdate();
+		int numAxes = SDL_JoystickNumAxes(joystick);
+		if (numAxes < 1) {
+			return activeAxes;
 		}
-		if (allAxes[i] - im.axisCenter(i) <= -im.axisThreshold(i)) {
-			activeAxes.insert(qMakePair(i, GamepadAxisEvent::NEGATIVE));
-			continue;
+		m_deadzones.resize(numAxes);
+		int i;
+		for (i = 0; i < numAxes; ++i) {
+			int32_t axis = SDL_JoystickGetAxis(joystick, i);
+			axis -= m_deadzones[i];
+			if (axis >= AXIS_THRESHOLD || axis <= -AXIS_THRESHOLD) {
+				activeAxes.insert(qMakePair(i, axis > 0 ? GamepadAxisEvent::POSITIVE : GamepadAxisEvent::NEGATIVE));
+			}
 		}
 	}
+#endif
 	return activeAxes;
 }
 
-QSet<QPair<int, GamepadHatEvent::Direction>> InputController::activeGamepadHats(uint32_t type) {
-	QSet<QPair<int, GamepadHatEvent::Direction>> activeHats;
-	std::shared_ptr<Gamepad> pad = gamepad(type);
-	if (!pad) {
-		return {};
+void InputController::bindAxis(uint32_t type, int axis, GamepadAxisEvent::Direction direction, GBAKey key) {
+	const mInputAxis* old = mInputQueryAxis(&m_inputMap, type, axis);
+	mInputAxis description = { GBA_KEY_NONE, GBA_KEY_NONE, -AXIS_THRESHOLD, AXIS_THRESHOLD };
+	if (old) {
+		description = *old;
 	}
-	auto allHats = pad->currentHats();
-	for (int i = 0; i < allHats.size(); ++i) {
-		if (allHats[i] != GamepadHatEvent::CENTER) {
-			activeHats.insert(qMakePair(i, allHats[i]));
+	int deadzone = 0;
+	if (axis > 0 && m_deadzones.size() > axis) {
+		deadzone = m_deadzones[axis];
+	}
+	switch (direction) {
+	case GamepadAxisEvent::NEGATIVE:
+		description.lowDirection = key;
+
+		description.deadLow = deadzone - AXIS_THRESHOLD;
+		break;
+	case GamepadAxisEvent::POSITIVE:
+		description.highDirection = key;
+		description.deadHigh = deadzone + AXIS_THRESHOLD;
+		break;
+	default:
+		return;
+	}
+	mInputBindAxis(&m_inputMap, type, axis, &description);
+}
+
+void InputController::unbindAllAxes(uint32_t type) {
+	mInputUnbindAllAxes(&m_inputMap, type);
+}
+
+QSet<QPair<int, GamepadHatEvent::Direction>> InputController::activeGamepadHats(int type) {
+	QSet<QPair<int, GamepadHatEvent::Direction>> activeHats;
+#ifdef BUILD_SDL
+	if (m_playerAttached && type == SDL_BINDING_BUTTON && m_sdlPlayer.joystick) {
+		SDL_Joystick* joystick = m_sdlPlayer.joystick->joystick;
+		SDL_JoystickUpdate();
+		int numHats = SDL_JoystickNumHats(joystick);
+		if (numHats < 1) {
+			return activeHats;
+		}
+
+		int i;
+		for (i = 0; i < numHats; ++i) {
+			int hat = SDL_JoystickGetHat(joystick, i);
+			if (hat & GamepadHatEvent::UP) {
+				activeHats.insert(qMakePair(i, GamepadHatEvent::UP));
+			}
+			if (hat & GamepadHatEvent::RIGHT) {
+				activeHats.insert(qMakePair(i, GamepadHatEvent::RIGHT));
+			}
+			if (hat & GamepadHatEvent::DOWN) {
+				activeHats.insert(qMakePair(i, GamepadHatEvent::DOWN));
+			}
+			if (hat & GamepadHatEvent::LEFT) {
+				activeHats.insert(qMakePair(i, GamepadHatEvent::LEFT));
+			}
 		}
 	}
+#endif
 	return activeHats;
 }
 
-void InputController::testGamepad(uint32_t type) {
+void InputController::bindHat(uint32_t type, int hat, GamepadHatEvent::Direction direction, GBAKey gbaKey) {
+	mInputHatBindings bindings{ -1, -1, -1, -1 };
+	mInputQueryHat(&m_inputMap, type, hat, &bindings);
+	switch (direction) {
+	case GamepadHatEvent::UP:
+		bindings.up = gbaKey;
+		break;
+	case GamepadHatEvent::RIGHT:
+		bindings.right = gbaKey;
+		break;
+	case GamepadHatEvent::DOWN:
+		bindings.down = gbaKey;
+		break;
+	case GamepadHatEvent::LEFT:
+		bindings.left = gbaKey;
+		break;
+	default:
+		return;
+	}
+	mInputBindHat(&m_inputMap, type, hat, &bindings);
+}
+
+void InputController::testGamepad(int type) {
 	QWriteLocker l(&m_eventsLock);
 	auto activeAxes = activeGamepadAxes(type);
 	auto oldAxes = m_activeAxes;
@@ -489,16 +587,16 @@ void InputController::testGamepad(uint32_t type) {
 		bool newlyAboveThreshold = activeAxes.contains(axis);
 		if (newlyAboveThreshold) {
 			GamepadAxisEvent* event = new GamepadAxisEvent(axis.first, axis.second, newlyAboveThreshold, type, this);
-			postPendingEvent(event->platformKey());
+			postPendingEvent(event->gbaKey());
 			sendGamepadEvent(event);
 			if (!event->isAccepted()) {
-				clearPendingEvent(event->platformKey());
+				clearPendingEvent(event->gbaKey());
 			}
 		}
 	}
-	for (auto& axis : oldAxes) {
+	for (auto axis : oldAxes) {
 		GamepadAxisEvent* event = new GamepadAxisEvent(axis.first, axis.second, false, type, this);
-		clearPendingEvent(event->platformKey());
+		clearPendingEvent(event->gbaKey());
 		sendGamepadEvent(event);
 	}
 
@@ -511,15 +609,15 @@ void InputController::testGamepad(uint32_t type) {
 
 	for (int button : activeButtons) {
 		GamepadButtonEvent* event = new GamepadButtonEvent(GamepadButtonEvent::Down(), button, type, this);
-		postPendingEvent(event->platformKey());
+		postPendingEvent(event->gbaKey());
 		sendGamepadEvent(event);
 		if (!event->isAccepted()) {
-			clearPendingEvent(event->platformKey());
+			clearPendingEvent(event->gbaKey());
 		}
 	}
 	for (int button : oldButtons) {
 		GamepadButtonEvent* event = new GamepadButtonEvent(GamepadButtonEvent::Up(), button, type, this);
-		clearPendingEvent(event->platformKey());
+		clearPendingEvent(event->gbaKey());
 		sendGamepadEvent(event);
 	}
 
@@ -528,15 +626,15 @@ void InputController::testGamepad(uint32_t type) {
 
 	for (auto& hat : activeHats) {
 		GamepadHatEvent* event = new GamepadHatEvent(GamepadHatEvent::Down(), hat.first, hat.second, type, this);
-		postPendingEvents(event->platformKeys());
+		postPendingEvent(event->gbaKey());
 		sendGamepadEvent(event);
 		if (!event->isAccepted()) {
-			clearPendingEvents(event->platformKeys());
+			clearPendingEvent(event->gbaKey());
 		}
 	}
 	for (auto& hat : oldHats) {
 		GamepadHatEvent* event = new GamepadHatEvent(GamepadHatEvent::Up(), hat.first, hat.second, type, this);
-		clearPendingEvents(event->platformKeys());
+		clearPendingEvent(event->gbaKey());
 		sendGamepadEvent(event);
 	}
 }
@@ -551,49 +649,43 @@ void InputController::sendGamepadEvent(QEvent* event) {
 	} else {
 		focusWidget = QApplication::focusWidget();
 	}
-	QApplication::postEvent(focusWidget, event, Qt::HighEventPriority);
+	QApplication::sendEvent(focusWidget, event);
 }
 
-void InputController::postPendingEvent(int key) {
+void InputController::postPendingEvent(GBAKey key) {
 	m_pendingEvents.insert(key);
 }
 
-void InputController::clearPendingEvent(int key) {
+void InputController::clearPendingEvent(GBAKey key) {
 	m_pendingEvents.remove(key);
 }
 
-void InputController::postPendingEvents(int keys) {
-	for (int i = 0; keys; ++i, keys >>= 1) {
-		if (keys & 1) {
-			m_pendingEvents.insert(i);
-		}
-	}
-}
-
-void InputController::clearPendingEvents(int keys) {
-	for (int i = 0; keys; ++i, keys >>= 1) {
-		if (keys & 1) {
-			m_pendingEvents.remove(i);
-		}
-	}
-}
-
-bool InputController::hasPendingEvent(int key) const {
+bool InputController::hasPendingEvent(GBAKey key) const {
 	return m_pendingEvents.contains(key);
 }
 
-int InputController::claimPlayer() {
-	for (int i = 0; i < MAX_GBAS; ++i) {
-		if (!(s_claimedPlayers & (1 << i))) {
-			s_claimedPlayers |= 1 << i;
-			return i;
-		}
-	}
-	qFatal("Can't claim 5th player. Please report this bug.");
+void InputController::suspendScreensaver() {
+#ifdef BUILD_SDL
+#if SDL_VERSION_ATLEAST(2, 0, 0)
+	mSDLSuspendScreensaver(&s_sdlEvents);
+#endif
+#endif
 }
 
-void InputController::freePlayer(int player) {
-	s_claimedPlayers &= ~(1 << player);
+void InputController::resumeScreensaver() {
+#ifdef BUILD_SDL
+#if SDL_VERSION_ATLEAST(2, 0, 0)
+	mSDLResumeScreensaver(&s_sdlEvents);
+#endif
+#endif
+}
+
+void InputController::setScreensaverSuspendable(bool suspendable) {
+#ifdef BUILD_SDL
+#if SDL_VERSION_ATLEAST(2, 0, 0)
+	mSDLSetScreensaverSuspendable(&s_sdlEvents, suspendable);
+#endif
+#endif
 }
 
 void InputController::stealFocus(QWidget* focus) {
@@ -623,13 +715,9 @@ void InputController::setCamImage(const QImage& image) {
 QList<QPair<QByteArray, QString>> InputController::listCameras() const {
 	QList<QPair<QByteArray, QString>> out;
 #ifdef BUILD_QT_MULTIMEDIA
-#if (QT_VERSION < QT_VERSION_CHECK(6, 0, 0))
-	for (const auto& cam : QCameraInfo::availableCameras()) {
+	QList<QCameraInfo> cams = QCameraInfo::availableCameras();
+	for (const auto& cam : cams) {
 		out.append(qMakePair(cam.deviceName().toLatin1(), cam.description()));
-#else
-	for (const auto& cam : QMediaDevices::videoInputs()) {
-		out.append(qMakePair(cam.id(), cam.description()));
-#endif
 	}
 #endif
 	return out;
@@ -645,7 +733,7 @@ void InputController::decreaseLuminanceLevel() {
 
 void InputController::setLuminanceLevel(int level) {
 	int value = 0x16;
-	level = clamp(level, 0, 10);
+	level = std::max(0, std::min(10, level));
 	if (level > 0) {
 		value += GBA_LUX_LEVELS[level - 1];
 	}
@@ -667,46 +755,25 @@ void InputController::setLuminanceValue(uint8_t value) {
 
 void InputController::setupCam() {
 #ifdef BUILD_QT_MULTIMEDIA
-	if (m_config->getQtOption("cameraDriver").toInt() != static_cast<int>(CameraDriver::QT_MULTIMEDIA)) {
-		return;
-	}
-
-#if (QT_VERSION < QT_VERSION_CHECK(6, 0, 0))
 	if (!m_camera) {
-		m_camera = std::make_unique<QCamera>(m_cameraDevice);
+		m_camera = std::make_unique<QCamera>();
 		connect(m_camera.get(), &QCamera::statusChanged, this, &InputController::prepareCamSettings, Qt::QueuedConnection);
-	}
-	if (m_camera->status() == QCamera::UnavailableStatus) {
-		m_camera.reset();
-		return;
 	}
 	m_camera->setCaptureMode(QCamera::CaptureVideo);
 	m_camera->setViewfinder(&m_videoDumper);
 	m_camera->load();
-#else
-	if (!m_camera) {
-		m_camera = std::make_unique<QCamera>(m_cameraDevice);
-		m_captureSession.setCamera(m_camera.get());
-	}
-	prepareCamFormat();
-#endif
 #endif
 }
 
 #ifdef BUILD_QT_MULTIMEDIA
-#if (QT_VERSION < QT_VERSION_CHECK(6, 0, 0))
 void InputController::prepareCamSettings(QCamera::Status status) {
 	if (status != QCamera::LoadedStatus || m_camera->state() == QCamera::ActiveState) {
 		return;
 	}
-	prepareCamFormat();
-}
-#endif
-
-void InputController::prepareCamFormat() {
-	QSize size(1280, 720);
-#if (QT_VERSION < QT_VERSION_CHECK(6, 0, 0))
+#if (QT_VERSION >= QT_VERSION_CHECK(5, 5, 0))
+	QVideoFrame::PixelFormat format(QVideoFrame::Format_RGB32);
 	QCameraViewfinderSettings settings;
+	QSize size(1280, 720);
 	auto cameraRes = m_camera->supportedViewfinderResolutions(settings);
 	for (auto& cameraSize : cameraRes) {
 		if (cameraSize.width() < m_image.w || cameraSize.height() < m_image.h) {
@@ -724,35 +791,18 @@ void InputController::prepareCamFormat() {
 	for (const auto& goodFormat : goodFormats) {
 		if (cameraFormats.contains(goodFormat)) {
 			settings.setPixelFormat(goodFormat);
+			format = goodFormat;
 			goodFormatFound = true;
 			break;
 		}
 	}
 	if (!goodFormatFound) {
-		LOG(QT, WARN) << tr("Could not find a valid camera format!");
+		LOG(QT, WARN) << "Could not find a valid camera format!";
 		for (const auto& format : cameraFormats) {
-			LOG(QT, WARN) << tr("Camera supported format: %1").arg(format);
+			LOG(QT, WARN) << "Camera supported format: " << QString::number(format);
 		}
 	}
 	m_camera->setViewfinderSettings(settings);
-#else
-	bool goodFormatFound = false;
-	auto goodFormats = m_videoDumper.supportedPixelFormats();
-	QCameraFormat bestFormat;
-	for (const auto& format : m_cameraDevice.videoFormats()) {
-		if (!goodFormats.contains(format.pixelFormat())) {
-			continue;
-		}
-		if (format.resolution().width() <= size.width() && format.resolution().height() <= size.height()) {
-			size = format.resolution();
-			bestFormat = format;
-			goodFormatFound = true;
-		}
-	}
-	if (!goodFormatFound) {
-		LOG(QT, WARN) << tr("Could not find a valid camera format!");
-	}
-	m_camera->setCameraFormat(bestFormat);
 #endif
 	m_camera->start();
 }
@@ -761,40 +811,21 @@ void InputController::prepareCamFormat() {
 void InputController::teardownCam() {
 #ifdef BUILD_QT_MULTIMEDIA
 	if (m_camera) {
-#if (QT_VERSION < QT_VERSION_CHECK(6, 0, 0))
-		m_camera->unload();
-#else
-		m_captureSession.setCamera(nullptr);
-#endif
-		m_camera.reset();
+		m_camera->stop();
 	}
 #endif
 }
 
 void InputController::setCamera(const QByteArray& name) {
 #ifdef BUILD_QT_MULTIMEDIA
-#if (QT_VERSION < QT_VERSION_CHECK(6, 0, 0))
-	if (m_cameraDevice == name) {
-		return;
+	bool needsRestart = false;
+	if (m_camera) {
+		needsRestart = m_camera->state() == QCamera::ActiveState;
 	}
-	m_cameraDevice = name;
-	if (m_camera && m_camera->state() == QCamera::ActiveState) {
-		teardownCam();
-	}
-#else
-	if (m_cameraDevice.id() == name) {
-		return;
-	}
-	for (const auto& cam : QMediaDevices::videoInputs()) {
-		if (cam.id() == name) {
-			m_cameraDevice = cam;
-		}
-	}
-#endif
-	if (m_cameraActive) {
+	m_camera = std::make_unique<QCamera>(name);
+	connect(m_camera.get(), &QCamera::statusChanged, this, &InputController::prepareCamSettings, Qt::QueuedConnection);
+	if (needsRestart) {
 		setupCam();
 	}
-#else
-	UNUSED(name);
 #endif
 }

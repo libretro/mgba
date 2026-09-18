@@ -4,10 +4,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 #include "AssetInfo.h"
-#include "moc_AssetInfo.cpp"
 
-#include "GBAApp.h"
-
+#include <QFontDatabase>
 #include <QHBoxLayout>
 
 using namespace QGBA;
@@ -21,9 +19,8 @@ void AssetInfo::addCustomProperty(const QString& id, const QString& visibleName)
 	QHBoxLayout* newLayout = new QHBoxLayout;
 	newLayout->addWidget(new QLabel(visibleName));
 	QLabel* value = new QLabel;
-	value->setFont(GBAApp::app()->monospaceFont());
+	value->setFont(QFontDatabase::systemFont(QFontDatabase::FixedFont));
 	value->setAlignment(Qt::AlignRight);
-	value->setTextInteractionFlags(Qt::TextSelectableByMouse | Qt::TextSelectableByKeyboard);
 	newLayout->addWidget(value);
 	m_customProperties[id] = value;
 	int index = customLocation();

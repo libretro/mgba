@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <ui version="4.0">
- <class>QGBA::ShortcutView</class>
- <widget class="QWidget" name="QGBA::ShortcutView">
+ <class>ShortcutView</class>
+ <widget class="QWidget" name="ShortcutView">
   <property name="geometry">
    <rect>
     <x>0</x>
@@ -16,9 +16,6 @@
   <layout class="QVBoxLayout" name="verticalLayout">
    <item>
     <widget class="QTreeView" name="shortcutTable">
-     <property name="verticalScrollBarPolicy">
-      <enum>Qt::ScrollBarAlwaysOn</enum>
-     </property>
      <attribute name="headerDefaultSectionSize">
       <number>120</number>
      </attribute>

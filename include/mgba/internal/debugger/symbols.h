@@ -16,7 +16,6 @@ struct mDebuggerSymbols* mDebuggerSymbolTableCreate(void);
 void mDebuggerSymbolTableDestroy(struct mDebuggerSymbols*);
 
 bool mDebuggerSymbolLookup(const struct mDebuggerSymbols*, const char* name, int32_t* value, int* segment);
-const char* mDebuggerSymbolReverseLookup(const struct mDebuggerSymbols*, int32_t value, int segment);
 
 void mDebuggerSymbolAdd(struct mDebuggerSymbols*, const char* name, int32_t value, int segment);
 void mDebuggerSymbolRemove(struct mDebuggerSymbols*, const char* name);

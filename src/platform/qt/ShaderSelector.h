@@ -12,7 +12,6 @@
 #include "ui_ShaderSelector.h"
 
 struct mGLES2Shader;
-class QFormLayout;
 class QGridLayout;
 struct VideoShader;
 
@@ -29,28 +28,24 @@ public:
 	~ShaderSelector();
 
 public slots:
-	void saveSettings();
 	void refreshShaders();
 	void clear();
-	void revert();
 
 private slots:
 	void selectShader();
-	void loadShader(const QString& path, bool saveToSettings = false);
-	void clearShader(bool saveToSettings = false);
+	void loadShader(const QString& path);
+	void clearShader();
 	void buttonPressed(QAbstractButton*);
 
 signals:
-	void saveSettingsRequested();
+	void saved();
 	void reset();
 	void resetToDefault();
 
 private:
 	void addUniform(QGridLayout*, const QString& section, const QString& name, float* value, float min, float max, int y, int x);
 	void addUniform(QGridLayout*, const QString& section, const QString& name, int* value, int min, int max, int y, int x);
-	void addMatchingUniformRows(mGLES2Shader* shader, QFormLayout* layout, const QString& name, int pass, const QString& uniformName, bool addAll);
-	void parseShaderIni(mGLES2Shader* shader, QFormLayout* layout, const QString& name, int pass, QIODevice* file);
-	QWidget* makePage(mGLES2Shader*, const QString& name, int pass, bool defaultPage);
+	QWidget* makePage(mGLES2Shader*, const QString& name, int pass);
 
 	Ui::ShaderSelector m_ui;
 	Display* m_display;

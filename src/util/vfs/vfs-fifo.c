@@ -8,7 +8,7 @@
 
 struct VFileFIFO {
 	struct VFile d;
-	struct mCircleBuffer* backing;
+	struct CircleBuffer* backing;
 };
 
 static bool _vffClose(struct VFile* vf);
@@ -19,9 +19,9 @@ static void* _vffMap(struct VFile* vf, size_t size, int flags);
 static void _vffUnmap(struct VFile* vf, void* memory, size_t size);
 static void _vffTruncate(struct VFile* vf, size_t size);
 static ssize_t _vffSize(struct VFile* vf);
-static bool _vffSync(struct VFile* vf, void* buffer, size_t size);
+static bool _vffSync(struct VFile* vf, const void* buffer, size_t size);
 
-struct VFile* VFileFIFO(struct mCircleBuffer* backing) {
+struct VFile* VFileFIFO(struct CircleBuffer* backing) {
 	if (!backing) {
 		return NULL;
 	}
@@ -61,12 +61,12 @@ static off_t _vffSeek(struct VFile* vf, off_t offset, int whence) {
 
 static ssize_t _vffRead(struct VFile* vf, void* buffer, size_t size) {
 	struct VFileFIFO* vff = (struct VFileFIFO*) vf;
-	return mCircleBufferRead(vff->backing, buffer, size);
+	return CircleBufferRead(vff->backing, buffer, size);
 }
 
 static ssize_t _vffWrite(struct VFile* vf, const void* buffer, size_t size) {
 	struct VFileFIFO* vff = (struct VFileFIFO*) vf;
-	return mCircleBufferWrite(vff->backing, buffer, size);
+	return CircleBufferWrite(vff->backing, buffer, size);
 }
 
 static void* _vffMap(struct VFile* vf, size_t size, int flags) {
@@ -85,16 +85,16 @@ static void _vffUnmap(struct VFile* vf, void* memory, size_t size) {
 static void _vffTruncate(struct VFile* vf, size_t size) {
 	struct VFileFIFO* vff = (struct VFileFIFO*) vf;
 	if (!size) {
-		mCircleBufferClear(vff->backing);
+		CircleBufferClear(vff->backing);
 	}
 }
 
 static ssize_t _vffSize(struct VFile* vf) {
 	struct VFileFIFO* vff = (struct VFileFIFO*) vf;
-	return mCircleBufferSize(vff->backing);
+	return CircleBufferSize(vff->backing);
 }
 
-static bool _vffSync(struct VFile* vf, void* buffer, size_t size) {
+static bool _vffSync(struct VFile* vf, const void* buffer, size_t size) {
 	UNUSED(vf);
 	UNUSED(buffer);
 	UNUSED(size);

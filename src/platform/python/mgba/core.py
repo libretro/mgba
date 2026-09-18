@@ -4,7 +4,7 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 from ._pylib import ffi, lib  # pylint: disable=no-name-in-module
-from . import tile
+from . import tile, audio
 from cached_property import cached_property
 from functools import wraps
 
@@ -117,11 +117,11 @@ class CoreCallbacks(object):
 
 
 class Core(object):
-    if hasattr(lib, 'mPLATFORM_GBA'):
-        PLATFORM_GBA = lib.mPLATFORM_GBA
+    if hasattr(lib, 'PLATFORM_GBA'):
+        PLATFORM_GBA = lib.PLATFORM_GBA
 
-    if hasattr(lib, 'mPLATFORM_GB'):
-        PLATFORM_GB = lib.mPLATFORM_GB
+    if hasattr(lib, 'PLATFORM_GB'):
+        PLATFORM_GB = lib.PLATFORM_GB
 
     def __init__(self, native):
         self._core = native
@@ -235,12 +235,28 @@ class Core(object):
     def desired_video_dimensions(self):
         width = ffi.new("unsigned*")
         height = ffi.new("unsigned*")
-        self._core.currentVideoSize(self._core, width, height)
+        self._core.desiredVideoDimensions(self._core, width, height)
         return width[0], height[0]
 
     @protected
     def set_video_buffer(self, image):
         self._core.setVideoBuffer(self._core, image.buffer, image.stride)
+
+    @protected
+    def set_audio_buffer_size(self, size):
+        self._core.setAudioBufferSize(self._core, size)
+
+    @property
+    def audio_buffer_size(self):
+        return self._core.getAudioBufferSize(self._core)
+
+    @protected
+    def get_audio_channels(self):
+        return audio.StereoBuffer(self.get_audio_channel(0), self.get_audio_channel(1));
+
+    @protected
+    def get_audio_channel(self, channel):
+        return audio.Buffer(self._core.getAudioChannel(self._core, channel), self.frequency)
 
     @protected
     def reset(self):

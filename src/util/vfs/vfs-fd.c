@@ -7,13 +7,11 @@
 
 #include <fcntl.h>
 #include <sys/stat.h>
-#ifdef _WIN32
-#include <windows.h>
-#elif defined(_POSIX_MAPPED_FILES)
+#ifndef _WIN32
 #include <sys/mman.h>
 #include <sys/time.h>
 #else
-#include <mgba-util/memory.h>
+#include <windows.h>
 #endif
 
 #include <mgba-util/vector.h>
@@ -33,8 +31,6 @@ struct VFileFD {
 	int fd;
 #ifdef _WIN32
 	struct HandleMappingList handles;
-#elif !defined(_POSIX_MAPPED_FILES)
-	bool writable;
 #endif
 };
 
@@ -46,7 +42,7 @@ static void* _vfdMap(struct VFile* vf, size_t size, int flags);
 static void _vfdUnmap(struct VFile* vf, void* memory, size_t size);
 static void _vfdTruncate(struct VFile* vf, size_t size);
 static ssize_t _vfdSize(struct VFile* vf);
-static bool _vfdSync(struct VFile* vf, void* buffer, size_t size);
+static bool _vfdSync(struct VFile* vf, const void* buffer, size_t size);
 
 struct VFile* VFileOpenFD(const char* path, int flags) {
 	if (!path) {
@@ -92,8 +88,6 @@ struct VFile* VFileFromFD(int fd) {
 	vfd->d.sync = _vfdSync;
 #ifdef _WIN32
 	HandleMappingListInit(&vfd->handles, 4);
-#elif !defined(_POSIX_MAPPED_FILES)
-	vfd->writable = false;
 #endif
 
 	return &vfd->d;
@@ -131,34 +125,23 @@ ssize_t _vfdWrite(struct VFile* vf, const void* buffer, size_t size) {
 	return write(vfd->fd, buffer, size);
 }
 
-#ifdef _POSIX_MAPPED_FILES
+#ifndef _WIN32
 static void* _vfdMap(struct VFile* vf, size_t size, int flags) {
 	struct VFileFD* vfd = (struct VFileFD*) vf;
-	if (!size) {
-		return NULL;
-	}
 	int mmapFlags = MAP_PRIVATE;
 	if (flags & MAP_WRITE) {
 		mmapFlags = MAP_SHARED;
 	}
-	void* mapped = mmap(0, size, PROT_READ | PROT_WRITE, mmapFlags, vfd->fd, 0);
-	if (mapped == MAP_FAILED) {
-		return NULL;
-	}
-	return mapped;
+	return mmap(0, size, PROT_READ | PROT_WRITE, mmapFlags, vfd->fd, 0);
 }
 
 static void _vfdUnmap(struct VFile* vf, void* memory, size_t size) {
 	UNUSED(vf);
-	msync(memory, size, MS_SYNC);
 	munmap(memory, size);
 }
-#elif defined(_WIN32)
+#else
 static void* _vfdMap(struct VFile* vf, size_t size, int flags) {
 	struct VFileFD* vfd = (struct VFileFD*) vf;
-	if (!size) {
-		return NULL;
-	}
 	int createFlags = PAGE_WRITECOPY;
 	int mapFiles = FILE_MAP_COPY;
 	if (flags & MAP_WRITE) {
@@ -184,7 +167,6 @@ static void* _vfdMap(struct VFile* vf, size_t size, int flags) {
 static void _vfdUnmap(struct VFile* vf, void* memory, size_t size) {
 	UNUSED(size);
 	struct VFileFD* vfd = (struct VFileFD*) vf;
-	FlushViewOfFile(memory, size);
 	size_t i;
 	for (i = 0; i < HandleMappingListSize(&vfd->handles); ++i) {
 		if (HandleMappingListGetPointer(&vfd->handles, i)->mapping == memory) {
@@ -194,38 +176,6 @@ static void _vfdUnmap(struct VFile* vf, void* memory, size_t size) {
 			break;
 		}
 	}
-}
-#else
-static void* _vfdMap(struct VFile* vf, size_t size, int flags) {
-	struct VFileFD* vfd = (struct VFileFD*) vf;
-	if (!size) {
-		vfd->writable = false;
-		return NULL;
-	}
-	if (flags & MAP_WRITE) {
-		vfd->writable = true;
-	}
-	void* mem = anonymousMemoryMap(size);
-	if (!mem) {
-		return NULL;
-	}
-
-	off_t pos = lseek(vfd->fd, 0, SEEK_CUR);
-	lseek(vfd->fd, 0, SEEK_SET);
-	read(vfd->fd, mem, size);
-	lseek(vfd->fd, pos, SEEK_SET);
-	return mem;
-}
-
-static void _vfdUnmap(struct VFile* vf, void* memory, size_t size) {
-	struct VFileFD* vfd = (struct VFileFD*) vf;
-	if (vfd->writable) {
-		off_t pos = lseek(vfd->fd, 0, SEEK_CUR);
-		lseek(vfd->fd, 0, SEEK_SET);
-		write(vfd->fd, memory, size);
-		lseek(vfd->fd, pos, SEEK_SET);
-	}
-	mappedMemoryFree(memory, size);
 }
 #endif
 
@@ -243,28 +193,18 @@ static ssize_t _vfdSize(struct VFile* vf) {
 	return stat.st_size;
 }
 
-static bool _vfdSync(struct VFile* vf, void* buffer, size_t size) {
+static bool _vfdSync(struct VFile* vf, const void* buffer, size_t size) {
 	UNUSED(buffer);
 	UNUSED(size);
 	struct VFileFD* vfd = (struct VFileFD*) vf;
 #ifndef _WIN32
-#ifdef HAVE_FUTIMENS
+#if defined(__HAIKU__) || defined(ANDROID)
 	futimens(vfd->fd, NULL);
-#elif defined(HAVE_FUTIMES)
+#else
 	futimes(vfd->fd, NULL);
 #endif
 	if (buffer && size) {
-#ifdef _POSIX_MAPPED_FILES
-		return msync(buffer, size, MS_ASYNC) == 0;
-#else
-		off_t pos = lseek(vfd->fd, 0, SEEK_CUR);
-		lseek(vfd->fd, 0, SEEK_SET);
-		ssize_t res = write(vfd->fd, buffer, size);
-		lseek(vfd->fd, pos, SEEK_SET);
-		if (res < 0) {
-			return false;
-		}
-#endif
+		return msync(buffer, size, MS_SYNC) == 0;
 	}
 	return fsync(vfd->fd) == 0;
 #else
@@ -274,9 +214,6 @@ static bool _vfdSync(struct VFile* vf, void* buffer, size_t size) {
 	GetSystemTime(&st);
 	SystemTimeToFileTime(&st, &ft);
 	SetFileTime(h, NULL, &ft, &ft);
-	if (buffer && size) {
-		return FlushViewOfFile(buffer, size);
-	}
 	return FlushFileBuffers(h);
 #endif
 }

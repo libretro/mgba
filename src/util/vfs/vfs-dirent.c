@@ -133,7 +133,7 @@ bool _vdDeleteFile(struct VDir* vd, const char* path) {
 	char* combined = malloc(sizeof(char) * (strlen(path) + strlen(dir) + 2));
 	sprintf(combined, "%s%s%s", dir, PATH_SEP, path);
 
-	bool ret = !remove(combined);
+	bool ret = !unlink(combined);
 	free(combined);
 	return ret;
 }
@@ -148,7 +148,7 @@ const char* _vdeName(struct VDirEntry* vde) {
 
 static enum VFSType _vdeType(struct VDirEntry* vde) {
 	struct VDirEntryDE* vdede = (struct VDirEntryDE*) vde;
-#if !defined(WIN32) && !defined(__HAIKU__) && defined(DT_DIR)
+#if !defined(WIN32) && !defined(__HAIKU__)
 	if (vdede->ent->d_type == DT_DIR) {
 		return VFS_DIRECTORY;
 	} else if (vdede->ent->d_type == DT_REG) {

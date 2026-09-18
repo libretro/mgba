@@ -12,7 +12,7 @@ CXX_GUARD_START
 
 #include <mgba/core/config.h>
 #include "feature/gui/remap.h"
-#include <mgba/gba/interface.h>
+#include <mgba/internal/gba/hardware.h>
 #include <mgba-util/circle-buffer.h>
 #include <mgba-util/gui.h>
 #include <mgba-util/threading.h>
@@ -23,20 +23,15 @@ enum mGUIInput {
 	mGUI_INPUT_SCREEN_MODE,
 	mGUI_INPUT_SCREENSHOT,
 	mGUI_INPUT_FAST_FORWARD_HELD,
-	mGUI_INPUT_FAST_FORWARD_TOGGLE,
-	mGUI_INPUT_MUTE_TOGGLE,
+	mGUI_INPUT_FAST_FORWARD_TOGGLE
 };
 
 struct mGUIBackground {
 	struct GUIBackground d;
 	struct mGUIRunner* p;
 
-	mColor* image;
-	size_t imageSize;
-	uint16_t w;
-	uint16_t h;
-
-	unsigned screenshotId;
+	color_t* screenshot;
+	int screenshotId;
 };
 
 struct mCore;
@@ -54,7 +49,6 @@ struct mGUIAutosaveContext {
 	Mutex mutex;
 	Condition cond;
 	bool running;
-	bool pending;
 };
 #endif
 
@@ -79,7 +73,7 @@ struct mGUIRunner {
 	float fps;
 	int64_t lastFpsCheck;
 	int32_t totalDelta;
-	struct mCircleBuffer fpsBuffer;
+	struct CircleBuffer fpsBuffer;
 
 	void (*setup)(struct mGUIRunner*);
 	void (*teardown)(struct mGUIRunner*);
@@ -87,7 +81,7 @@ struct mGUIRunner {
 	void (*gameUnloaded)(struct mGUIRunner*);
 	void (*prepareForFrame)(struct mGUIRunner*);
 	void (*drawFrame)(struct mGUIRunner*, bool faded);
-	void (*drawScreenshot)(struct mGUIRunner*, const mColor* pixels, unsigned width, unsigned height, bool faded);
+	void (*drawScreenshot)(struct mGUIRunner*, const color_t* pixels, unsigned width, unsigned height, bool faded);
 	void (*paused)(struct mGUIRunner*);
 	void (*unpaused)(struct mGUIRunner*);
 	void (*incrementScreenMode)(struct mGUIRunner*);
@@ -98,13 +92,8 @@ struct mGUIRunner {
 
 void mGUIInit(struct mGUIRunner*, const char* port);
 void mGUIDeinit(struct mGUIRunner*);
-void mGUILoadInputMaps(struct mGUIRunner* runner);
 void mGUIRun(struct mGUIRunner*, const char* path);
 void mGUIRunloop(struct mGUIRunner*);
-
-#if defined(__3DS__) || defined(PSP2)
-bool mGUIGetRom(struct mGUIRunner* runner, char* out, size_t outLength);
-#endif
 
 #ifndef DISABLE_THREADING
 THREAD_ENTRY mGUIAutosaveThread(void* context);

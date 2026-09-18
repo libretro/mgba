@@ -6,7 +6,6 @@
 #include <mgba-util/platform/psp2/sce-vfs.h>
 
 #include <psp2/io/dirent.h>
-#include <psp2/io/stat.h>
 
 #include <mgba-util/vfs.h>
 #include <mgba-util/memory.h>
@@ -41,7 +40,7 @@ static void* _vfsceMap(struct VFile* vf, size_t size, int flags);
 static void _vfsceUnmap(struct VFile* vf, void* memory, size_t size);
 static void _vfsceTruncate(struct VFile* vf, size_t size);
 static ssize_t _vfsceSize(struct VFile* vf);
-static bool _vfsceSync(struct VFile* vf, void* memory, size_t size);
+static bool _vfsceSync(struct VFile* vf, const void* memory, size_t size);
 
 static bool _vdsceClose(struct VDir* vd);
 static void _vdsceRewind(struct VDir* vd);
@@ -91,7 +90,7 @@ struct VFile* VFileOpenSce(const char* path, int flags, SceMode mode) {
 
 bool _vfsceClose(struct VFile* vf) {
 	struct VFileSce* vfsce = (struct VFileSce*) vf;
-	sceIoSyncByFd(vfsce->fd, 0);
+	sceIoSyncByFd(vfsce->fd);
 	return sceIoClose(vfsce->fd) >= 0;
 }
 
@@ -113,9 +112,6 @@ ssize_t _vfsceWrite(struct VFile* vf, const void* buffer, size_t size) {
 static void* _vfsceMap(struct VFile* vf, size_t size, int flags) {
 	struct VFileSce* vfsce = (struct VFileSce*) vf;
 	UNUSED(flags);
-	if (!size) {
-		return NULL;
-	}
 	void* buffer = anonymousMemoryMap(size);
 	if (buffer) {
 		SceOff cur = sceIoLseek(vfsce->fd, 0, SEEK_CUR);
@@ -132,7 +128,7 @@ static void _vfsceUnmap(struct VFile* vf, void* memory, size_t size) {
 	sceIoLseek(vfsce->fd, 0, SEEK_SET);
 	sceIoWrite(vfsce->fd, memory, size);
 	sceIoLseek(vfsce->fd, cur, SEEK_SET);
-	sceIoSyncByFd(vfsce->fd, 0);
+	sceIoSyncByFd(vfsce->fd);
 	mappedMemoryFree(memory, size);
 }
 
@@ -150,15 +146,15 @@ ssize_t _vfsceSize(struct VFile* vf) {
 	return end;
 }
 
-bool _vfsceSync(struct VFile* vf, void* buffer, size_t size) {
+bool _vfsceSync(struct VFile* vf, const void* buffer, size_t size) {
 	struct VFileSce* vfsce = (struct VFileSce*) vf;
 	if (buffer && size) {
-		int res = sceIoPwrite(vfsce->fd, buffer, size, 0);
-		if (res < 0 || (size_t) res != size) {
-			return false;
-		}
+		SceOff cur = sceIoLseek(vfsce->fd, 0, SEEK_CUR);
+		sceIoLseek(vfsce->fd, 0, SEEK_SET);
+		sceIoWrite(vfsce->fd, buffer, size);
+		sceIoLseek(vfsce->fd, cur, SEEK_SET);
 	}
-	return sceIoSyncByFd(vfsce->fd, 0) >= 0;
+	return sceIoSyncByFd(vfsce->fd) >= 0;
 }
 
 struct VDir* VDirOpen(const char* path) {
@@ -283,10 +279,7 @@ struct VDirSceDevList {
 static const char* _devs[] = {
 	"ux0:",
 	"ur0:",
-	"uma0:",
-	"imc0:",
-	"xmc0:",
-	NULL
+	"uma0:"
 };
 
 struct VDir* VDeviceList() {
@@ -324,7 +317,7 @@ static void _vdlsceRewind(struct VDir* vd) {
 
 static struct VDirEntry* _vdlsceListNext(struct VDir* vd) {
 	struct VDirSceDevList* vdl = (struct VDirSceDevList*) vd;
-	while (vdl->vde.index < 0 || _devs[vdl->vde.index]) {
+	while (vdl->vde.index < 3) {
 		++vdl->vde.index;
 		vdl->vde.name = _devs[vdl->vde.index];
 		SceUID dir = sceIoDopen(vdl->vde.name);

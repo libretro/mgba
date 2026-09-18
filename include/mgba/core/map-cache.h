@@ -23,7 +23,6 @@ DECL_BITS(mMapCacheSystemInfo, TilesWide, 8, 4);
 DECL_BITS(mMapCacheSystemInfo, TilesHigh, 12, 4);
 DECL_BITS(mMapCacheSystemInfo, MacroTileSize, 16, 7);
 DECL_BITS(mMapCacheSystemInfo, MapAlign, 23, 2);
-DECL_BITS(mMapCacheSystemInfo, WriteAlign, 25, 2);
 
 DECL_BITFIELD(mMapCacheEntryFlags, uint16_t);
 DECL_BITS(mMapCacheEntryFlags, PaletteId, 0, 4);
@@ -31,8 +30,6 @@ DECL_BIT(mMapCacheEntryFlags, VramClean, 4);
 DECL_BIT(mMapCacheEntryFlags, HMirror, 5);
 DECL_BIT(mMapCacheEntryFlags, VMirror, 6);
 DECL_BITS(mMapCacheEntryFlags, Mirror, 5, 2);
-
-#define mMapCacheTileCount(C) (1 << mMapCacheSystemInfoGetTilesWide((C)->sysConfig)) * (1 << mMapCacheSystemInfoGetTilesHigh((C)->sysConfig))
 
 struct mMapCacheEntry {
 	uint32_t vramVersion;
@@ -44,7 +41,7 @@ struct mMapCacheEntry {
 struct mTileCache;
 struct mTileCacheEntry;
 struct mMapCache {
-	mColor* cache;
+	color_t* cache;
 	struct mTileCache* tileCache;
 	struct mMapCacheEntry* status;
 
@@ -75,7 +72,7 @@ bool mMapCacheCheckTile(struct mMapCache* cache, const struct mMapCacheEntry* en
 void mMapCacheCleanTile(struct mMapCache* cache, struct mMapCacheEntry* entry, unsigned x, unsigned y);
 
 void mMapCacheCleanRow(struct mMapCache* cache, unsigned y);
-const mColor* mMapCacheGetRow(struct mMapCache* cache, unsigned y);
+const color_t* mMapCacheGetRow(struct mMapCache* cache, unsigned y);
 
 CXX_GUARD_END
 

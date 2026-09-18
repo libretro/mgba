@@ -3,12 +3,13 @@
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+#include <mgba/core/blip_buf.h>
 #include <mgba/core/cheats.h>
 #include <mgba/core/config.h>
 #include <mgba/core/core.h>
 #include <mgba/core/serialize.h>
-#include <mgba/debugger/debugger.h>
-#include <mgba/internal/debugger/access-logger.h>
+#include <mgba/gb/core.h>
+#include <mgba/gba/core.h>
 #include <mgba/internal/gba/gba.h>
 
 #include <mgba/feature/commandline.h>
@@ -19,21 +20,19 @@
 #include <errno.h>
 #include <signal.h>
 
-#define FUZZ_OPTIONS "F:M:NO:S:V:"
+#define FUZZ_OPTIONS "F:NO:S:V:"
 #define FUZZ_USAGE \
-	"Additional options:\n" \
+	"\nAdditional options:\n" \
 	"  -F FRAMES        Run for the specified number of FRAMES before exiting\n" \
 	"  -N               Disable video rendering entirely\n" \
 	"  -O OFFSET        Offset to apply savestate overlay\n" \
 	"  -V FILE          Overlay a second savestate over the loaded savestate\n" \
-	"  -M FILE          Attach a memory access log file\n" \
 
 struct FuzzOpts {
 	bool noVideo;
 	int frames;
 	size_t overlayOffset;
 	char* ssOverlay;
-	char* accessLog;
 };
 
 static void _fuzzRunloop(struct mCore* core, int frames);
@@ -54,12 +53,12 @@ int main(int argc, char** argv) {
 	};
 
 	struct mArguments args;
-	bool parsed = mArgumentsParse(&args, argc, argv, &subparser, 1);
+	bool parsed = parseArguments(&args, argc, argv, &subparser);
 	if (!args.fname) {
 		parsed = false;
 	}
 	if (!parsed || args.showHelp) {
-		usage(argv[0], NULL, NULL, &subparser, 1);
+		usage(argv[0], FUZZ_USAGE);
 		return !parsed;
 	}
 	if (args.showVersion) {
@@ -72,7 +71,7 @@ int main(int argc, char** argv) {
 	}
 	core->init(core);
 	mCoreInitConfig(core, "fuzz");
-	mArgumentsApply(&args, NULL, 0, &core->config);
+	applyArguments(&args, NULL, &core->config);
 
 	mCoreConfigSetDefaultValue(&core->config, "idleOptimization", "remove");
 
@@ -85,7 +84,7 @@ int main(int argc, char** argv) {
 	}
 
 #ifdef M_CORE_GBA
-	if (core->platform(core) == mPLATFORM_GBA) {
+	if (core->platform(core) == PLATFORM_GBA) {
 		((struct GBA*) core->board)->hardCrash = false;
 	}
 #endif
@@ -99,6 +98,9 @@ int main(int argc, char** argv) {
 		cleanExit = false;
 		goto loadError;
 	}
+	if (args.patch) {
+		core->loadPatch(core, VFileOpen(args.patch, O_RDONLY));
+	}
 
 	struct VFile* savestate = 0;
 	struct VFile* savestateOverlay = 0;
@@ -109,7 +111,7 @@ int main(int argc, char** argv) {
 	}
 	if (fuzzOpts.ssOverlay) {
 		overlayOffset = fuzzOpts.overlayOffset;
-		if (overlayOffset <= core->stateSize(core)) {
+		if (overlayOffset < core->stateSize(core)) {
 			savestateOverlay = VFileOpen(fuzzOpts.ssOverlay, O_RDONLY);
 		}
 		free(fuzzOpts.ssOverlay);
@@ -117,59 +119,37 @@ int main(int argc, char** argv) {
 
 	core->reset(core);
 
-#ifdef ENABLE_DEBUGGERS
-	struct mDebugger debugger;
-	struct mDebuggerAccessLogger accessLog;
-	bool hasDebugger = false;
-
-	mDebuggerInit(&debugger);
-
-	if (fuzzOpts.accessLog) {
-		mDebuggerAttach(&debugger, core);
-
-		struct VFile* vf = VFileOpen(fuzzOpts.accessLog, O_RDWR);
-		mDebuggerAccessLoggerInit(&accessLog);
-		mDebuggerAttachModule(&debugger, &accessLog.d);
-		mDebuggerAccessLoggerOpen(&accessLog, vf, O_RDWR);
-		mDebuggerAccessLoggerStart(&accessLog);
-		hasDebugger = true;
+	struct mCheatDevice* device;
+	if (args.cheatsFile && (device = core->cheatDevice(core))) {
+		struct VFile* vf = VFileOpen(args.cheatsFile, O_RDONLY);
+		if (vf) {
+			mCheatDeviceClear(device);
+			mCheatParseFile(device, vf);
+			vf->close(vf);
+		}
 	}
-#endif
-
-	mArgumentsApplyFileLoads(&args, core);
 
 	if (savestate) {
 		if (!savestateOverlay) {
-			mCoreLoadStateNamed(core, savestate, SAVESTATE_ALL);
+			mCoreLoadStateNamed(core, savestate, 0);
 		} else {
-			size_t size = savestate->size(savestate);
-			void* mapped = savestate->map(savestate, size, MAP_READ);
-			struct VFile* newState = VFileMemChunk(mapped, size);
-			savestate->unmap(savestate, mapped, size);
-			newState->seek(newState, overlayOffset, SEEK_SET);
-			uint8_t buffer[2048];
-			int read;
-			while ((read = savestateOverlay->read(savestateOverlay, buffer, sizeof(buffer))) > 0) {
-				newState->write(newState, buffer, read);
-			}
+			size_t size = core->stateSize(core);
+			uint8_t* state = malloc(size);
+			savestate->read(savestate, state, size);
+			savestateOverlay->read(savestateOverlay, state + overlayOffset, size - overlayOffset);
+			core->loadState(core, state);
+			free(state);
 			savestateOverlay->close(savestateOverlay);
-			savestateOverlay = NULL;
-			mCoreLoadStateNamed(core, newState, SAVESTATE_ALL);
-			newState->close(newState);
+			savestateOverlay = 0;
 		}
 		savestate->close(savestate);
-		savestate = NULL;
+		savestate = 0;
 	}
+
+	blip_set_rates(core->getAudioChannel(core, 0), GBA_ARM7TDMI_FREQUENCY, 0x8000);
+	blip_set_rates(core->getAudioChannel(core, 1), GBA_ARM7TDMI_FREQUENCY, 0x8000);
 
 	_fuzzRunloop(core, fuzzOpts.frames);
-
-#ifdef ENABLE_DEBUGGERS
-	if (hasDebugger) {
-		core->detachDebugger(core);
-		mDebuggerAccessLoggerDeinit(&accessLog);
-		mDebuggerDeinit(&debugger);
-	}
-#endif
 
 	core->unloadROM(core);
 
@@ -181,7 +161,7 @@ int main(int argc, char** argv) {
 	}
 
 loadError:
-	mArgumentsDeinit(&args);
+	freeArguments(&args);
 	if (outputBuffer) {
 		free(outputBuffer);
 	}
@@ -195,7 +175,8 @@ static void _fuzzRunloop(struct mCore* core, int frames) {
 	do {
 		core->runFrame(core);
 		--frames;
-		mAudioBufferClear(core->getAudioBuffer(core));
+		blip_clear(core->getAudioChannel(core, 0));
+		blip_clear(core->getAudioChannel(core, 1));
 	} while (frames > 0 && !_dispatchExiting);
 }
 
@@ -211,9 +192,6 @@ static bool _parseFuzzOpts(struct mSubParser* parser, int option, const char* ar
 	case 'F':
 		opts->frames = strtoul(arg, 0, 10);
 		return !errno;
-	case 'M':
-		opts->accessLog = strdup(arg);
-		return true;
 	case 'N':
 		opts->noVideo = true;
 		return true;

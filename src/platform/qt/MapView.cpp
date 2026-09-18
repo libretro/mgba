@@ -4,13 +4,12 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 #include "MapView.h"
-#include "moc_MapView.cpp"
 
 #include "CoreController.h"
 #include "GBAApp.h"
 #include "LogController.h"
 
-#include <mgba-util/image/png-io.h>
+#include <mgba-util/png-io.h>
 #include <mgba-util/vfs.h>
 #ifdef M_CORE_GBA
 #include <mgba/internal/gba/gba.h>
@@ -26,6 +25,7 @@
 #include <QAction>
 #include <QButtonGroup>
 #include <QClipboard>
+#include <QFontDatabase>
 #include <QMouseEvent>
 #include <QRadioButton>
 #include <QTimer>
@@ -41,10 +41,9 @@ MapView::MapView(std::shared_ptr<CoreController> controller, QWidget* parent)
 
 	switch (m_controller->platform()) {
 #ifdef M_CORE_GBA
-	case mPLATFORM_GBA:
+	case PLATFORM_GBA:
 		m_boundary = 2048;
-		m_ui.tile->setMaxTile(3072);
-		m_addressBase = GBA_BASE_VRAM;
+		m_addressBase = BASE_VRAM;
 		m_addressWidth = 8;
 		m_ui.bgInfo->addCustomProperty("priority", tr("Priority"));
 		m_ui.bgInfo->addCustomProperty("screenBase", tr("Map base"));
@@ -55,9 +54,8 @@ MapView::MapView(std::shared_ptr<CoreController> controller, QWidget* parent)
 		break;
 #endif
 #ifdef M_CORE_GB
-	case mPLATFORM_GB:
+	case PLATFORM_GB:
 		m_boundary = 1024;
-		m_ui.tile->setMaxTile(1024);
 		m_addressBase = GB_BASE_VRAM;
 		m_addressWidth = 4;
 		m_ui.bgInfo->addCustomProperty("screenBase", tr("Map base"));
@@ -112,28 +110,19 @@ MapView::MapView(std::shared_ptr<CoreController> controller, QWidget* parent)
 }
 
 void MapView::selectMap(int map) {
-	if (map == m_map || map < 0) {
+	if (map >= mMapCacheSetSize(&m_cacheSet->maps)) {
 		return;
 	}
-	if (static_cast<unsigned>(map) >= mMapCacheSetSize(&m_cacheSet->maps)) {
+	if (map == m_map) {
 		return;
 	}
 	m_map = map;
-	m_mapStatus.fill({});
-	// Different maps can have different max palette counts; set it to
-	// 0 immediately to avoid tile lookups with state palette IDs break
-	m_ui.tile->setPalette(0);
 	updateTiles(true);
 }
 
 void MapView::selectTile(int x, int y) {
 	CoreController::Interrupter interrupter(m_controller);
 	mMapCache* mapCache = mMapCacheSetGetPointer(&m_cacheSet->maps, m_map);
-	int tiles = mMapCacheTileCount(mapCache);
-	if (m_mapStatus.size() != tiles) {
-		m_mapStatus.resize(tiles);
-		m_mapStatus.fill({});
-	}
 	size_t tileCache = mTileCacheSetIndex(&m_cacheSet->tiles, mapCache->tileCache);
 	m_ui.tile->setBoundary(m_boundary, tileCache, tileCache);
 	uint32_t location = mMapCacheTileId(mapCache, x, y);
@@ -158,24 +147,19 @@ void MapView::selectTile(int x, int y) {
 		.arg(location, m_addressWidth, 16, QChar('0')));
 }
 
-bool MapView::eventFilter(QObject*, QEvent* event) {
+bool MapView::eventFilter(QObject* obj, QEvent* event) {
 	if (event->type() != QEvent::MouseButtonPress) {
 		return false;
 	}
-#if (QT_VERSION < QT_VERSION_CHECK(6, 0, 0))
 	int x = static_cast<QMouseEvent*>(event)->x();
 	int y = static_cast<QMouseEvent*>(event)->y();
-#else
-	int x = static_cast<QMouseEvent*>(event)->position().x();
-	int y = static_cast<QMouseEvent*>(event)->position().y();
-#endif
 	x /= 8 * m_ui.magnification->value();
 	y /= 8 * m_ui.magnification->value();
 	selectTile(x, y);
 	return true;
 }
 
-void MapView::updateTilesGBA(bool) {
+void MapView::updateTilesGBA(bool force) {
 	{
 		CoreController::Interrupter interrupter(m_controller);
 		int bitmap = -1;
@@ -184,48 +168,41 @@ void MapView::updateTilesGBA(bool) {
 		QString offset(tr("N/A"));
 		QString transform(tr("N/A"));
 #ifdef M_CORE_GBA
-		if (m_controller->platform() == mPLATFORM_GBA) {
+		if (m_controller->platform() == PLATFORM_GBA) {
 			uint16_t* io = static_cast<GBA*>(m_controller->thread()->core->board)->memory.io;
-			int mode = GBARegisterDISPCNTGetMode(io[GBA_REG(DISPCNT)]);
+			int mode = GBARegisterDISPCNTGetMode(io[REG_DISPCNT >> 1]);
 			if (m_map == 2 && mode > 2) {
 				bitmap = mode == 4 ? 1 : 0;
 				if (mode != 3) {
-					frame = GBARegisterDISPCNTGetFrameSelect(io[GBA_REG(DISPCNT)]);
+					frame = GBARegisterDISPCNTGetFrameSelect(io[REG_DISPCNT >> 1]);
 				}
 			}
-			m_boundary = 1024;
-			m_ui.tile->setMaxTile(1536);
-			priority = GBARegisterBGCNTGetPriority(io[GBA_REG(BG0CNT) + m_map]);
+			priority = GBARegisterBGCNTGetPriority(io[(REG_BG0CNT >> 1) + m_map]);
 			if (mode == 0 || (mode == 1 && m_map != 2)) {
 				offset = QString("%1, %2")
-					.arg(io[GBA_REG(BG0HOFS) + (m_map << 1)])
-					.arg(io[GBA_REG(BG0VOFS) + (m_map << 1)]);
-
-				if (!GBARegisterBGCNTIs256Color(io[GBA_REG(BG0CNT) + m_map])) {
-					m_boundary = 2048;
-					m_ui.tile->setMaxTile(3072);
-				}
+					.arg(io[(REG_BG0HOFS >> 1) + (m_map << 1)])
+					.arg(io[(REG_BG0VOFS >> 1) + (m_map << 1)]);
 			} else if ((mode > 0 && m_map == 2) || (mode == 2 && m_map == 3)) {
-				int32_t refX = io[GBA_REG(BG2X_LO) + ((m_map - 2) << 2)];
-				refX |= io[GBA_REG(BG2X_HI) + ((m_map - 2) << 2)] << 16;
-				int32_t refY = io[GBA_REG(BG2Y_LO) + ((m_map - 2) << 2)];
-				refY |= io[GBA_REG(BG2Y_HI) + ((m_map - 2) << 2)] << 16;
+				int32_t refX = io[(REG_BG2X_LO >> 1) + ((m_map - 2) << 2)];
+				refX |= io[(REG_BG2X_HI >> 1) + ((m_map - 2) << 2)] << 16;
+				int32_t refY = io[(REG_BG2Y_LO >> 1) + ((m_map - 2) << 2)];
+				refY |= io[(REG_BG2Y_HI >> 1) + ((m_map - 2) << 2)] << 16;
 				refX <<= 4;
 				refY <<= 4;
 				refX >>= 4;
 				refY >>= 4;
 				offset = QString("%1\n%2").arg(refX / 65536., 0, 'f', 3).arg(refY / 65536., 0, 'f', 3);
 				transform = QString("%1 %2\n%3 %4")
-					.arg(io[GBA_REG(BG2PA) + ((m_map - 2) << 2)] / 256., 3, 'f', 2)
-					.arg(io[GBA_REG(BG2PB) + ((m_map - 2) << 2)] / 256., 3, 'f', 2)
-					.arg(io[GBA_REG(BG2PC) + ((m_map - 2) << 2)] / 256., 3, 'f', 2)
-					.arg(io[GBA_REG(BG2PD) + ((m_map - 2) << 2)] / 256., 3, 'f', 2);
+					.arg(io[(REG_BG2PA >> 1) + ((m_map - 2) << 2)] / 256., 3, 'f', 2)
+					.arg(io[(REG_BG2PB >> 1) + ((m_map - 2) << 2)] / 256., 3, 'f', 2)
+					.arg(io[(REG_BG2PC >> 1) + ((m_map - 2) << 2)] / 256., 3, 'f', 2)
+					.arg(io[(REG_BG2PD >> 1) + ((m_map - 2) << 2)] / 256., 3, 'f', 2);
 
 			}
 		}
 #endif
 #ifdef M_CORE_GB
-		if (m_controller->platform() == mPLATFORM_GB) {
+		if (m_controller->platform() == PLATFORM_GB) {
 			uint8_t* io = static_cast<GB*>(m_controller->thread()->core->board)->memory.io;
 			int x = io[m_map == 0 ? 0x42 : 0x4A];
 			int y = io[m_map == 0 ? 0x43 : 0x4B];
@@ -245,7 +222,7 @@ void MapView::updateTilesGBA(bool) {
 			m_rawMap = QImage(QSize(width, height), QImage::Format_ARGB32);
 			uchar* bgBits = m_rawMap.bits();
 			for (int j = 0; j < height; ++j) {
-				mBitmapCacheCleanRow(bitmapCache, m_bitmapStatus.data(), j);
+				mBitmapCacheCleanRow(bitmapCache, m_bitmapStatus, j);
 				memcpy(static_cast<void*>(&bgBits[width * j * 4]), mBitmapCacheGetRow(bitmapCache, j), width * 4);
 			}
 			m_rawMap = m_rawMap.convertToFormat(QImage::Format_RGB32).rgbSwapped();
@@ -263,7 +240,7 @@ void MapView::updateTilesGBA(bool) {
 			m_ui.bgInfo->setCustomProperty("priority", priority);
 			m_ui.bgInfo->setCustomProperty("offset", offset);
 			m_ui.bgInfo->setCustomProperty("transform", transform);
-			m_rawMap = compositeMap(m_map, &m_mapStatus);
+			m_rawMap = compositeMap(m_map, m_mapStatus);
 		}
 	}
 	QPixmap map = QPixmap::fromImage(m_rawMap.convertToFormat(QImage::Format_RGB32));

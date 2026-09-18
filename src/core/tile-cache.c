@@ -20,7 +20,7 @@ static void _freeCache(struct mTileCache* cache) {
 	unsigned size = 1 << mTileCacheSystemInfoGetPaletteCount(cache->sysConfig);
 	unsigned tiles = mTileCacheSystemInfoGetMaxTiles(cache->sysConfig);
 	if (cache->cache) {
-		mappedMemoryFree(cache->cache, 8 * 8 * sizeof(mColor) * tiles * size);
+		mappedMemoryFree(cache->cache, 8 * 8 * sizeof(color_t) * tiles * size);
 		cache->cache = NULL;
 	}
 	if (cache->status) {
@@ -44,10 +44,10 @@ static void _redoCacheSize(struct mTileCache* cache) {
 	size = 1 << size;
 	cache->entriesPerTile = size;
 	unsigned tiles = mTileCacheSystemInfoGetMaxTiles(cache->sysConfig);
-	cache->cache = anonymousMemoryMap(8 * 8 * sizeof(mColor) * tiles * size);
+	cache->cache = anonymousMemoryMap(8 * 8 * sizeof(color_t) * tiles * size);
 	cache->status = anonymousMemoryMap(tiles * size * sizeof(*cache->status));
-	cache->globalPaletteVersion = calloc(size, sizeof(*cache->globalPaletteVersion));
-	cache->palette = calloc(size * bpp, sizeof(*cache->palette));
+	cache->globalPaletteVersion = malloc(size * sizeof(*cache->globalPaletteVersion));
+	cache->palette = malloc(size * bpp * sizeof(*cache->palette));
 }
 
 void mTileCacheConfigure(struct mTileCache* cache, mTileCacheConfiguration config) {
@@ -89,7 +89,7 @@ void mTileCacheWriteVRAM(struct mTileCache* cache, uint32_t address) {
 	}
 }
 
-void mTileCacheWritePalette(struct mTileCache* cache, uint32_t entry, mColor color) {
+void mTileCacheWritePalette(struct mTileCache* cache, uint32_t entry, color_t color) {
 	if (entry < cache->paletteBase) {
 		return;
 	}
@@ -103,10 +103,10 @@ void mTileCacheWritePalette(struct mTileCache* cache, uint32_t entry, mColor col
 	++cache->globalPaletteVersion[entry];
 }
 
-static void _regenerateTile4(struct mTileCache* cache, mColor* tile, unsigned tileId, unsigned paletteId) {
+static void _regenerateTile4(struct mTileCache* cache, color_t* tile, unsigned tileId, unsigned paletteId) {
 	uint8_t* start = (uint8_t*) &cache->vram[tileId << 3];
 	paletteId <<= 2;
-	mColor* palette = &cache->palette[paletteId];
+	color_t* palette = &cache->palette[paletteId];
 	int i;
 	for (i = 0; i < 8; ++i) {
 		uint8_t tileDataLower = start[0];
@@ -133,10 +133,10 @@ static void _regenerateTile4(struct mTileCache* cache, mColor* tile, unsigned ti
 	}
 }
 
-static void _regenerateTile16(struct mTileCache* cache, mColor* tile, unsigned tileId, unsigned paletteId) {
+static void _regenerateTile16(struct mTileCache* cache, color_t* tile, unsigned tileId, unsigned paletteId) {
 	uint32_t* start = (uint32_t*) &cache->vram[tileId << 4];
 	paletteId <<= 4;
-	mColor* palette = &cache->palette[paletteId];
+	color_t* palette = &cache->palette[paletteId];
 	int i;
 	for (i = 0; i < 8; ++i) {
 		uint32_t line = *start;
@@ -162,10 +162,10 @@ static void _regenerateTile16(struct mTileCache* cache, mColor* tile, unsigned t
 	}
 }
 
-static void _regenerateTile256(struct mTileCache* cache, mColor* tile, unsigned tileId, unsigned paletteId) {
+static void _regenerateTile256(struct mTileCache* cache, color_t* tile, unsigned tileId, unsigned paletteId) {
 	uint32_t* start = (uint32_t*) &cache->vram[tileId << 5];
 	paletteId <<= 8;
-	mColor* palette = &cache->palette[paletteId];
+	color_t* palette = &cache->palette[paletteId];
 	int i;
 	for (i = 0; i < 8; ++i) {
 		uint32_t line = *start;
@@ -194,18 +194,24 @@ static void _regenerateTile256(struct mTileCache* cache, mColor* tile, unsigned 
 	}
 }
 
-static inline mColor* _tileLookup(struct mTileCache* cache, unsigned tileId, unsigned paletteId) {
+static inline color_t* _tileLookup(struct mTileCache* cache, unsigned tileId, unsigned paletteId) {
 	if (mTileCacheConfigurationIsShouldStore(cache->config)) {
 		unsigned tiles = mTileCacheSystemInfoGetMaxTiles(cache->sysConfig);
-		mASSERT(tileId < tiles);
-		mASSERT_DEBUG(paletteId < 1U << mTileCacheSystemInfoGetPaletteCount(cache->sysConfig));
+#ifndef NDEBUG
+		if (tileId >= tiles) {
+			abort();
+		}
+		if (paletteId >= 1U << mTileCacheSystemInfoGetPaletteCount(cache->sysConfig)) {
+			abort();
+		}
+#endif
 		return &cache->cache[(tileId + paletteId * tiles) << 6];
 	} else {
 		return cache->temporaryTile;
 	}
 }
 
-const mColor* mTileCacheGetTile(struct mTileCache* cache, unsigned tileId, unsigned paletteId) {
+const color_t* mTileCacheGetTile(struct mTileCache* cache, unsigned tileId, unsigned paletteId) {
 	unsigned count = cache->entriesPerTile;
 	unsigned bpp = cache->bpp;
 	struct mTileCacheEntry* status = &cache->status[tileId * count + paletteId];
@@ -215,7 +221,7 @@ const mColor* mTileCacheGetTile(struct mTileCache* cache, unsigned tileId, unsig
 		.vramClean = 1,
 		.paletteId = paletteId
 	};
-	mColor* tile = _tileLookup(cache, tileId, paletteId);
+	color_t* tile = _tileLookup(cache, tileId, paletteId);
 	if (!mTileCacheConfigurationIsShouldStore(cache->config) || memcmp(status, &desiredStatus, sizeof(*status))) {
 		switch (bpp) {
 		case 0:
@@ -235,7 +241,7 @@ const mColor* mTileCacheGetTile(struct mTileCache* cache, unsigned tileId, unsig
 	return tile;
 }
 
-const mColor* mTileCacheGetTileIfDirty(struct mTileCache* cache, struct mTileCacheEntry* entry, unsigned tileId, unsigned paletteId) {
+const color_t* mTileCacheGetTileIfDirty(struct mTileCache* cache, struct mTileCacheEntry* entry, unsigned tileId, unsigned paletteId) {
 	unsigned count = cache->entriesPerTile;
 	unsigned bpp = cache->bpp;
 	struct mTileCacheEntry* status = &cache->status[tileId * count + paletteId];
@@ -245,7 +251,7 @@ const mColor* mTileCacheGetTileIfDirty(struct mTileCache* cache, struct mTileCac
 		.vramClean = 1,
 		.paletteId = paletteId
 	};
-	mColor* tile = NULL;
+	color_t* tile = NULL;
 	if (memcmp(status, &desiredStatus, sizeof(*status))) {
 		tile = _tileLookup(cache, tileId, paletteId);
 		switch (bpp) {
@@ -270,7 +276,7 @@ const mColor* mTileCacheGetTileIfDirty(struct mTileCache* cache, struct mTileCac
 	return tile;
 }
 
-const mColor* mTileCacheGetPalette(struct mTileCache* cache, unsigned paletteId) {
+const color_t* mTileCacheGetPalette(struct mTileCache* cache, unsigned paletteId) {
 	return &cache->palette[paletteId << (1 << cache->bpp)];
 }
 

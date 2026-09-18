@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <ui version="4.0">
- <class>QGBA::MemoryDump</class>
- <widget class="QDialog" name="QGBA::MemoryDump">
+ <class>MemoryDump</class>
+ <widget class="QDialog" name="MemoryDump">
   <property name="geometry">
    <rect>
     <x>0</x>
@@ -39,7 +39,7 @@
      <item>
       <widget class="QLabel" name="label_3">
        <property name="text">
-        <string notr="true">:</string>
+        <string>:</string>
        </property>
       </widget>
      </item>
@@ -55,7 +55,7 @@
         <bool>true</bool>
        </property>
        <property name="prefix">
-        <string notr="true">0x</string>
+        <string>0x</string>
        </property>
        <property name="maximum">
         <number>268435455</number>
@@ -86,7 +86,7 @@
       </sizepolicy>
      </property>
      <property name="prefix">
-      <string notr="true">0x</string>
+      <string>0x</string>
      </property>
      <property name="minimum">
       <number>1</number>
@@ -105,7 +105,7 @@
    <item row="2" column="0" colspan="2">
     <widget class="QCheckBox" name="spanSegments">
      <property name="text">
-      <string comment="Generate dump with bytes all within the same region of memory, even if it crosses the bank boundary">Dump across banks within region</string>
+      <string>Dump across banks</string>
      </property>
     </widget>
    </item>
@@ -126,7 +126,7 @@
   <connection>
    <sender>buttonBox</sender>
    <signal>accepted()</signal>
-   <receiver>QGBA::MemoryDump</receiver>
+   <receiver>MemoryDump</receiver>
    <slot>accept()</slot>
    <hints>
     <hint type="sourcelabel">
@@ -142,7 +142,7 @@
   <connection>
    <sender>buttonBox</sender>
    <signal>rejected()</signal>
-   <receiver>QGBA::MemoryDump</receiver>
+   <receiver>MemoryDump</receiver>
    <slot>reject()</slot>
    <hints>
     <hint type="sourcelabel">

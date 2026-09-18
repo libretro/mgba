@@ -3,14 +3,13 @@
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
-#include "DebuggerController.h"
-#include "moc_DebuggerController.cpp"
+#include "GDBController.h"
 
 #include "CoreController.h"
 
 using namespace QGBA;
 
-DebuggerController::DebuggerController(mDebuggerModule* debugger, QObject* parent)
+DebuggerController::DebuggerController(mDebugger* debugger, QObject* parent)
 	: QObject(parent)
 	, m_debugger(debugger)
 {
@@ -20,7 +19,7 @@ bool DebuggerController::isAttached() {
 	if (!m_gameController) {
 		return false;
 	}
-	return m_gameController->debugger() == m_debugger->p;
+	return m_gameController->debugger() == m_debugger;
 }
 
 void DebuggerController::setController(std::shared_ptr<CoreController> controller) {
@@ -46,7 +45,7 @@ void DebuggerController::attach() {
 	}
 	if (m_gameController) {
 		attachInternal();
-		m_gameController->attachDebuggerModule(m_debugger);
+		m_gameController->setDebugger(m_debugger);
 	} else {
 		m_autoattach = true;
 	}
@@ -59,7 +58,7 @@ void DebuggerController::detach() {
 	if (m_gameController) {
 		CoreController::Interrupter interrupter(m_gameController);
 		shutdownInternal();
-		m_gameController->detachDebuggerModule(m_debugger);
+		m_gameController->setDebugger(nullptr);
 	} else {
 		m_autoattach = false;
 	}
@@ -70,7 +69,7 @@ void DebuggerController::breakInto() {
 		return;
 	}
 	CoreController::Interrupter interrupter(m_gameController);
-	mDebuggerEnter(m_debugger->p, DEBUGGER_ENTER_MANUAL, 0);
+	mDebuggerEnter(m_debugger, DEBUGGER_ENTER_MANUAL, 0);
 }
 
 void DebuggerController::shutdown() {

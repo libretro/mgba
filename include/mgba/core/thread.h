@@ -21,12 +21,8 @@ struct mCoreThread;
 struct mThreadLogger {
 	struct mLogger d;
 	struct mCoreThread* p;
-	struct mLogger* logger;
 };
 
-#ifdef ENABLE_SCRIPTING
-struct mScriptContext;
-#endif
 struct mCoreThreadInternal;
 struct mCoreThread {
 	// Input
@@ -43,10 +39,6 @@ struct mCoreThread {
 	void* userData;
 	void (*run)(struct mCoreThread*);
 
-#ifdef ENABLE_SCRIPTING
-	struct mScriptContext* scriptContext;
-#endif
-
 	struct mCoreThreadInternal* impl;
 };
 
@@ -56,47 +48,40 @@ struct mCoreThread {
 #include <mgba-util/threading.h>
 
 enum mCoreThreadState {
-	mTHREAD_INITIALIZED = -1,
-	mTHREAD_RUNNING = 0,
-	mTHREAD_REQUEST,
+	THREAD_INITIALIZED = -1,
+	THREAD_RUNNING = 0,
+	THREAD_REWINDING,
+	THREAD_MAX_RUNNING = THREAD_REWINDING,
 
-	mTHREAD_INTERRUPTED,
-	mTHREAD_PAUSED,
-	mTHREAD_CRASHED,
+	THREAD_WAITING,
+	THREAD_INTERRUPTED,
+	THREAD_PAUSED,
+	THREAD_MAX_WAITING = THREAD_PAUSED,
 
-	mTHREAD_INTERRUPTING,
-	mTHREAD_EXITING,
+	THREAD_PAUSING,
+	THREAD_RUN_ON,
+	THREAD_RESETING,
+	THREAD_MIN_DEFERRED = THREAD_PAUSING,
+	THREAD_MAX_DEFERRED = THREAD_RESETING,
 
-	mTHREAD_SHUTDOWN,
-
-	mTHREAD_MIN_WAITING = mTHREAD_INTERRUPTED,
-	mTHREAD_MAX_WAITING = mTHREAD_CRASHED
-};
-
-enum mCoreThreadRequest {
-	mTHREAD_REQ_PAUSE = 1, // User-set pause
-	mTHREAD_REQ_WAIT = 2, // Core-set pause
-	mTHREAD_REQ_RESET = 4,
-	mTHREAD_REQ_RUN_ON = 8,
-	mTHREAD_REQ_CRASHED = 16,
-	mTHREAD_REQ_REWIND_EMPTY = 32,
+	THREAD_INTERRUPTING,
+	THREAD_EXITING,
+	THREAD_SHUTDOWN,
+	THREAD_CRASHED
 };
 
 struct mCoreThreadInternal {
 	Thread thread;
 	enum mCoreThreadState state;
-	bool rewinding;
-	int requested;
 
 	Mutex stateMutex;
-	Condition stateOnThreadCond;
-	Condition stateOffThreadCond;
+	Condition stateCond;
+	enum mCoreThreadState savedState;
 	int interruptDepth;
 	bool frameWasOn;
 
 	struct mCoreSync sync;
 	struct mCoreRewindContext rewind;
-	struct mCore* core;
 };
 
 #endif
@@ -104,6 +89,8 @@ struct mCoreThreadInternal {
 bool mCoreThreadStart(struct mCoreThread* threadContext);
 bool mCoreThreadHasStarted(struct mCoreThread* threadContext);
 bool mCoreThreadHasExited(struct mCoreThread* threadContext);
+bool mCoreThreadHasCrashed(struct mCoreThread* threadContext);
+void mCoreThreadMarkCrashed(struct mCoreThread* threadContext);
 void mCoreThreadEnd(struct mCoreThread* threadContext);
 void mCoreThreadReset(struct mCoreThread* threadContext);
 void mCoreThreadJoin(struct mCoreThread* threadContext);
@@ -123,14 +110,11 @@ void mCoreThreadPauseFromThread(struct mCoreThread* threadContext);
 void mCoreThreadWaitFromThread(struct mCoreThread* threadContext);
 void mCoreThreadStopWaiting(struct mCoreThread* threadContext);
 
-bool mCoreThreadHasCrashed(struct mCoreThread* threadContext);
-void mCoreThreadMarkCrashed(struct mCoreThread* threadContext);
-void mCoreThreadClearCrashed(struct mCoreThread* threadContext);
-
 void mCoreThreadSetRewinding(struct mCoreThread* threadContext, bool);
 void mCoreThreadRewindParamsChanged(struct mCoreThread* threadContext);
 
 struct mCoreThread* mCoreThreadGet(void);
+struct mLogger* mCoreThreadLogger(void);
 
 CXX_GUARD_END
 

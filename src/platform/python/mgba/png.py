@@ -21,16 +21,20 @@ class PNG:
     def write_header(self, image):
         self._png = lib.PNGWriteOpen(self._vfile.handle)
         if self.mode == MODE_RGB:
-            self._info = lib.PNGWriteHeader(self._png, image.width, image.height, lib.mCOLOR_XBGR8)
+            self._info = lib.PNGWriteHeader(self._png, image.width, image.height)
         if self.mode == MODE_RGBA:
-            self._info = lib.PNGWriteHeader(self._png, image.width, image.height, lib.mCOLOR_ABGR8)
+            self._info = lib.PNGWriteHeaderA(self._png, image.width, image.height)
+        if self.mode == MODE_INDEX:
+            self._info = lib.PNGWriteHeader8(self._png, image.width, image.height)
         return self._info != ffi.NULL
 
     def write_pixels(self, image):
         if self.mode == MODE_RGB:
-            return lib.PNGWritePixels(self._png, image.width, image.height, image.stride, image.buffer, lib.mCOLOR_XBGR8)
+            return lib.PNGWritePixels(self._png, image.width, image.height, image.stride, image.buffer)
         if self.mode == MODE_RGBA:
-            return lib.PNGWritePixels(self._png, image.width, image.height, image.stride, image.buffer, lib.mCOLOR_ABGR8)
+            return lib.PNGWritePixelsA(self._png, image.width, image.height, image.stride, image.buffer)
+        if self.mode == MODE_INDEX:
+            return lib.PNGWritePixels8(self._png, image.width, image.height, image.stride, image.buffer)
         return False
 
     def write_close(self):

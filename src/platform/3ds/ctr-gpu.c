@@ -80,10 +80,6 @@ bool ctrInitGpu(void) {
 	AttrInfo_AddLoader(attrInfo, 2, GPU_UNSIGNED_BYTE, 4); // in_col
 	AttrInfo_AddLoader(attrInfo, 3, GPU_FLOAT, 2); // in_rot
 
-	C3D_BufInfo* bufInfo = C3D_GetBufInfo();
-	BufInfo_Init(bufInfo);
-	BufInfo_Add(bufInfo, ctrVertexBuffer, sizeof(struct ctrUIVertex), 4, 0x3210);
-
 	return true;
 }
 
@@ -160,7 +156,7 @@ void ctrActivateTexture(const C3D_Tex* texture) {
 		.m = {
 			// Rows are in the order w z y x, because ctrulib
 			0.0f, 0.0f, 0.0f, 1.0f / activeTexture->width,
-			0.0f, 0.0f, 1.0f / activeTexture->height, 0.0f
+			0.0f, 0.0f, 1.0f / activeTexture->height, 0.0f 
 		}
 	};
 	C3D_FVUnifMtx2x4(GPU_GEOMETRY_SHADER, GSH_FVEC_textureMtx, &textureMtx);
@@ -217,8 +213,13 @@ void ctrStartFrame(void) {
 	ctrNumVerts = 0;
 	ctrVertStart = 0;
 	activeTexture = NULL;
+
+	C3D_BufInfo* bufInfo = C3D_GetBufInfo();
+	BufInfo_Init(bufInfo);
+	BufInfo_Add(bufInfo, ctrVertexBuffer, sizeof(struct ctrUIVertex), 4, 0x3210);
 }
 
 void ctrEndFrame(void) {
 	ctrFlushBatch();
+	GSPGPU_FlushDataCache(ctrVertexBuffer, sizeof(struct ctrUIVertex) * ctrNumVerts);
 }

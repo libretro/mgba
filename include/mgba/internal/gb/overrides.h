@@ -12,6 +12,19 @@ CXX_GUARD_START
 
 #include <mgba/gb/interface.h>
 
+struct GBCartridgeOverride {
+	int headerCrc32;
+	enum GBModel model;
+	enum GBMemoryBankControllerType mbc;
+
+	uint32_t gbColors[12];
+};
+
+struct Configuration;
+bool GBOverrideFind(const struct Configuration*, struct GBCartridgeOverride* override);
+bool GBOverrideColorFind(struct GBCartridgeOverride* override);
+void GBOverrideSave(struct Configuration*, const struct GBCartridgeOverride* override);
+
 struct GB;
 void GBOverrideApply(struct GB*, const struct GBCartridgeOverride*);
 void GBOverrideApplyDefaults(struct GB*);

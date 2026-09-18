@@ -4,13 +4,11 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 #include "LoadSaveState.h"
-#include "moc_LoadSaveState.cpp"
 
 #include "CoreController.h"
-#include "input/GamepadAxisEvent.h"
-#include "input/GamepadButtonEvent.h"
+#include "GamepadAxisEvent.h"
+#include "GamepadButtonEvent.h"
 #include "VFileDevice.h"
-#include "utils.h"
 
 #include <QAction>
 #include <QDateTime>
@@ -18,7 +16,6 @@
 #include <QPainter>
 
 #include <mgba/core/serialize.h>
-#include <mgba/internal/gba/input.h>
 #include <mgba-util/memory.h>
 #include <mgba-util/vfs.h>
 
@@ -44,12 +41,13 @@ LoadSaveState::LoadSaveState(std::shared_ptr<CoreController> controller, QWidget
 	m_slots[7] = m_ui.state8;
 	m_slots[8] = m_ui.state9;
 
-	QSize size = controller->screenDimensions();
+	unsigned width, height;
+	controller->thread()->core->desiredVideoDimensions(controller->thread()->core, &width, &height);
 	int i;
 	for (i = 0; i < NUM_SLOTS; ++i) {
 		loadState(i + 1);
 		m_slots[i]->installEventFilter(this);
-		m_slots[i]->setMaximumSize(size.width() + 2, size.height() + 2);
+		m_slots[i]->setMaximumSize(width + 2, height + 2);
 		connect(m_slots[i], &QAbstractButton::clicked, this, [this, i]() { triggerState(i + 1); });
 	}
 
@@ -132,13 +130,13 @@ bool LoadSaveState::eventFilter(QObject* object, QEvent* event) {
 	if (event->type() == GamepadButtonEvent::Down() || event->type() == GamepadAxisEvent::Type()) {
 		int column = m_currentFocus % 3;
 		int row = m_currentFocus - column;
-		int key = -1;
+		GBAKey key = GBA_KEY_NONE;
 		if (event->type() == GamepadButtonEvent::Down()) {
-			key = static_cast<GamepadButtonEvent*>(event)->platformKey();
+			key = static_cast<GamepadButtonEvent*>(event)->gbaKey();
 		} else if (event->type() == GamepadAxisEvent::Type()) {
 			GamepadAxisEvent* gae = static_cast<GamepadAxisEvent*>(event);
 			if (gae->isNew()) {
-				key = gae->platformKey();
+				key = gae->gbaKey();
 			} else {
 				return false;
 			}
@@ -199,17 +197,11 @@ void LoadSaveState::loadState(int slot) {
 	QDateTime creation;
 	QImage stateImage;
 
-	QSize size = m_controller->screenDimensions();
+	unsigned width, height;
+	thread->core->desiredVideoDimensions(thread->core, &width, &height);
 	mStateExtdataItem item;
-	if (mStateExtdataGet(&extdata, EXTDATA_SCREENSHOT, &item)) {
-		mStateExtdataItem dims;
-		if (mStateExtdataGet(&extdata, EXTDATA_SCREENSHOT_DIMENSIONS, &dims) && dims.size == sizeof(uint16_t[2])) {
-			size.setWidth(static_cast<uint16_t*>(dims.data)[0]);
-			size.setHeight(static_cast<uint16_t*>(dims.data)[1]);
-		}
-		if (item.size >= static_cast<int32_t>(size.width() * size.height() * 4)) {
-			stateImage = QImage((uchar*) item.data, size.width(), size.height(), QImage::Format_ARGB32).rgbSwapped();
-		}
+	if (mStateExtdataGet(&extdata, EXTDATA_SCREENSHOT, &item) && item.size >= width * height * 4) {
+		stateImage = QImage((uchar*) item.data, width, height, QImage::Format_ARGB32).rgbSwapped();
 	}
 
 	if (mStateExtdataGet(&extdata, EXTDATA_META_TIME, &item) && item.size == sizeof(uint64_t)) {
@@ -224,7 +216,7 @@ void LoadSaveState::loadState(int slot) {
 		m_slots[slot - 1]->setIcon(statePixmap);
 	}
 	if (creation.toMSecsSinceEpoch()) {
-		m_slots[slot - 1]->setText(QLocale().toString(creation, QLocale::ShortFormat));
+		m_slots[slot - 1]->setText(creation.toString(Qt::DefaultLocaleShortDate));
 	} else if (stateImage.isNull()) {
 		m_slots[slot - 1]->setText(tr("Slot %1").arg(slot));
 	} else {
@@ -259,10 +251,6 @@ void LoadSaveState::focusInEvent(QFocusEvent*) {
 
 void LoadSaveState::paintEvent(QPaintEvent*) {
 	QPainter painter(this);
-
-	painter.setRenderHint(QPainter::SmoothPixmapTransform, true);
 	QRect full(QPoint(), size());
-	painter.fillRect(full, Qt::black);
-	painter.drawPixmap(clampSize(m_dims, size(), m_lockAspectRatio, m_lockIntegerScaling), m_background);
 	painter.fillRect(full, QColor(0, 0, 0, 128));
 }

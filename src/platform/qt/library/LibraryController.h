@@ -1,5 +1,5 @@
 /* Copyright (c) 2014-2017 waddlesplash
- * Copyright (c) 2013-2021 Jeffrey Pfau
+ * Copyright (c) 2014-2020 Jeffrey Pfau
  *
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -8,31 +8,62 @@
 
 #include <memory>
 
-#include <QAtomicInteger>
-#include <QHash>
 #include <QList>
+#include <QMap>
 #include <QStackedWidget>
-#include <QTimer>
 
 #include <mgba/core/library.h>
 
-#include "LibraryEntry.h"
-
-class QAbstractItemView;
-class QListView;
-class QSortFilterProxyModel;
-class QTreeView;
-
 namespace QGBA {
 
+// Predefinitions
+class LibraryGrid;
+class LibraryTree;
 class ConfigController;
-class LibraryModel;
 
 enum class LibraryStyle {
 	STYLE_LIST = 0,
 	STYLE_TREE,
 	STYLE_GRID,
 	STYLE_ICON
+};
+
+class LibraryEntry final {
+public:
+	LibraryEntry(mLibraryEntry* entry);
+
+	QString displayTitle() const { return title().isNull() ? filename() : title(); }
+
+	QString base() const { return QString(entry->base); }
+	QString filename() const { return QString(entry->filename); }
+	QString fullpath() const { return m_fullpath; }
+	QString title() const { return QString(entry->title); }
+	QByteArray internalTitle() const { return QByteArray(entry->internalTitle); }
+	QByteArray internalCode() const { return QByteArray(entry->internalCode); }
+	mPlatform platform() const { return entry->platform; }
+	size_t filesize() const { return entry->filesize; }
+	uint32_t crc32() const { return entry->crc32; }
+
+	const mLibraryEntry* entry;
+private:
+	const QString m_fullpath;
+};
+typedef std::shared_ptr<LibraryEntry> LibraryEntryRef;
+
+class AbstractGameList {
+public:
+	virtual LibraryEntryRef selectedEntry() = 0;
+	virtual void selectEntry(LibraryEntryRef game) = 0;
+
+	virtual void setViewStyle(LibraryStyle newStyle) = 0;
+
+	virtual void addEntry(LibraryEntryRef item) = 0;
+	virtual void addEntries(QList<LibraryEntryRef> items);
+
+	virtual void removeEntry(LibraryEntryRef item) = 0;
+	virtual void removeEntries(QList<LibraryEntryRef> items);
+
+	virtual QWidget* widget() = 0;
 };
 
 class LibraryController final : public QStackedWidget {
@@ -45,16 +76,15 @@ public:
 
 	LibraryStyle viewStyle() const { return m_currentStyle; }
 	void setViewStyle(LibraryStyle newStyle);
-	void setShowFilename(bool showFilename);
 
-	void selectEntry(const QString& fullpath);
-	LibraryEntry selectedEntry();
+	void selectEntry(LibraryEntryRef entry);
+	LibraryEntryRef selectedEntry();
 	VFile* selectedVFile();
 	QPair<QString, QString> selectedPath();
 
 	void selectLastBootedGame();
 
-	void addDirectory(const QString& dir, bool recursive = true);
+	void addDirectory(const QString& dir);
 
 public slots:
 	void clear();
@@ -65,34 +95,22 @@ signals:
 
 private slots:
 	void refresh();
-	void sortChanged(int column, Qt::SortOrder order);
-	inline void resizeTreeView() { resizeTreeView(true); }
-	void resizeTreeView(bool expand);
-
-protected:
-	void showEvent(QShowEvent*) override;
-	void resizeEvent(QResizeEvent*) override;
 
 private:
-	void loadDirectory(const QString&, bool recursive = true); // Called on separate thread
-	void updateViewStyle(LibraryStyle newStyle);
+	void loadDirectory(const QString&); // Called on separate thread
+	void freeLibrary();
 
 	ConfigController* m_config = nullptr;
 	std::shared_ptr<mLibrary> m_library;
-	QAtomicInteger<qint64> m_libraryJob = -1;
+	qint64 m_libraryJob = -1;
+	mLibraryListing m_listing;
+	QMap<QString, LibraryEntryRef> m_entries;
 
 	LibraryStyle m_currentStyle;
+	AbstractGameList* m_currentList = nullptr;
 
-	QHash<QString, uint64_t> m_knownGames;
-	LibraryModel* m_libraryModel;
-	QSortFilterProxyModel* m_listModel;
-	QSortFilterProxyModel* m_treeModel;
-	QListView* m_listView;
-	QTreeView* m_treeView;
-	QAbstractItemView* m_currentView = nullptr;
-	bool m_showFilename = false;
-
-	QTimer m_expandThrottle;
+	std::unique_ptr<LibraryGrid> m_libraryGrid;
+	std::unique_ptr<LibraryTree> m_libraryTree;
 };
 
 }

@@ -4,7 +4,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 #include "Swatch.h"
-#include "moc_Swatch.cpp"
 
 #include <QMouseEvent>
 #include <QPainter>
@@ -51,19 +50,14 @@ void Swatch::setColor(int index, uint32_t color) {
 	updateFill(index);
 }
 
-void Swatch::paintEvent(QPaintEvent*) {
+void Swatch::paintEvent(QPaintEvent* event) {
 	QPainter painter(this);
 	painter.drawPixmap(QPoint(), m_backing);
 }
 
 void Swatch::mousePressEvent(QMouseEvent* event) {
-#if (QT_VERSION < QT_VERSION_CHECK(6, 0, 0))
 	int x = event->x() / (m_size + 1);
 	int y = event->y() / (m_size + 1);
-#else
-	int x = event->position().x() / (m_size + 1);
-	int y = event->position().y() / (m_size + 1);
-#endif
 	emit indexPressed(y * m_dims.width() + x);
 }
 

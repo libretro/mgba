@@ -21,16 +21,13 @@ CXX_GUARD_START
 #include <GL/gl.h>
 #endif
 
-#include <mgba/feature/video-backend.h>
+#include "platform/video-backend.h"
 
 struct mGLContext {
 	struct VideoBackend d;
 
-	int activeTex;
 	GLuint tex[2];
-	GLuint layers[VIDEO_LAYER_MAX];
-	struct mRectangle layerDims[VIDEO_LAYER_MAX];
-	struct mSize imageSizes[VIDEO_LAYER_MAX];
+	int activeTex;
 };
 
 void mGLContextCreate(struct mGLContext*);

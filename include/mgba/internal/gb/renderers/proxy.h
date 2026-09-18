@@ -17,10 +17,12 @@ struct GBVideoProxyRenderer {
 	struct GBVideoRenderer d;
 	struct GBVideoRenderer* backend;
 	struct mVideoLogger* logger;
-	enum GBModel model;
+
+	struct GBObj objThisLine[40];
+	size_t oamMax;
 };
 
-void GBVideoProxyRendererCreate(struct GBVideoProxyRenderer* renderer, struct GBVideoRenderer* backend, struct mVideoLogger* logger);
+void GBVideoProxyRendererCreate(struct GBVideoProxyRenderer* renderer, struct GBVideoRenderer* backend);
 void GBVideoProxyRendererShim(struct GBVideo* video, struct GBVideoProxyRenderer* renderer);
 void GBVideoProxyRendererUnshim(struct GBVideo* video, struct GBVideoProxyRenderer* renderer);
 

@@ -16,11 +16,8 @@
 
 #include <QFileInfo>
 #include <QFileOpenEvent>
-#include <QFontDatabase>
 #include <QIcon>
 
-#include <mgba/core/version.h>
-#include <mgba/feature/updater.h>
 #include <mgba-util/socket.h>
 #include <mgba-util/vfs.h>
 
@@ -32,31 +29,20 @@
 #include "DiscordCoordinator.h"
 #endif
 
-#ifdef BUILD_SDL
-#include "input/SDLInputDriver.h"
-#endif
-
-#include "moc_GBAApp.cpp"
-
 using namespace QGBA;
 
 static GBAApp* g_app = nullptr;
 
+mLOG_DEFINE_CATEGORY(QT, "Qt", "platform.qt");
+
 GBAApp::GBAApp(int& argc, char* argv[], ConfigController* config)
 	: QApplication(argc, argv)
 	, m_configController(config)
-	, m_updater(config)
-	, m_monospace(QFontDatabase::systemFont(QFontDatabase::FixedFont))
 {
 	g_app = this;
-	setAttribute(Qt::AA_DontCreateNativeWidgetSiblings);
 
 #ifdef BUILD_SDL
-#if !SDL_VERSION_ATLEAST(2, 0, 0)
 	SDL_Init(SDL_INIT_NOPARACHUTE);
-#else
-	SDL_Init(0);
-#endif
 #endif
 
 	SocketSubsystemInit();
@@ -76,7 +62,6 @@ GBAApp::GBAApp(int& argc, char* argv[], ConfigController* config)
 		AudioProcessor::setDriver(static_cast<AudioProcessor::Driver>(m_configController->getQtOption("audioDriver").toInt()));
 	}
 
-	LogController::installMessageHandler();
 	LogController::global()->load(m_configController);
 
 #ifdef USE_DISCORD_RPC
@@ -92,16 +77,7 @@ GBAApp::GBAApp(int& argc, char* argv[], ConfigController* config)
 	m_configController->updateOption("useDiscordPresence");
 #endif
 
-#if (QT_VERSION >= QT_VERSION_CHECK(5, 9, 0))
-	m_netman.setRedirectPolicy(QNetworkRequest::NoLessSafeRedirectPolicy);
-#endif
-
-	cleanupAfterUpdate();
-
 	connect(this, &GBAApp::aboutToQuit, this, &GBAApp::cleanup);
-	if (m_configController->getOption("updateAutoCheck", 0).toInt()) {
-		QMetaObject::invokeMethod(&m_updater, "checkUpdate", Qt::QueuedConnection);
-	}
 }
 
 void GBAApp::cleanup() {
@@ -125,7 +101,7 @@ void GBAApp::cleanup() {
 bool GBAApp::event(QEvent* event) {
 	if (event->type() == QEvent::FileOpen) {
 		CoreController* core = m_manager.loadGame(static_cast<QFileOpenEvent*>(event)->file());
-		m_windows[0]->setController(core);
+		m_windows[0]->setController(core, static_cast<QFileOpenEvent*>(event)->file());
 		return true;
 	}
 	return QApplication::event(event);
@@ -135,7 +111,8 @@ Window* GBAApp::newWindow() {
 	if (m_windows.count() >= MAX_GBAS) {
 		return nullptr;
 	}
-	Window* w = new Window(&m_manager, m_configController, m_windows.count());
+	Window* w = new Window(&m_manager, m_configController, m_multiplayer.attached());
+	int windowId = m_multiplayer.attached();
 	connect(w, &Window::destroyed, [this, w]() {
 		m_windows.removeAll(w);
 		for (Window* w : m_windows) {
@@ -175,14 +152,10 @@ void GBAApp::continueAll(const QList<Window*>& paused) {
 	}
 }
 
-QString GBAApp::getOpenFileName(QWidget* owner, const QString& title, const QString& filter, const QString& path) {
+QString GBAApp::getOpenFileName(QWidget* owner, const QString& title, const QString& filter) {
 	QList<Window*> paused;
-	QString base(path);
-	if (base.isNull()) {
-		base = m_configController->getOption("lastDirectory");
-	}
 	pauseAll(&paused);
-	QString filename = QFileDialog::getOpenFileName(owner, title, base, filter);
+	QString filename = QFileDialog::getOpenFileName(owner, title, m_configController->getOption("lastDirectory"), filter);
 	continueAll(paused);
 	if (!filename.isEmpty()) {
 		m_configController->setOption("lastDirectory", QFileInfo(filename).dir().canonicalPath());
@@ -190,29 +163,10 @@ QString GBAApp::getOpenFileName(QWidget* owner, const QString& title, const QStr
 	return filename;
 }
 
-QStringList GBAApp::getOpenFileNames(QWidget* owner, const QString& title, const QString& filter, const QString& path) {
+QString GBAApp::getSaveFileName(QWidget* owner, const QString& title, const QString& filter) {
 	QList<Window*> paused;
-	QString base(path);
-	if (base.isNull()) {
-		base = m_configController->getOption("lastDirectory");
-	}
 	pauseAll(&paused);
-	QStringList filenames = QFileDialog::getOpenFileNames(owner, title, base, filter);
-	continueAll(paused);
-	if (!filenames.isEmpty()) {
-		m_configController->setOption("lastDirectory", QFileInfo(filenames.at(0)).dir().canonicalPath());
-	}
-	return filenames;
-}
-
-QString GBAApp::getSaveFileName(QWidget* owner, const QString& title, const QString& filter, const QString& path) {
-	QList<Window*> paused;
-	QString base(path);
-	if (base.isNull()) {
-		base = m_configController->getOption("lastDirectory");
-	}
-	pauseAll(&paused);
-	QString filename = QFileDialog::getSaveFileName(owner, title, base, filter);
+	QString filename = QFileDialog::getSaveFileName(owner, title, m_configController->getOption("lastDirectory"), filter);
 	continueAll(paused);
 	if (!filename.isEmpty()) {
 		m_configController->setOption("lastDirectory", QFileInfo(filename).dir().canonicalPath());
@@ -220,12 +174,12 @@ QString GBAApp::getSaveFileName(QWidget* owner, const QString& title, const QStr
 	return filename;
 }
 
-QString GBAApp::getOpenDirectoryName(QWidget* owner, const QString& title, const QString& path) {
+QString GBAApp::getOpenDirectoryName(QWidget* owner, const QString& title) {
 	QList<Window*> paused;
 	pauseAll(&paused);
-	QString filename = QFileDialog::getExistingDirectory(owner, title, !path.isNull() ? path : m_configController->getOption("lastDirectory"));
+	QString filename = QFileDialog::getExistingDirectory(owner, title, m_configController->getOption("lastDirectory"));
 	continueAll(paused);
-	if (path.isNull() && !filename.isEmpty()) {
+	if (!filename.isEmpty()) {
 		m_configController->setOption("lastDirectory", QFileInfo(filename).dir().canonicalPath());
 	}
 	return filename;
@@ -234,9 +188,6 @@ QString GBAApp::getOpenDirectoryName(QWidget* owner, const QString& title, const
 QString GBAApp::dataDir() {
 #ifdef DATADIR
 	QString path = QString::fromUtf8(DATADIR);
-	if (path.startsWith("./") || path.startsWith("../")) {
-		path = QCoreApplication::applicationDirPath() + "/" + path;
-	}
 #else
 	QString path = QCoreApplication::applicationDirPath();
 #ifdef Q_OS_MAC
@@ -267,30 +218,17 @@ bool GBAApp::reloadGameDB() {
 }
 #endif
 
-QNetworkAccessManager* GBAApp::netman() {
-	return &m_netman;
+qint64 GBAApp::submitWorkerJob(std::function<void ()> job, std::function<void ()> callback) {
+	return submitWorkerJob(job, nullptr, callback);
 }
 
-QNetworkReply* GBAApp::httpGet(const QUrl& url) {
-	QNetworkRequest req(url);
-	req.setHeader(QNetworkRequest::UserAgentHeader,
-	              QString("%1/%2 (+https://mgba.io) is definitely not Mozilla/5.0")
-	              .arg(projectName)
-	              .arg(projectVersion));
-	return m_netman.get(req);
-}
-
-qint64 GBAApp::submitWorkerJob(std::function<void ()>&& job, std::function<void ()>&& callback) {
-	return submitWorkerJob(std::move(job), nullptr, std::move(callback));
-}
-
-qint64 GBAApp::submitWorkerJob(std::function<void ()>&& job, QObject* context, std::function<void ()>&& callback) {
+qint64 GBAApp::submitWorkerJob(std::function<void ()> job, QObject* context, std::function<void ()> callback) {
 	qint64 jobId = m_nextJob;
 	++m_nextJob;
-	WorkerJob* jobRunnable = new WorkerJob(jobId, std::move(job), this);
+	WorkerJob* jobRunnable = new WorkerJob(jobId, job, this);
 	m_workerJobs.insert(jobId, jobRunnable);
 	if (callback) {
-		waitOnJob(jobId, context, std::move(callback));
+		waitOnJob(jobId, context, callback);
 	}
 	m_workerThreads.start(jobRunnable);
 	return jobId;
@@ -314,15 +252,15 @@ bool GBAApp::removeWorkerJob(qint64 jobId) {
 	return success;
 }
 
-bool GBAApp::waitOnJob(qint64 jobId, QObject* context, std::function<void ()>&& callback) {
+
+bool GBAApp::waitOnJob(qint64 jobId, QObject* context, std::function<void ()> callback) {
 	if (!m_workerJobs.contains(jobId)) {
 		return false;
 	}
 	if (!context) {
 		context = this;
 	}
-	QMetaObject::Connection connection = connect(this, &GBAApp::jobFinished, context,
-	                                             [jobId, callback = std::move(callback)](qint64 testedJobId) {
+	QMetaObject::Connection connection = connect(this, &GBAApp::jobFinished, context, [jobId, callback](qint64 testedJobId) {
 		if (jobId != testedJobId) {
 			return;
 		}
@@ -332,100 +270,15 @@ bool GBAApp::waitOnJob(qint64 jobId, QObject* context, std::function<void ()>&& 
 	return true;
 }
 
-void GBAApp::suspendScreensaver() {
-#ifdef BUILD_SDL
-	SDL::suspendScreensaver();
-#endif
-}
-
-void GBAApp::resumeScreensaver() {
-#ifdef BUILD_SDL
-	SDL::resumeScreensaver();
-#endif
-}
-
-void GBAApp::setScreensaverSuspendable(bool suspendable) {
-	UNUSED(suspendable);
-#ifdef BUILD_SDL
-	SDL::setScreensaverSuspendable(suspendable);
-#endif
-}
-
-void GBAApp::cleanupAfterUpdate() {
-	// Remove leftover updater if there's one present
-	QDir configDir(ConfigController::configDir());
-	QString extractedPath = configDir.filePath(QLatin1String("updater"));
-#ifdef Q_OS_WIN
-	extractedPath += ".exe";
-#endif
-	QFile updater(extractedPath);
-	if (updater.exists()) {
-		updater.remove();
-	}
-
-#ifdef Q_OS_WIN
-	// Remove the installer exe if we downloaded that too
-	extractedPath = configDir.filePath(QLatin1String("update.exe"));
-	QFile update(extractedPath);
-	if (update.exists()) {
-		update.remove();
-	}
-#endif
-}
-
-void GBAApp::restartForUpdate() {
-	QFileInfo updaterPath(m_updater.updateInfo().url.path());
-	QDir cacheDir(ConfigController::cacheDir());
-	if (updaterPath.suffix() == "exe") {
-		m_invokeOnExit = cacheDir.filePath(QLatin1String("update.exe"));
-	} else {
-		QFile updater(":/updater");
-		QString extractedPath = cacheDir.filePath(QLatin1String("updater"));
-	#ifdef Q_OS_WIN
-		extractedPath += ".exe";
-	#endif
-		updater.copy(extractedPath);
-	#ifndef Q_OS_WIN
-		QFile(extractedPath).setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner);
-	#endif
-		m_invokeOnExit = std::move(extractedPath);
-	}
-
-	for (auto& window : m_windows) {
-		window->deleteLater();
-	}
-	QMetaObject::invokeMethod(this, "quit", Qt::QueuedConnection);
-}
-
 void GBAApp::finishJob(qint64 jobId) {
 	m_workerJobs.remove(jobId);
 	emit jobFinished(jobId);
 	m_workerJobCallbacks.remove(jobId);
 }
 
-void GBAApp::initMultiplayer() {
-	QStringList fnames = m_configController->fileNames();
-	if (fnames.count() < 2) {
-		return;
-	}
-
-	Window* w = m_windows[0];
-	for (const auto& fname : fnames) {
-		if (!w) {
-			w = newWindow();
-		}
-		if (!w) {
-			break;
-		}
-		CoreController* core = m_manager.loadGame(fname);
-		w->setController(core);
-		w = nullptr;
-	}
-}
-
-GBAApp::WorkerJob::WorkerJob(qint64 id, std::function<void ()>&& job, GBAApp* owner)
+GBAApp::WorkerJob::WorkerJob(qint64 id, std::function<void ()> job, GBAApp* owner)
 	: m_id(id)
-	, m_job(std::move(job))
+	, m_job(job)
 	, m_owner(owner)
 {
 	setAutoDelete(true);

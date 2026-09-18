@@ -10,6 +10,58 @@
 #include <mgba/internal/gb/memory.h>
 #include <mgba-util/string.h>
 
+DEFINE_VECTOR(GBCheatPatchList, struct GBCheatPatch);
+
+static void _patchROM(struct mCheatDevice* device, struct GBCheatSet* cheats) {
+	if (!device->p) {
+		return;
+	}
+	size_t i;
+	for (i = 0; i < GBCheatPatchListSize(&cheats->romPatches); ++i) {
+		struct GBCheatPatch* patch = GBCheatPatchListGetPointer(&cheats->romPatches, i);
+		if (patch->applied) {
+			continue;
+		}
+		int segment = 0;
+		if (patch->checkByte) {
+			struct GB* gb = device->p->board;
+			int maxSegment = (gb->memory.romSize + GB_SIZE_CART_BANK0 - 1) / GB_SIZE_CART_BANK0;
+			for (; segment < maxSegment; ++segment) {
+				int8_t value = GBView8(device->p->cpu, patch->address, segment);
+				if (value == patch->oldValue) {
+					break;
+				}
+			}
+			if (segment == maxSegment) {
+				continue;
+			}
+		}
+		// TODO: More than one segment
+		GBPatch8(device->p->cpu, patch->address, patch->newValue, &patch->oldValue, segment);
+		patch->applied = true;
+		patch->segment = segment;
+	}
+}
+
+static void _unpatchROM(struct mCheatDevice* device, struct GBCheatSet* cheats) {
+	if (!device->p) {
+		return;
+	}
+	size_t i;
+	for (i = 0; i < GBCheatPatchListSize(&cheats->romPatches); ++i) {
+		struct GBCheatPatch* patch = GBCheatPatchListGetPointer(&cheats->romPatches, i);
+		if (!patch->applied) {
+			continue;
+		}
+		GBPatch8(device->p->cpu, patch->address, patch->oldValue, &patch->newValue, patch->segment);
+		patch->applied = false;
+	}
+}
+
+static void GBCheatSetDeinit(struct mCheatSet* set);
+static void GBCheatAddSet(struct mCheatSet* cheats, struct mCheatDevice* device);
+static void GBCheatRemoveSet(struct mCheatSet* cheats, struct mCheatDevice* device);
+static void GBCheatRefresh(struct mCheatSet* cheats, struct mCheatDevice* device);
 static void GBCheatSetCopyProperties(struct mCheatSet* set, struct mCheatSet* oldSet);
 static void GBCheatParseDirectives(struct mCheatSet* set, const struct StringList* directives);
 static void GBCheatDumpDirectives(struct mCheatSet* set, struct StringList* directives);
@@ -17,21 +69,23 @@ static bool GBCheatAddLine(struct mCheatSet*, const char* line, int type);
 
 static struct mCheatSet* GBCheatSetCreate(struct mCheatDevice* device, const char* name) {
 	UNUSED(device);
-	struct mCheatSet* set = malloc(sizeof(*set));
-	mCheatSetInit(set, name);
+	struct GBCheatSet* set = malloc(sizeof(*set));
+	mCheatSetInit(&set->d, name);
 
-	set->deinit = NULL;
-	set->add = NULL;
-	set->remove = NULL;
+	GBCheatPatchListInit(&set->romPatches, 0);
 
-	set->addLine = GBCheatAddLine;
-	set->copyProperties = GBCheatSetCopyProperties;
+	set->d.deinit = GBCheatSetDeinit;
+	set->d.add = GBCheatAddSet;
+	set->d.remove = GBCheatRemoveSet;
 
-	set->parseDirectives = GBCheatParseDirectives;
-	set->dumpDirectives = GBCheatDumpDirectives;
+	set->d.addLine = GBCheatAddLine;
+	set->d.copyProperties = GBCheatSetCopyProperties;
 
-	set->refresh = NULL;
-	return set;
+	set->d.parseDirectives = GBCheatParseDirectives;
+	set->d.dumpDirectives = GBCheatDumpDirectives;
+
+	set->d.refresh = GBCheatRefresh;
+	return &set->d;
 }
 
 struct mCheatDevice* GBCheatDeviceCreate(void) {
@@ -41,8 +95,23 @@ struct mCheatDevice* GBCheatDeviceCreate(void) {
 	return device;
 }
 
-static bool GBCheatAddCodebreaker(struct mCheatSet* cheats, uint16_t address, uint8_t data) {
-	struct mCheat* cheat = mCheatListAppend(&cheats->list);
+static void GBCheatSetDeinit(struct mCheatSet* set) {
+	struct GBCheatSet* gbset = (struct GBCheatSet*) set;
+	GBCheatPatchListDeinit(&gbset->romPatches);
+}
+
+static void GBCheatAddSet(struct mCheatSet* cheats, struct mCheatDevice* device) {
+	struct GBCheatSet* gbset = (struct GBCheatSet*) cheats;
+	_patchROM(device, gbset);
+}
+
+static void GBCheatRemoveSet(struct mCheatSet* cheats, struct mCheatDevice* device) {
+	struct GBCheatSet* gbset = (struct GBCheatSet*) cheats;
+	_unpatchROM(device, gbset);
+}
+
+static bool GBCheatAddCodebreaker(struct GBCheatSet* cheats, uint16_t address, uint8_t data) {
+	struct mCheat* cheat = mCheatListAppend(&cheats->d.list);
 	cheat->type = CHEAT_ASSIGN;
 	cheat->width = 1;
 	cheat->address = address;
@@ -52,11 +121,11 @@ static bool GBCheatAddCodebreaker(struct mCheatSet* cheats, uint16_t address, ui
 	return true;
 }
 
-static bool GBCheatAddGameShark(struct mCheatSet* cheats, uint32_t op) {
+static bool GBCheatAddGameShark(struct GBCheatSet* cheats, uint32_t op) {
 	return GBCheatAddCodebreaker(cheats, ((op & 0xFF) << 8) | ((op >> 8) & 0xFF), (op >> 16) & 0xFF);
 }
 
-static bool GBCheatAddGameSharkLine(struct mCheatSet* cheats, const char* line) {
+static bool GBCheatAddGameSharkLine(struct GBCheatSet* cheats, const char* line) {
 	uint32_t op;
 	if (!hex32(line, &op)) {
 		return false;
@@ -64,7 +133,7 @@ static bool GBCheatAddGameSharkLine(struct mCheatSet* cheats, const char* line) 
 	return GBCheatAddGameShark(cheats, op);
 }
 
-static bool GBCheatAddGameGenieLine(struct mCheatSet* cheats, const char* line) {
+static bool GBCheatAddGameGenieLine(struct GBCheatSet* cheats, const char* line) {
 	uint16_t op1;
 	uint16_t op2;
 	uint16_t op3 = 0x1000;
@@ -87,26 +156,24 @@ static bool GBCheatAddGameGenieLine(struct mCheatSet* cheats, const char* line) 
 	uint16_t address = (op1 & 0xF) << 8;
 	address |= (op2 >> 4) & 0xFF;
 	address |= ((op2 & 0xF) ^ 0xF) << 12;
-	struct mCheatPatch* patch = mCheatPatchListAppend(&cheats->romPatches);
+	struct GBCheatPatch* patch = GBCheatPatchListAppend(&cheats->romPatches);
 	patch->address = address;
-	patch->value = op1 >> 4;
+	patch->newValue = op1 >> 4;
 	patch->applied = false;
-	patch->width = 1;
-	patch->segment = -1;
 	if (op3 < 0x1000) {
 		uint32_t value = ((op3 & 0xF00) << 20) | (op3 & 0xF);
 		value = ROR(value, 2);
 		value |= value >> 24;
 		value ^= 0xBA;
-		patch->checkValue = value & 0xFF;
-		patch->check = true;
+		patch->oldValue = value;
+		patch->checkByte = true;
 	} else {
-		patch->check = false;
+		patch->checkByte = false;
 	}
 	return true;
 }
 
-static bool GBCheatAddVBALine(struct mCheatSet* cheats, const char* line) {
+static bool GBCheatAddVBALine(struct GBCheatSet* cheats, const char* line) {
 	uint16_t address;
 	uint8_t value;
 	const char* lineNext = hex16(line, &address);
@@ -116,7 +183,7 @@ static bool GBCheatAddVBALine(struct mCheatSet* cheats, const char* line) {
 	if (!hex8(line, &value)) {
 		return false;
 	}
-	struct mCheat* cheat = mCheatListAppend(&cheats->list);
+	struct mCheat* cheat = mCheatListAppend(&cheats->d.list);
 	cheat->type = CHEAT_ASSIGN;
 	cheat->width = 1;
 	cheat->address = address;
@@ -126,7 +193,8 @@ static bool GBCheatAddVBALine(struct mCheatSet* cheats, const char* line) {
 	return true;
 }
 
-bool GBCheatAddLine(struct mCheatSet* cheats, const char* line, int type) {
+bool GBCheatAddLine(struct mCheatSet* set, const char* line, int type) {
+	struct GBCheatSet* cheats = (struct GBCheatSet*) set;
 	switch (type) {
 	case GB_CHEAT_AUTODETECT:
 		break;
@@ -171,6 +239,15 @@ bool GBCheatAddLine(struct mCheatSet* cheats, const char* line, int type) {
 		realOp |= op2 << 8;
 		realOp |= op3;
 		return GBCheatAddGameShark(cheats, realOp);
+	}
+}
+
+static void GBCheatRefresh(struct mCheatSet* cheats, struct mCheatDevice* device) {
+	struct GBCheatSet* gbset = (struct GBCheatSet*) cheats;
+	if (cheats->enabled) {
+		_patchROM(device, gbset);
+	} else {
+		_unpatchROM(device, gbset);
 	}
 }
 

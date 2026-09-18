@@ -11,13 +11,9 @@
 CXX_GUARD_START
 
 #include <mgba/core/cpu.h>
-#include <mgba/core/interface.h>
 #include <mgba/core/log.h>
 #include <mgba/internal/gb/audio.h>
 #include <mgba-util/circle-buffer.h>
-
-#define GBA_AUDIO_FIFO_SIZE 8
-#define GBA_MAX_SAMPLES 16
 
 #define MP2K_MAGIC 0x68736D53
 #define MP2K_MAX_SOUND_CHANNELS 12
@@ -30,13 +26,9 @@ extern const unsigned GBA_AUDIO_SAMPLES;
 extern const int GBA_AUDIO_VOLUME_MAX;
 
 struct GBAAudioFIFO {
-	uint32_t fifo[GBA_AUDIO_FIFO_SIZE];
-	int fifoWrite;
-	int fifoRead;
-	uint32_t internalSample;
-	int internalRemaining;
+	struct CircleBuffer fifo;
 	int dmaSource;
-	int8_t samples[GBA_MAX_SAMPLES];
+	int8_t sample;
 };
 
 DECL_BITFIELD(GBARegisterSOUNDCNT_HI, uint16_t);
@@ -56,12 +48,17 @@ DECL_BITFIELD(GBARegisterSOUNDBIAS, uint16_t);
 DECL_BITS(GBARegisterSOUNDBIAS, Bias, 0, 10);
 DECL_BITS(GBARegisterSOUNDBIAS, Resolution, 14, 2);
 
+struct GBAAudioMixer;
 struct GBAAudio {
 	struct GBA* p;
 
 	struct GBAudio psg;
 	struct GBAAudioFIFO chA;
 	struct GBAAudioFIFO chB;
+
+	int16_t lastLeft;
+	int16_t lastRight;
+	int clock;
 
 	uint8_t volume;
 	bool volumeChA;
@@ -75,19 +72,24 @@ struct GBAAudio {
 	bool enable;
 
 	size_t samples;
+	unsigned sampleRate;
+
 	GBARegisterSOUNDBIAS soundbias;
 
+	struct GBAAudioMixer* mixer;
+	bool externalMixing;
 	int32_t sampleInterval;
-
-	int32_t lastSample;
-	unsigned sampleIndex;
-	struct mStereoSample currentSamples[GBA_MAX_SAMPLES];
 
 	bool forceDisableChA;
 	bool forceDisableChB;
 	int masterVolume;
 
 	struct mTimingEvent sampleEvent;
+};
+
+struct GBAStereoSample {
+	int16_t left;
+	int16_t right;
 };
 
 struct GBAMP2kADSR {
@@ -246,10 +248,30 @@ struct GBAMP2kTrack {
 	struct GBAMP2kMusicPlayerTrack track;
 	struct GBAMP2kSoundChannel* channel;
 	uint8_t lastCommand;
-	struct mCircleBuffer buffer;
+	struct CircleBuffer buffer;
 	uint32_t samplePlaying;
 	float currentOffset;
 	bool waiting;
+};
+
+struct GBAAudioMixer {
+	struct mCPUComponent d;
+	struct GBAAudio* p;
+
+	uint32_t contextAddress;
+
+	bool (*engage)(struct GBAAudioMixer* mixer, uint32_t address);
+	void (*vblank)(struct GBAAudioMixer* mixer);
+	void (*step)(struct GBAAudioMixer* mixer);
+
+	struct GBAMP2kContext context;
+	struct GBAMP2kMusicPlayerInfo player;
+	struct GBAMP2kTrack activeTracks[MP2K_MAX_SOUND_CHANNELS];
+
+	double tempo;
+	double frame;
+
+	struct GBAStereoSample last;
 };
 
 void GBAAudioInit(struct GBAAudio* audio, size_t samples);
@@ -276,15 +298,14 @@ void GBAAudioWriteSOUNDCNT_X(struct GBAAudio* audio, uint16_t value);
 void GBAAudioWriteSOUNDBIAS(struct GBAAudio* audio, uint16_t value);
 
 void GBAAudioWriteWaveRAM(struct GBAAudio* audio, int address, uint32_t value);
-uint32_t GBAAudioReadWaveRAM(struct GBAAudio* audio, int address);
-uint32_t GBAAudioWriteFIFO(struct GBAAudio* audio, int address, uint32_t value);
+void GBAAudioWriteFIFO(struct GBAAudio* audio, int address, uint32_t value);
 void GBAAudioSampleFIFO(struct GBAAudio* audio, int fifoId, int32_t cycles);
-
-void GBAAudioSample(struct GBAAudio* audio, int32_t timestamp);
 
 struct GBASerializedState;
 void GBAAudioSerialize(const struct GBAAudio* audio, struct GBASerializedState* state);
 void GBAAudioDeserialize(struct GBAAudio* audio, const struct GBASerializedState* state);
+
+float GBAAudioCalculateRatio(float inputSampleRate, float desiredFPS, float desiredSampleRatio);
 
 CXX_GUARD_END
 

@@ -3,12 +3,13 @@ import os.path
 import mgba.core
 import mgba.image
 import cinema.movie
+import itertools
 import glob
 import re
+import yaml
 from copy import deepcopy
 from cinema import VideoFrame
 from cinema.util import dict_merge
-from configparser import ConfigParser
 
 
 class CinemaTest(object):
@@ -21,15 +22,8 @@ class CinemaTest(object):
         self.name = '.'.join(path)
         self.settings = settings
         try:
-            with open(os.path.join(self.path, 'config.ini'), 'r') as f:
-                cfg = ConfigParser()
-                cfg.read_file(f)
-                settings = {}
-                if 'testinfo' in cfg:
-                    settings = dict(cfg['testinfo'])
-                if 'ports.cinema' in cfg:
-                    settings['config'] = dict(cfg['ports.cinema'])
-                dict_merge(self.settings, settings)
+            with open(os.path.join(self.path, 'manifest.yml'), 'r') as f:
+                dict_merge(self.settings, yaml.safe_load(f))
         except IOError:
             pass
         self.tests = {}
@@ -55,9 +49,9 @@ class CinemaTest(object):
     def output_settings(self):
         output_settings = {}
         if 'frames' in self.settings:
-            output_settings['limit'] = int(self.settings['frames'])
+            output_settings['limit'] = self.settings['frames']
         if 'skip' in self.settings:
-            output_settings['skip'] = int(self.settings['skip'])
+            output_settings['skip'] = self.settings['skip']
         return output_settings
 
     def __lt__(self, other):
@@ -72,7 +66,7 @@ class VideoTest(CinemaTest):
         self.tracer = cinema.movie.Tracer(self.core)
 
     def generate_frames(self):
-        for i, frame in enumerate(self.tracer.video(**self.output_settings())):
+        for i, frame in zip(itertools.count(), self.tracer.video(**self.output_settings())):
             try:
                 baseline = VideoFrame.load(os.path.join(self.path, self.BASELINE % i))
                 yield baseline, frame, VideoFrame.diff(baseline, frame)
@@ -84,7 +78,7 @@ class VideoTest(CinemaTest):
         assert not any(any(diffs[0].image.convert("L").point(bool).getdata()) for diffs in self.diffs)
 
     def generate_baseline(self):
-        for i, frame in enumerate(self.tracer.video(**self.output_settings())):
+        for i, frame in zip(itertools.count(), self.tracer.video(**self.output_settings())):
             frame.save(os.path.join(self.path, self.BASELINE % i))
 
 

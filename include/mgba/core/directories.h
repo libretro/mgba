@@ -10,7 +10,7 @@
 
 CXX_GUARD_START
 
-#if defined(ENABLE_VFS) && defined(ENABLE_DIRECTORIES)
+#if !defined(MINIMAL_CORE) || MINIMAL_CORE < 2
 struct VDir;
 
 struct mDirectorySet {

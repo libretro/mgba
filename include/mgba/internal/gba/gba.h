@@ -22,20 +22,20 @@ CXX_GUARD_START
 #define GBA_ARM7TDMI_FREQUENCY 0x1000000U
 
 enum GBAIRQ {
-	GBA_IRQ_VBLANK = 0x0,
-	GBA_IRQ_HBLANK = 0x1,
-	GBA_IRQ_VCOUNTER = 0x2,
-	GBA_IRQ_TIMER0 = 0x3,
-	GBA_IRQ_TIMER1 = 0x4,
-	GBA_IRQ_TIMER2 = 0x5,
-	GBA_IRQ_TIMER3 = 0x6,
-	GBA_IRQ_SIO = 0x7,
-	GBA_IRQ_DMA0 = 0x8,
-	GBA_IRQ_DMA1 = 0x9,
-	GBA_IRQ_DMA2 = 0xA,
-	GBA_IRQ_DMA3 = 0xB,
-	GBA_IRQ_KEYPAD = 0xC,
-	GBA_IRQ_GAMEPAK = 0xD
+	IRQ_VBLANK = 0x0,
+	IRQ_HBLANK = 0x1,
+	IRQ_VCOUNTER = 0x2,
+	IRQ_TIMER0 = 0x3,
+	IRQ_TIMER1 = 0x4,
+	IRQ_TIMER2 = 0x5,
+	IRQ_TIMER3 = 0x6,
+	IRQ_SIO = 0x7,
+	IRQ_DMA0 = 0x8,
+	IRQ_DMA1 = 0x9,
+	IRQ_DMA2 = 0xA,
+	IRQ_DMA3 = 0xB,
+	IRQ_KEYPAD = 0xC,
+	IRQ_GAMEPAK = 0xD
 };
 
 enum GBAIdleLoopOptimization {
@@ -45,9 +45,9 @@ enum GBAIdleLoopOptimization {
 };
 
 enum {
-	GBA_SP_BASE_SYSTEM = 0x03007F00,
-	GBA_SP_BASE_IRQ = 0x03007FA0,
-	GBA_SP_BASE_SUPERVISOR = 0x03007FE0
+	SP_BASE_SYSTEM = 0x03007F00,
+	SP_BASE_IRQ = 0x03007FA0,
+	SP_BASE_SUPERVISOR = 0x03007FE0
 };
 
 struct ARMCore;
@@ -81,24 +81,23 @@ struct GBA {
 
 	struct GBATimer timers[4];
 
+	int springIRQ;
 	struct mTimingEvent irqEvent;
 
 	uint32_t biosChecksum;
-	uint16_t keysActive;
-	uint16_t keysLast;
+	int* keySource;
 	struct mRotationSource* rotationSource;
 	struct GBALuminanceSource* luminanceSource;
 	struct mRTCSource* rtcSource;
 	struct mRumble* rumble;
-	int32_t lastRumble;
 
+	struct GBARRContext* rr;
 	bool isPristine;
 	size_t pristineRomSize;
 	size_t yankedRomSize;
 	uint32_t romCrc32;
 	struct VFile* romVf;
 	struct VFile* biosVf;
-	struct VFile* mbVf;
 
 	struct mAVStream* stream;
 	struct mKeyCallback* keyCallback;
@@ -110,15 +109,11 @@ struct GBA {
 	bool haltPending;
 	bool cpuBlocked;
 	bool earlyExit;
-	uint32_t dmaPC;
-	uint32_t biosStall;
-
 	int idleDetectionStep;
 	int idleDetectionFailures;
 	int32_t cachedRegisters[16];
 	bool taintedRegisters[16];
 
-	bool vbaBugCompat;
 	bool hardCrash;
 	bool allowOpposingDirections;
 
@@ -154,15 +149,7 @@ void GBAHalt(struct GBA* gba);
 void GBAStop(struct GBA* gba);
 void GBADebug(struct GBA* gba, uint16_t value);
 
-void GBAInterrupt(struct GBA* gba);
-
-#ifdef USE_ELF
-struct ELF;
-
-bool GBAVerifyELFEntry(struct ELF* elf, uint32_t target);
-#endif
-
-#ifdef ENABLE_DEBUGGERS
+#ifdef USE_DEBUGGERS
 struct mDebugger;
 void GBAAttachDebugger(struct GBA* gba, struct mDebugger* debugger);
 void GBADetachDebugger(struct GBA* gba);
@@ -180,11 +167,10 @@ void GBALoadBIOS(struct GBA* gba, struct VFile* vf);
 void GBAApplyPatch(struct GBA* gba, struct Patch* patch);
 
 bool GBALoadMB(struct GBA* gba, struct VFile* vf);
-void GBAUnloadMB(struct GBA* gba);
-
 bool GBALoadNull(struct GBA* gba);
 
-void GBAGetGameInfo(const struct GBA* gba, struct mGameInfo* info);
+void GBAGetGameCode(const struct GBA* gba, char* out);
+void GBAGetGameTitle(const struct GBA* gba, char* out);
 
 void GBATestKeypadIRQ(struct GBA* gba);
 

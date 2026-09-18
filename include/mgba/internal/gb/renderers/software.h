@@ -14,22 +14,16 @@ CXX_GUARD_START
 #include <mgba/internal/gb/gb.h>
 #include <mgba/internal/gb/video.h>
 
-struct GBVideoRendererSprite {
-	struct GBObj obj;
-	int8_t index;
-};
-
 struct GBVideoSoftwareRenderer {
 	struct GBVideoRenderer d;
 
-	mColor* outputBuffer;
+	color_t* outputBuffer;
 	int outputBufferStride;
 
-	// TODO: Implement the pixel FIFO
-	uint16_t row[GB_VIDEO_HORIZONTAL_PIXELS + 8];
+	uint8_t row[GB_VIDEO_HORIZONTAL_PIXELS + 8];
 
-	mColor palette[192];
-	uint8_t lookup[192];
+	color_t palette[128];
+	uint8_t lookup[64];
 
 	uint32_t* temporaryBuffer;
 
@@ -46,9 +40,6 @@ struct GBVideoSoftwareRenderer {
 	GBRegisterLCDC lcdc;
 	enum GBModel model;
 
-	struct GBVideoRendererSprite obj[GB_VIDEO_MAX_LINE_OBJ];
-	int objMax;
-
 	int16_t objOffsetX;
 	int16_t objOffsetY;
 	int16_t offsetScx;
@@ -60,9 +51,6 @@ struct GBVideoSoftwareRenderer {
 	uint8_t sgbPacket[128];
 	uint8_t sgbCommandHeader;
 	bool sgbBorders;
-	uint32_t sgbBorderMask[18];
-
-	uint8_t lastHighlightAmount;
 };
 
 void GBVideoSoftwareRendererCreate(struct GBVideoSoftwareRenderer*);

@@ -22,10 +22,7 @@
 #include "InputController.h"
 #include "LoadSaveState.h"
 #include "LogController.h"
-#include "SettingsView.h"
-#ifdef ENABLE_SCRIPTING
-#include "scripting/ScriptingController.h"
-#endif
+struct mArguments;
 
 namespace QGBA {
 
@@ -35,7 +32,6 @@ class CoreController;
 class CoreManager;
 class DebuggerConsoleController;
 class Display;
-class DolphinConnector;
 class FrameView;
 class GDBController;
 class GIFView;
@@ -58,27 +54,20 @@ public:
 	std::shared_ptr<CoreController> controller() { return m_controller; }
 
 	void setConfig(ConfigController*);
-	ConfigController* config() { return m_config; }
-
-	void argumentsPassed();
+	void argumentsPassed(mArguments*);
 
 	void resizeFrame(const QSize& size);
 
-	void updateMultiplayerStatus(bool canOpenAnother);
-	void updateMultiplayerActive(bool active);
-
-	InputController* inputController() { return &m_inputController; }
+	void updateMultiplayerStatus(bool canOpenAnother) { m_multiWindow->setEnabled(canOpenAnother); }
 
 signals:
 	void startDrawing();
 	void shutdown();
 	void paused(bool);
-	void shaderSelectorAdded(ShaderSelector*);
 
 public slots:
-	void setController(CoreController* controller);
+	void setController(CoreController* controller, const QString& fname);
 	void selectROM();
-	void bootBIOS();
 #ifdef USE_SQLITE3
 	void selectROMInArchive();
 	void addDirToLibrary();
@@ -86,8 +75,6 @@ public slots:
 	void selectSave(bool temporary);
 	void selectState(bool load);
 	void selectPatch();
-	void scanCard();
-	void parseCard();
 	void enterFullScreen();
 	void exitFullScreen();
 	void toggleFullScreen();
@@ -105,23 +92,20 @@ public slots:
 	void exportSharkport();
 
 	void openSettingsWindow();
-	void openSettingsWindow(SettingsView::Page);
 
 	void startVideoLog();
 
-	void openView(QWidget* widget);
-	void showMenu(bool);
-
-#ifdef ENABLE_DEBUGGERS
+#ifdef USE_DEBUGGERS
 	void consoleOpen();
 #endif
 
-#ifdef ENABLE_GDB_STUB
-	void gdbOpen();
+#ifdef USE_FFMPEG
+	void openVideoWindow();
+	void openGIFWindow();
 #endif
 
-#ifdef ENABLE_SCRIPTING
-	void scriptingOpen();
+#ifdef USE_GDB_STUB
+	void gdbOpen();
 #endif
 
 protected:
@@ -135,9 +119,7 @@ protected:
 	virtual void focusOutEvent(QFocusEvent*) override;
 	virtual void dragEnterEvent(QDragEnterEvent*) override;
 	virtual void dropEvent(QDropEvent*) override;
-#ifndef Q_OS_MAC
-	virtual void changeEvent(QEvent*) override;
-#endif
+	virtual void mouseDoubleClickEvent(QMouseEvent*) override;
 
 private slots:
 	void gameStarted();
@@ -148,75 +130,66 @@ private slots:
 
 	void reloadAudioDriver();
 	void reloadDisplayDriver();
-	void attachDisplay();
-	void changeRenderer();
 
 	void tryMakePortable();
 	void mustRestart();
-	void mustReset();
 
 	void recordFrame();
 	void showFPS();
 	void focusCheck();
 
 	void updateFrame();
-	void updateMute();
 
 	void setLogo();
-
-	void delayedCleanup();
 
 private:
 	static const int FPS_TIMER_INTERVAL = 2000;
 	static const int MUST_RESTART_TIMEOUT = 10000;
 
 	void setupMenu(QMenuBar*);
-	void setupOptions();
 	void openStateWindow(LoadSave);
 
 	void attachWidget(QWidget* widget);
-	void detachWidget();
+	void detachWidget(QWidget* widget);
 
 	void appendMRU(const QString& fname);
 	void clearMRU();
 	void updateMRU();
 
-	void ensureScripting();
+	void openView(QWidget* widget);
 
 	template <typename T, typename... A> std::function<void()> openTView(A... arg);
 	template <typename T, typename... A> std::function<void()> openControllerTView(A... arg);
-	template <typename T, typename... A> std::function<void()> openNamedTView(QPointer<T>*, bool keepalive, A... arg);
-	template <typename T, typename... A> std::function<void()> openNamedControllerTView(QPointer<T>*, bool keepalive, A... arg);
 
-	std::shared_ptr<Action> addGameAction(const QString& visibleName, const QString& name, Action::Function action, const QString& menu = {}, const QKeySequence& = {});
-	template<typename T, typename V> std::shared_ptr<Action> addGameAction(const QString& visibleName, const QString& name, T* obj, V (T::*action)(), const QString& menu = {}, const QKeySequence& = {});
-	template<typename V> std::shared_ptr<Action> addGameAction(const QString& visibleName, const QString& name, V (CoreController::*action)(), const QString& menu = {}, const QKeySequence& = {});
-	std::shared_ptr<Action> addGameAction(const QString& visibleName, const QString& name, Action::BooleanFunction action, const QString& menu = {}, const QKeySequence& = {});
+	Action* addGameAction(const QString& visibleName, const QString& name, Action::Function action, const QString& menu = {}, const QKeySequence& = {});
+	template<typename T, typename V> Action* addGameAction(const QString& visibleName, const QString& name, T* obj, V (T::*action)(), const QString& menu = {}, const QKeySequence& = {});
+	Action* addGameAction(const QString& visibleName, const QString& name, Action::BooleanFunction action, const QString& menu = {}, const QKeySequence& = {});
 
 	void updateTitle(float fps = -1);
 
+	QString getFilters() const;
 	QString getFiltersArchive() const;
 
 	CoreManager* m_manager;
 	std::shared_ptr<CoreController> m_controller;
 	std::unique_ptr<AudioProcessor> m_audioProcessor;
 
-	std::unique_ptr<QGBA::Display> m_display;
-	QSize m_initialSize;
-	QSize m_savedSize;
+	std::unique_ptr<Display> m_display;
 	int m_savedScale;
 
 	// TODO: Move these to a new class
 	ActionMapper m_actions;
-	QList<std::shared_ptr<Action>> m_gameActions;
-	QList<std::shared_ptr<Action>> m_nonMpActions;
-	QMultiMap<mPlatform, std::shared_ptr<Action>> m_platformActions;
-	std::shared_ptr<Action> m_multiWindow;
-	QMap<int, std::shared_ptr<Action>> m_frameSizes;
+	QList<Action*> m_gameActions;
+	QList<Action*> m_nonMpActions;
+#ifdef M_CORE_GBA
+	QMultiMap<mPlatform, Action*> m_platformActions;
+#endif
+	Action* m_multiWindow;
+	QMap<int, Action*> m_frameSizes;
 
 	LogController m_log{0};
 	LogView* m_logView;
-#ifdef ENABLE_DEBUGGERS
+#ifdef USE_DEBUGGERS
 	DebuggerConsoleController* m_console = nullptr;
 #endif
 	LoadSaveState* m_stateWindow = nullptr;
@@ -228,8 +201,7 @@ private:
 	QElapsedTimer m_frameTimer;
 	QTimer m_fpsTimer;
 	QTimer m_mustRestart;
-	QTimer m_mustReset;
-	QStringList m_mruFiles;
+	QList<QString> m_mruFiles;
 	ShortcutController* m_shortcutController;
 #if defined(BUILD_GL) || defined(BUILD_GLES2)
 	std::unique_ptr<ShaderSelector> m_shaderView;
@@ -245,35 +217,22 @@ private:
 
 	bool m_hitUnimplementedBiosCall;
 
-	bool m_inactiveMute = false;
-	bool m_minimizedMute = false;
-	bool m_multiActive = true;
-	int m_playerId;
-
-	QPointer<OverrideView> m_overrideView;
-	QPointer<SensorView> m_sensorView;
-	QPointer<DolphinConnector> m_dolphinView;
-	QPointer<FrameView> m_frameView;
+	std::unique_ptr<OverrideView> m_overrideView;
+	std::unique_ptr<SensorView> m_sensorView;
+	FrameView* m_frameView = nullptr;
 
 #ifdef USE_FFMPEG
-	QPointer<VideoView> m_videoView;
-	QPointer<GIFView> m_gifView;
+	VideoView* m_videoView = nullptr;
+	GIFView* m_gifView = nullptr;
 #endif
 
-#ifdef ENABLE_GDB_STUB
+#ifdef USE_GDB_STUB
 	GDBController* m_gdbController = nullptr;
 #endif
 
 #ifdef USE_SQLITE3
 	LibraryController* m_libraryView;
 #endif
-
-#ifdef ENABLE_SCRIPTING
-	std::unique_ptr<ScriptingController> m_scripting;
-#endif
-
-	std::unique_ptr<QGBA::Display> m_cleanupDisplay;
-	std::shared_ptr<CoreController> m_cleanupController;
 };
 
 class WindowBackground : public QWidget {
@@ -288,6 +247,7 @@ public:
 	void setDimensions(int width, int height);
 	void setLockIntegerScaling(bool lock);
 	void setLockAspectRatio(bool lock);
+	void filter(bool filter);
 
 	const QPixmap& pixmap() const { return m_pixmap; }
 
@@ -299,6 +259,9 @@ private:
 	QSize m_sizeHint;
 	int m_aspectWidth;
 	int m_aspectHeight;
+	bool m_lockAspectRatio;
+	bool m_lockIntegerScaling;
+	bool m_filter;
 };
 
 }

@@ -37,7 +37,6 @@ enum SM83Mnemonic {
 	SM83_MN_JP,
 	SM83_MN_JR,
 	SM83_MN_LD,
-	SM83_MN_LDH,
 	SM83_MN_NOP,
 	SM83_MN_OR,
 	SM83_MN_POP,
@@ -107,7 +106,6 @@ struct SM83InstructionInfo {
 
 size_t SM83Decode(uint8_t opcode, struct SM83InstructionInfo* info);
 int SM83Disassemble(struct SM83InstructionInfo* info, uint16_t pc, char* buffer, int blen);
-int SM83InstructionLength(uint8_t opcode);
 
 CXX_GUARD_END
 

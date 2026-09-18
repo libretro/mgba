@@ -4,7 +4,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 #include "PaletteView.h"
-#include "moc_PaletteView.cpp"
 
 #include "CoreController.h"
 #include "GBAApp.h"
@@ -12,6 +11,7 @@
 #include "VFileDevice.h"
 
 #include <QFileDialog>
+#include <QFontDatabase>
 
 #include <mgba/core/core.h>
 #ifdef M_CORE_GBA
@@ -20,7 +20,7 @@
 #ifdef M_CORE_GB
 #include <mgba/internal/gb/gb.h>
 #endif
-#include <mgba-util/image/export.h>
+#include <mgba-util/export.h>
 #include <mgba-util/vfs.h>
 
 using namespace QGBA;
@@ -36,7 +36,7 @@ PaletteView::PaletteView(std::shared_ptr<CoreController> controller, QWidget* pa
 	m_ui.objGrid->setDimensions(QSize(16, 16));
 	int count = 256;
 #ifdef M_CORE_GB
-	if (controller->platform() == mPLATFORM_GB) {
+	if (controller->platform() == PLATFORM_GB) {
 		m_ui.bgGrid->setDimensions(QSize(4, 8));
 		m_ui.objGrid->setDimensions(QSize(4, 8));
 		m_ui.bgGrid->setSize(24);
@@ -48,7 +48,7 @@ PaletteView::PaletteView(std::shared_ptr<CoreController> controller, QWidget* pa
 	m_ui.selected->setDimensions(QSize(1, 1));
 	updatePalette();
 
-	const QFont font = GBAApp::app()->monospaceFont();
+	const QFont font = QFontDatabase::systemFont(QFontDatabase::FixedFont);
 
 	m_ui.hexcode->setFont(font);
 	m_ui.value->setFont(font);
@@ -61,6 +61,8 @@ PaletteView::PaletteView(std::shared_ptr<CoreController> controller, QWidget* pa
 	connect(m_ui.objGrid, &Swatch::indexPressed, [this, count] (int index) { selectIndex(index + count); });
 	connect(m_ui.exportBG, &QAbstractButton::clicked, [this, count] () { exportPalette(0, count); });
 	connect(m_ui.exportOBJ, &QAbstractButton::clicked, [this, count] () { exportPalette(count, count); });
+
+	connect(controller.get(), &CoreController::stopping, this, &QWidget::close);
 }
 
 void PaletteView::updatePalette() {
@@ -68,16 +70,16 @@ void PaletteView::updatePalette() {
 		return;
 	}
 	const uint16_t* palette;
-	int count;
+	size_t count;
 	switch (m_controller->platform()) {
 #ifdef M_CORE_GBA
-	case mPLATFORM_GBA:
+	case PLATFORM_GBA:
 		palette = static_cast<GBA*>(m_controller->thread()->core->board)->video.palette;
 		count = 256;
 		break;
 #endif
 #ifdef M_CORE_GB
-	case mPLATFORM_GB:
+	case PLATFORM_GB:
 		palette = static_cast<GB*>(m_controller->thread()->core->board)->video.palette;
 		count = 32;
 		break;
@@ -97,12 +99,12 @@ void PaletteView::selectIndex(int index) {
 	const uint16_t* palette;
 	switch (m_controller->platform()) {
 #ifdef M_CORE_GBA
-	case mPLATFORM_GBA:
+	case PLATFORM_GBA:
 		palette = static_cast<GBA*>(m_controller->thread()->core->board)->video.palette;
 		break;
 #endif
 #ifdef M_CORE_GB
-	case mPLATFORM_GB:
+	case PLATFORM_GB:
 		palette = static_cast<GB*>(m_controller->thread()->core->board)->video.palette;
 		break;
 #endif
@@ -118,7 +120,7 @@ void PaletteView::selectIndex(int index) {
 	hexcode |= (hexcode >> 5) & 0x070707;
 	m_ui.hexcode->setText(tr("#%0").arg(hexcode, 6, 16, QChar('0')));
 	m_ui.value->setText(tr("0x%0").arg(color, 4, 16, QChar('0')));
-	m_ui.index->setText(tr("0x%0 (%1)").arg(index, 3, 16, QChar('0')).arg(index, 3, 10, QChar('0')));
+	m_ui.index->setText(tr("%0").arg(index, 3, 10, QChar('0')));
 	m_ui.r->setText(tr("0x%0 (%1)").arg(r, 2, 16, QChar('0')).arg(r, 2, 10, QChar('0')));
 	m_ui.g->setText(tr("0x%0 (%1)").arg(g, 2, 16, QChar('0')).arg(g, 2, 10, QChar('0')));
 	m_ui.b->setText(tr("0x%0 (%1)").arg(b, 2, 16, QChar('0')).arg(b, 2, 10, QChar('0')));
@@ -135,18 +137,15 @@ void PaletteView::exportPalette(int start, int length) {
 	CoreController::Interrupter interrupter(m_controller);
 	QString filename = GBAApp::app()->getSaveFileName(this, tr("Export palette"),
 	                                                  tr("Windows PAL (*.pal);;Adobe Color Table (*.act)"));
-	if (filename.isNull()) {
-		return;
-	}
 	VFile* vf = VFileDevice::open(filename, O_WRONLY | O_CREAT | O_TRUNC);
 	if (!vf) {
 		LOG(QT, ERROR) << tr("Failed to open output palette file: %1").arg(filename);
 		return;
 	}
 	if (filename.endsWith(".pal", Qt::CaseInsensitive)) {
-		mPaletteExportRIFF(vf, length, &static_cast<GBA*>(m_controller->thread()->core->board)->video.palette[start]);
+		exportPaletteRIFF(vf, length, &static_cast<GBA*>(m_controller->thread()->core->board)->video.palette[start]);
 	} else if (filename.endsWith(".act", Qt::CaseInsensitive)) {
-		mPaletteExportACT(vf, length, &static_cast<GBA*>(m_controller->thread()->core->board)->video.palette[start]);
+		exportPaletteACT(vf, length, &static_cast<GBA*>(m_controller->thread()->core->board)->video.palette[start]);
 	}
 	vf->close(vf);
 }

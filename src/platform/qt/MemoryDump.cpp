@@ -4,7 +4,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 #include "MemoryDump.h"
-#include "moc_MemoryDump.cpp"
 
 #include "CoreController.h"
 #include "GBAApp.h"
@@ -14,7 +13,7 @@ using namespace QGBA;
 
 MemoryDump::MemoryDump(std::shared_ptr<CoreController> controller, QWidget* parent)
 	: QDialog(parent, Qt::WindowTitleHint | Qt::WindowSystemMenuHint | Qt::WindowCloseButtonHint)
-	, m_controller(std::move(controller))
+	, m_controller(controller)
 {
 	m_ui.setupUi(this);
 

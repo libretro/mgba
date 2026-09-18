@@ -2,7 +2,8 @@
 import os
 import os.path
 import shutil
-from configparser import ConfigParser
+import yaml
+from cinema.util import dict_merge
 
 suffixes = {
     'C': 'CGB',
@@ -36,15 +37,19 @@ def ingestDirectory(path, dest):
 
             for suffix, model in suffixes.items():
                 if fname.endswith('-' + suffix):
-                    manifest = ConfigParser()
+                    manifest = {}
                     try:
-                        with open(os.path.join(dest, root, fname, 'config.ini'), 'r') as f:
-                            manifest.read_file(f)
+                        with open(os.path.join(dest, root, fname, 'manifest.yml'), 'r') as f:
+                            manifest = yaml.safe_load(f) or {}
                     except IOError:
                         pass
-                    manifest.set('ports.cinema', 'gb.model', model)
-                    with open(os.path.join(dest, root, fname, 'config.ini'), 'w') as f:
-                        manifest.write(f, space_around_delimiters=False)
+                    dict_merge(manifest, {
+                        'config': {
+                            'gb.model': model
+                        }
+                    })
+                    with open(os.path.join(dest, root, fname, 'manifest.yml'), 'w') as f:
+                        yaml.dump(manifest, f)
 
 if __name__ == '__main__':
     import argparse

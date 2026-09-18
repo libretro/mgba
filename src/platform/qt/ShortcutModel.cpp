@@ -4,10 +4,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 #include "ShortcutModel.h"
-#include "moc_ShortcutModel.cpp"
 
 #include "ShortcutController.h"
-#include "utils.h"
 
 using namespace QGBA;
 
@@ -29,13 +27,14 @@ QVariant ShortcutModel::data(const QModelIndex& index, int role) const {
 	if (role != Qt::DisplayRole || !index.isValid()) {
 		return QVariant();
 	}
-	const Item& item = m_cache[index.internalId()];
-	const Shortcut* shortcut = item.shortcut;
+	int row = index.row();
+	const Item* item = static_cast<Item*>(index.internalPointer());
+	const Shortcut* shortcut = item->shortcut;
 	switch (index.column()) {
 	case 0:
-		return m_controller->visibleName(item.name);
+		return m_controller->visibleName(item->name);
 	case 1:
-		return shortcut ? keyName(shortcut->shortcut()) : QVariant();
+		return shortcut ? QKeySequence(shortcut->shortcut()).toString(QKeySequence::NativeText) : QVariant();
 	case 2:
 		if (!shortcut) {
 			return QVariant();
@@ -78,34 +77,31 @@ QVariant ShortcutModel::headerData(int section, Qt::Orientation orientation, int
 QModelIndex ShortcutModel::index(int row, int column, const QModelIndex& parent) const {
 	QString pmenu;
 	if (parent.isValid()) {
-		const Item& item = m_cache[parent.internalId()];
-		pmenu = item.name;
+		pmenu = static_cast<Item*>(parent.internalPointer())->name;
 	}
 	QString name = m_controller->name(row, pmenu);
-	size_t hash = qHash(name);
-	Item& item = m_cache[hash];
-	item.name = name;
-	item.shortcut = m_controller->shortcut(name);
-	return createIndex(row, column, hash);
+	Item* item = &(*const_cast<QHash<QString, Item>*>(&m_cache))[name];
+	item->name = name;
+	item->shortcut = m_controller->shortcut(name);
+	return createIndex(row, column, item);
 }
 
 QModelIndex ShortcutModel::parent(const QModelIndex& index) const {
 	if (!index.isValid() || !index.internalPointer()) {
 		return QModelIndex();
 	}
-	const Item& item = m_cache[index.internalId()];
-	QString parent = m_controller->parent(item.name);
+	Item* item = static_cast<Item*>(index.internalPointer());
+	QString parent = m_controller->parent(item->name);
 	if (parent.isNull()) {
 		return QModelIndex();
 	}
-	size_t hash = qHash(parent);
-	Item& pitem = m_cache[hash];
-	pitem.name = parent;
-	pitem.shortcut = m_controller->shortcut(parent);
-	return createIndex(m_controller->indexIn(parent), 0, hash);
+	Item* pitem = &(*const_cast<QHash<QString, Item>*>(&m_cache))[parent];
+	pitem->name = parent;
+	pitem->shortcut = m_controller->shortcut(parent);
+	return createIndex(m_controller->indexIn(parent), 0, pitem);
 }
 
-int ShortcutModel::columnCount(const QModelIndex&) const {
+int ShortcutModel::columnCount(const QModelIndex& index) const {
 	return 3;
 }
 
@@ -113,30 +109,29 @@ int ShortcutModel::rowCount(const QModelIndex& index) const {
 	if (!index.isValid()) {
 		return m_controller->count();
 	}
-	const Item& item = m_cache[index.internalId()];
-	return m_controller->count(item.name);
+	Item* item = static_cast<Item*>(index.internalPointer());
+	return m_controller->count(item->name);
 }
 
 QString ShortcutModel::name(const QModelIndex& index) const {
 	if (!index.isValid()) {
 		return {};
 	}
-	const Item& item = m_cache[index.internalId()];
-	return item.name;
+	Item* item = static_cast<Item*>(index.internalPointer());
+	return item->name;
 }
 
 void ShortcutModel::addRowNamed(const QString& name) {
 	QString parent = m_controller->parent(name);
-	size_t hash = qHash(name);
-	Item& item = m_cache[hash];
-	item.name = parent;
-	item.shortcut = m_controller->shortcut(parent);
+	Item* item = &m_cache[parent];
+	item->name = parent;
+	item->shortcut = m_controller->shortcut(parent);
 	int index = m_controller->indexIn(name);
-	beginInsertRows(createIndex(m_controller->indexIn(parent), 0, hash), index, index + 1);
+	beginInsertRows(createIndex(m_controller->indexIn(parent), 0, item), index, index + 1);
 	endInsertRows();
 }
 
-void ShortcutModel::clearMenu(const QString&) {
+void ShortcutModel::clearMenu(const QString& name) {
 	// TODO
 	beginResetModel();
 	endResetModel();

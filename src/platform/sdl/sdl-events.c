@@ -22,130 +22,70 @@
 #endif
 
 #define GYRO_STEPS 100
-#define RUMBLE_THRESHOLD 1.f / 128.f
+#define RUMBLE_PWM 16
+#define RUMBLE_STEPS 2
 
 mLOG_DEFINE_CATEGORY(SDL_EVENTS, "SDL Events", "platform.sdl.events");
 
 DEFINE_VECTOR(SDL_JoystickList, struct SDL_JoystickCombo);
 
 #if SDL_VERSION_ATLEAST(2, 0, 0)
-static void _mSDLSetRumble(struct mRumbleIntegrator* rumble, float level);
+static void _mSDLSetRumble(struct mRumble* rumble, int enable);
 #endif
 static int32_t _mSDLReadTiltX(struct mRotationSource* rumble);
 static int32_t _mSDLReadTiltY(struct mRotationSource* rumble);
 static int32_t _mSDLReadGyroZ(struct mRotationSource* rumble);
 static void _mSDLRotationSample(struct mRotationSource* source);
 
-static struct SDL_JoystickCombo* _mSDLOpenJoystick(struct mSDLEvents* events, int i) {
-	SDL_Joystick* sdlJoystick = SDL_JoystickOpen(i);
-	if (!sdlJoystick) {
-		return NULL;
-	}
-
-#if SDL_VERSION_ATLEAST(2, 0, 0)
-	size_t j;
-	for (j = 0; j < SDL_JoystickListSize(&events->joysticks); ++j) {
-		struct SDL_JoystickCombo* joystick = SDL_JoystickListGetPointer(&events->joysticks, j);
-		if (joystick->id == SDL_JoystickInstanceID(sdlJoystick)) {
-			return joystick;
-		}
-	}
-#endif
-	struct SDL_JoystickCombo* joystick = SDL_JoystickListAppend(&events->joysticks);
-	joystick->index = SDL_JoystickListSize(&events->joysticks) - 1;
-	joystick->joystick = sdlJoystick;
-#if SDL_VERSION_ATLEAST(2, 0, 0)
-	joystick->id = SDL_JoystickInstanceID(joystick->joystick);
-#if !SDL_VERSION_ATLEAST(2, 0, 9)
-	joystick->haptic = SDL_HapticOpenFromJoystick(joystick->joystick);
-#endif
-	joystick->controller = SDL_GameControllerOpen(i);
-#if SDL_VERSION_ATLEAST(2, 0, 14)
-	if (joystick->controller) {
-		if (SDL_GameControllerHasSensor(joystick->controller, SDL_SENSOR_GYRO) && !SDL_GameControllerIsSensorEnabled(joystick->controller, SDL_SENSOR_GYRO)) {
-			SDL_GameControllerSetSensorEnabled(joystick->controller, SDL_SENSOR_GYRO, SDL_TRUE);
-		}
-		if (SDL_GameControllerHasSensor(joystick->controller, SDL_SENSOR_ACCEL) && !SDL_GameControllerIsSensorEnabled(joystick->controller, SDL_SENSOR_ACCEL)) {
-			SDL_GameControllerSetSensorEnabled(joystick->controller, SDL_SENSOR_ACCEL, SDL_TRUE);
-		}
-	}
-#endif
-#else
-	joystick->id = SDL_JoystickIndex(joystick->joystick);
-#endif
-	return joystick;
-}
-
 bool mSDLInitEvents(struct mSDLEvents* context) {
-#if SDL_VERSION_ATLEAST(2, 0, 2)
-	char path[PATH_MAX + 1];
-	mCoreConfigDirectory(path, PATH_MAX);
-	strncat(path, PATH_SEP "gamecontrollerdb.txt", PATH_MAX - strlen(path));
-
-#if SDL_VERSION_ATLEAST(3, 0, 0)
-	int result = SDL_AddGamepadMappingsFromFile(path);
-#else
-	int result = SDL_GameControllerAddMappingsFromFile(path);
-#endif
-
-	if (result < 0) {
-		mLOG(SDL_EVENTS, DEBUG, "SDL failed to load optional game controller mappings from %s: %s", path, SDL_GetError());
-	} else {
-		mLOG(SDL_EVENTS, INFO, "Loaded %d gamepad mappings from %s", result, path);
-	}
-#endif
-
 #if SDL_VERSION_ATLEAST(2, 0, 4)
 	SDL_SetHint(SDL_HINT_NO_SIGNAL_HANDLERS, "1");
 #endif
-	if (!SDL_OK(SDL_InitSubSystem(SDL_INIT_JOYSTICK))) {
+	if (SDL_InitSubSystem(SDL_INIT_JOYSTICK) < 0) {
 		mLOG(SDL_EVENTS, ERROR, "SDL joystick initialization failed: %s", SDL_GetError());
 	}
 
 #if SDL_VERSION_ATLEAST(2, 0, 0)
 	SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
-#if !SDL_VERSION_ATLEAST(2, 0, 9)
-	if (!SDL_OK(SDL_InitSubSystem(SDL_INIT_HAPTIC))) {
+	if (SDL_InitSubSystem(SDL_INIT_HAPTIC) < 0) {
 		mLOG(SDL_EVENTS, ERROR, "SDL haptic initialization failed: %s", SDL_GetError());
 	}
-#endif
-	if (!SDL_OK(SDL_InitSubSystem(SDL_INIT_GAMECONTROLLER))) {
-		mLOG(SDL_EVENTS, ERROR, "SDL game controller initialization failed: %s", SDL_GetError());
-	}
-	if (!SDL_OK(SDL_InitSubSystem(SDL_INIT_VIDEO))) {
+	if (SDL_InitSubSystem(SDL_INIT_VIDEO) < 0) {
 		mLOG(SDL_EVENTS, ERROR, "SDL video initialization failed: %s", SDL_GetError());
 	}
 #endif
 
-	SDL_JoystickListInit(&context->joysticks, 0);
-#if SDL_VERSION_ATLEAST(3, 0, 0)
-	SDL_SetJoystickEventsEnabled(true);
-	mSDLUpdateJoysticks(context, NULL);
-	int nJoysticks;
-	SDL_JoystickID* ids = SDL_GetJoysticks(&nJoysticks);
-	if (nJoysticks > 0) {
-		int i;
-		for (i = 0; i < nJoysticks; ++i) {
-			_mSDLOpenJoystick(context, ids[i]);
-		}
-	}
-	SDL_free(ids);
-#else
 	SDL_JoystickEventState(SDL_ENABLE);
-	mSDLUpdateJoysticks(context, NULL);
 	int nJoysticks = SDL_NumJoysticks();
+	SDL_JoystickListInit(&context->joysticks, nJoysticks);
 	if (nJoysticks > 0) {
-		int i;
-		for (i = 0; i < nJoysticks; ++i) {
-			_mSDLOpenJoystick(context, i);
+		mSDLUpdateJoysticks(context, NULL);
+		// Some OSes don't do hotplug detection
+		if (!SDL_JoystickListSize(&context->joysticks)) {
+			int i;
+			for (i = 0; i < nJoysticks; ++i) {
+				SDL_Joystick* sdlJoystick = SDL_JoystickOpen(i);
+				if (!sdlJoystick) {
+					continue;
+				}
+				struct SDL_JoystickCombo* joystick = SDL_JoystickListAppend(&context->joysticks);
+				joystick->joystick = sdlJoystick;
+				joystick->index = SDL_JoystickListSize(&context->joysticks) - 1;
+#if SDL_VERSION_ATLEAST(2, 0, 0)
+				joystick->id = SDL_JoystickInstanceID(joystick->joystick);
+				joystick->haptic = SDL_HapticOpenFromJoystick(joystick->joystick);
+#else
+				joystick->id = SDL_JoystickIndex(joystick->joystick);
+#endif
+			}
 		}
 	}
-#endif
+
+	context->playersAttached = 0;
 
 	size_t i;
 	for (i = 0; i < MAX_PLAYERS; ++i) {
-		context->preferredJoysticks[i].type = NULL;
-		context->preferredJoysticks[i].serial = NULL;
+		context->preferredJoysticks[i] = 0;
 	}
 
 #if !SDL_VERSION_ATLEAST(2, 0, 0)
@@ -161,10 +101,7 @@ void mSDLDeinitEvents(struct mSDLEvents* context) {
 	for (i = 0; i < SDL_JoystickListSize(&context->joysticks); ++i) {
 		struct SDL_JoystickCombo* joystick = SDL_JoystickListGetPointer(&context->joysticks, i);
 #if SDL_VERSION_ATLEAST(2, 0, 0)
-		SDL_GameControllerClose(joystick->controller);
-#if !SDL_VERSION_ATLEAST(2, 0, 9)
 		SDL_HapticClose(joystick->haptic);
-#endif
 #endif
 		SDL_JoystickClose(joystick->joystick);
 	}
@@ -173,19 +110,25 @@ void mSDLDeinitEvents(struct mSDLEvents* context) {
 }
 
 void mSDLEventsLoadConfig(struct mSDLEvents* context, const struct Configuration* config) {
-	int i;
-	for (i = 0; i < MAX_PLAYERS; ++i) {
-#if SDL_VERSION_ATLEAST(2, 0, 0)
-		context->preferredJoysticks[i].type = mInputGetPreferredDeviceType(config, "gba", SDL_BINDING_CONTROLLER, i);
-		context->preferredJoysticks[i].serial = mInputGetPreferredDeviceSerial(config, "gba", SDL_BINDING_CONTROLLER, i);
-#else
-		context->preferredJoysticks[i].type = mInputGetPreferredDeviceType(config, "gba", SDL_BINDING_BUTTON, i);
-		context->preferredJoysticks[i].serial = mInputGetPreferredDeviceSerial(config, "gba", SDL_BINDING_BUTTON, i);
-#endif
-	}
+	context->preferredJoysticks[0] = mInputGetPreferredDevice(config, "gba", SDL_BINDING_BUTTON, 0);
+	context->preferredJoysticks[1] = mInputGetPreferredDevice(config, "gba", SDL_BINDING_BUTTON, 1);
+	context->preferredJoysticks[2] = mInputGetPreferredDevice(config, "gba", SDL_BINDING_BUTTON, 2);
+	context->preferredJoysticks[3] = mInputGetPreferredDevice(config, "gba", SDL_BINDING_BUTTON, 3);
 }
 
 void mSDLInitBindingsGBA(struct mInputMap* inputMap) {
+#ifdef BUILD_PANDORA
+	mInputBindKey(inputMap, SDL_BINDING_KEY, SDLK_PAGEDOWN, GBA_KEY_A);
+	mInputBindKey(inputMap, SDL_BINDING_KEY, SDLK_END, GBA_KEY_B);
+	mInputBindKey(inputMap, SDL_BINDING_KEY, SDLK_RSHIFT, GBA_KEY_L);
+	mInputBindKey(inputMap, SDL_BINDING_KEY, SDLK_RCTRL, GBA_KEY_R);
+	mInputBindKey(inputMap, SDL_BINDING_KEY, SDLK_LALT, GBA_KEY_START);
+	mInputBindKey(inputMap, SDL_BINDING_KEY, SDLK_LCTRL, GBA_KEY_SELECT);
+	mInputBindKey(inputMap, SDL_BINDING_KEY, SDLK_UP, GBA_KEY_UP);
+	mInputBindKey(inputMap, SDL_BINDING_KEY, SDLK_DOWN, GBA_KEY_DOWN);
+	mInputBindKey(inputMap, SDL_BINDING_KEY, SDLK_LEFT, GBA_KEY_LEFT);
+	mInputBindKey(inputMap, SDL_BINDING_KEY, SDLK_RIGHT, GBA_KEY_RIGHT);
+#else
 	mInputBindKey(inputMap, SDL_BINDING_KEY, SDLK_x, GBA_KEY_A);
 	mInputBindKey(inputMap, SDL_BINDING_KEY, SDLK_z, GBA_KEY_B);
 	mInputBindKey(inputMap, SDL_BINDING_KEY, SDLK_a, GBA_KEY_L);
@@ -196,51 +139,27 @@ void mSDLInitBindingsGBA(struct mInputMap* inputMap) {
 	mInputBindKey(inputMap, SDL_BINDING_KEY, SDLK_DOWN, GBA_KEY_DOWN);
 	mInputBindKey(inputMap, SDL_BINDING_KEY, SDLK_LEFT, GBA_KEY_LEFT);
 	mInputBindKey(inputMap, SDL_BINDING_KEY, SDLK_RIGHT, GBA_KEY_RIGHT);
+#endif
 
-#if SDL_VERSION_ATLEAST(2, 0, 0)
-	mInputBindKey(inputMap, SDL_BINDING_CONTROLLER, SDL_CONTROLLER_BUTTON_A, GBA_KEY_A);
-	mInputBindKey(inputMap, SDL_BINDING_CONTROLLER, SDL_CONTROLLER_BUTTON_B, GBA_KEY_B);
-	mInputBindKey(inputMap, SDL_BINDING_CONTROLLER, SDL_CONTROLLER_BUTTON_LEFTSHOULDER, GBA_KEY_L);
-	mInputBindKey(inputMap, SDL_BINDING_CONTROLLER, SDL_CONTROLLER_BUTTON_RIGHTSHOULDER, GBA_KEY_R);
-	mInputBindKey(inputMap, SDL_BINDING_CONTROLLER, SDL_CONTROLLER_BUTTON_START, GBA_KEY_START);
-	mInputBindKey(inputMap, SDL_BINDING_CONTROLLER, SDL_CONTROLLER_BUTTON_BACK, GBA_KEY_SELECT);
-	mInputBindKey(inputMap, SDL_BINDING_CONTROLLER, SDL_CONTROLLER_BUTTON_DPAD_UP, GBA_KEY_UP);
-	mInputBindKey(inputMap, SDL_BINDING_CONTROLLER, SDL_CONTROLLER_BUTTON_DPAD_DOWN, GBA_KEY_DOWN);
-	mInputBindKey(inputMap, SDL_BINDING_CONTROLLER, SDL_CONTROLLER_BUTTON_DPAD_LEFT, GBA_KEY_LEFT);
-	mInputBindKey(inputMap, SDL_BINDING_CONTROLLER, SDL_CONTROLLER_BUTTON_DPAD_RIGHT, GBA_KEY_RIGHT);
-
-	struct mInputAxis description = (struct mInputAxis) { GBA_KEY_RIGHT, GBA_KEY_LEFT, 0x4000, -0x4000 };
-	mInputBindAxis(inputMap, SDL_BINDING_CONTROLLER, SDL_CONTROLLER_AXIS_LEFTX, &description);
-	description = (struct mInputAxis) { GBA_KEY_DOWN, GBA_KEY_UP, 0x4000, -0x4000 };
-	mInputBindAxis(inputMap, SDL_BINDING_CONTROLLER, SDL_CONTROLLER_AXIS_LEFTY, &description);
-#else
 	struct mInputAxis description = { GBA_KEY_RIGHT, GBA_KEY_LEFT, 0x4000, -0x4000 };
 	mInputBindAxis(inputMap, SDL_BINDING_BUTTON, 0, &description);
 	description = (struct mInputAxis) { GBA_KEY_DOWN, GBA_KEY_UP, 0x4000, -0x4000 };
 	mInputBindAxis(inputMap, SDL_BINDING_BUTTON, 1, &description);
 
 	mInputBindHat(inputMap, SDL_BINDING_BUTTON, 0, &GBAInputInfo.hat);
-#endif
 }
 
-bool mSDLAttachPlayer(struct mSDLEvents* events, struct mSDLPlayer* player, int playerId) {
+bool mSDLAttachPlayer(struct mSDLEvents* events, struct mSDLPlayer* player) {
 	player->joystick = 0;
 
-	if (playerId < 0) {
-		int i;
-		for (i = 0; i < MAX_PLAYERS; ++i) {
-			if (!events->players[i]) {
-				playerId = i;
-				break;
-			}
-		}
-	} else if (playerId >= MAX_PLAYERS || events->players[playerId]) {
+	if (events->playersAttached >= MAX_PLAYERS) {
 		return false;
 	}
 
 #if SDL_VERSION_ATLEAST(2, 0, 0)
-	mRumbleIntegratorInit(&player->rumble.d);
 	player->rumble.d.setRumble = _mSDLSetRumble;
+	CircleBufferInit(&player->rumble.history, RUMBLE_PWM);
+	player->rumble.level = 0;
 	player->rumble.activeLevel = 0;
 	player->rumble.p = player;
 #endif
@@ -254,12 +173,11 @@ bool mSDLAttachPlayer(struct mSDLEvents* events, struct mSDLPlayer* player, int 
 	player->rotation.gyroSensitivity = 2.2e9f;
 	player->rotation.gyroX = 0;
 	player->rotation.gyroY = 1;
-	player->rotation.gyroZ = -1;
 	player->rotation.zDelta = 0;
-	mCircleBufferInit(&player->rotation.zHistory, sizeof(float) * GYRO_STEPS);
+	CircleBufferInit(&player->rotation.zHistory, sizeof(float) * GYRO_STEPS);
 	player->rotation.p = player;
 
-	player->playerId = playerId;
+	player->playerId = events->playersAttached;
 	events->players[player->playerId] = player;
 	size_t firstUnclaimed = SIZE_MAX;
 	size_t index = SIZE_MAX;
@@ -269,10 +187,7 @@ bool mSDLAttachPlayer(struct mSDLEvents* events, struct mSDLPlayer* player, int 
 		bool claimed = false;
 
 		int p;
-		for (p = 0; p < MAX_PLAYERS; ++p) {
-			if (!events->players[p]) {
-				continue;
-			}
+		for (p = 0; p < events->playersAttached; ++p) {
 			if (events->players[p]->joystick == SDL_JoystickListGetPointer(&events->joysticks, i)) {
 				claimed = true;
 				break;
@@ -286,35 +201,19 @@ bool mSDLAttachPlayer(struct mSDLEvents* events, struct mSDLPlayer* player, int 
 			firstUnclaimed = i;
 		}
 
-		struct SDL_JoystickCombo* joystick = SDL_JoystickListGetPointer(&events->joysticks, i);
 #if SDL_VERSION_ATLEAST(2, 0, 0)
 		char joystickName[34] = {0};
-#if SDL_VERSION_ATLEAST(2, 24, 0)
-		SDL_GUIDToString(SDL_JoystickGetGUID(joystick->joystick), joystickName, sizeof(joystickName));
+		SDL_JoystickGetGUIDString(SDL_JoystickGetGUID(SDL_JoystickListGetPointer(&events->joysticks, i)->joystick), joystickName, sizeof(joystickName));
 #else
-		SDL_JoystickGetGUIDString(SDL_JoystickGetGUID(joystick->joystick), joystickName, sizeof(joystickName));
-#endif
-#if SDL_VERSION_ATLEAST(2, 0, 14)
-		const char* serial = SDL_JoystickGetSerial(joystick->joystick);
-#endif
-#else
-		const char* joystickName = SDL_JoystickName(SDL_JoystickIndex(joystick->joystick));
+		const char* joystickName = SDL_JoystickName(SDL_JoystickIndex(SDL_JoystickListGetPointer(&events->joysticks, i)->joystick));
 		if (!joystickName) {
 			continue;
 		}
 #endif
-
-		if (!events->preferredJoysticks[player->playerId].type || strcmp(events->preferredJoysticks[player->playerId].type, joystickName) != 0) {
-			continue;
+		if (events->preferredJoysticks[player->playerId] && strcmp(events->preferredJoysticks[player->playerId], joystickName) == 0) {
+			index = i;
+			break;
 		}
-
-#if SDL_VERSION_ATLEAST(2, 0, 14)
-		if (events->preferredJoysticks[player->playerId].serial && serial && strcmp(events->preferredJoysticks[player->playerId].serial, serial) != 0) {
-			continue;
-		}
-#endif
-		index = i;
-		break;
 	}
 
 	if (index == SIZE_MAX && firstUnclaimed != SIZE_MAX) {
@@ -324,13 +223,14 @@ bool mSDLAttachPlayer(struct mSDLEvents* events, struct mSDLPlayer* player, int 
 	if (index != SIZE_MAX) {
 		player->joystick = SDL_JoystickListGetPointer(&events->joysticks, index);
 
-#if SDL_VERSION_ATLEAST(2, 0, 0) && !SDL_VERSION_ATLEAST(2, 0, 9)
+#if SDL_VERSION_ATLEAST(2, 0, 0)
 		if (player->joystick->haptic) {
 			SDL_HapticRumbleInit(player->joystick->haptic);
 		}
 #endif
 	}
 
+	++events->playersAttached;
 	return true;
 }
 
@@ -338,30 +238,36 @@ void mSDLDetachPlayer(struct mSDLEvents* events, struct mSDLPlayer* player) {
 	if (player != events->players[player->playerId]) {
 		return;
 	}
-	events->players[player->playerId] = NULL;
-	mCircleBufferDeinit(&player->rotation.zHistory);
+	int i;
+	for (i = player->playerId; i < events->playersAttached; ++i) {
+		if (i + 1 < MAX_PLAYERS) {
+			events->players[i] = events->players[i + 1];
+		}
+		if (i < events->playersAttached - 1) {
+			events->players[i]->playerId = i;
+		}
+	}
+	--events->playersAttached;
+	CircleBufferDeinit(&player->rotation.zHistory);
+#if SDL_VERSION_ATLEAST(2, 0, 0)
+	CircleBufferDeinit(&player->rumble.history);
+#endif
 }
 
 void mSDLPlayerLoadConfig(struct mSDLPlayer* context, const struct Configuration* config) {
 	mInputMapLoad(context->bindings, SDL_BINDING_KEY, config);
 	if (context->joystick) {
-#if SDL_VERSION_ATLEAST(2, 0, 0)
-		mInputMapLoad(context->bindings, SDL_BINDING_CONTROLLER, config);
-		char name[34] = {0};
-#if SDL_VERSION_ATLEAST(2, 24, 0)
-		SDL_GUIDToString(SDL_JoystickGetGUID(context->joystick->joystick), name, sizeof(name));
-#else
-		SDL_JoystickGetGUIDString(SDL_JoystickGetGUID(context->joystick->joystick), name, sizeof(name));
-#endif
-		mInputProfileLoad(context->bindings, SDL_BINDING_CONTROLLER, config, name);
-#else
 		mInputMapLoad(context->bindings, SDL_BINDING_BUTTON, config);
+#if SDL_VERSION_ATLEAST(2, 0, 0)
+		char name[34] = {0};
+		SDL_JoystickGetGUIDString(SDL_JoystickGetGUID(context->joystick->joystick), name, sizeof(name));
+#else
 		const char* name = SDL_JoystickName(SDL_JoystickIndex(context->joystick->joystick));
 		if (!name) {
 			return;
 		}
-		mInputProfileLoad(context->bindings, SDL_BINDING_BUTTON, config, name);
 #endif
+		mInputProfileLoad(context->bindings, SDL_BINDING_BUTTON, config, name);
 
 		const char* value;
 		char* end;
@@ -395,13 +301,6 @@ void mSDLPlayerLoadConfig(struct mSDLPlayer* context, const struct Configuration
 				context->rotation.gyroY = axis;
 			}
 		}
-		value = mInputGetCustomValue(config, "gba", SDL_BINDING_BUTTON, "gyroAxisZ", name);
-		if (value) {
-			axis = strtol(value, &end, 0);
-			if (axis >= 0 && axis < numAxes && end && !*end) {
-				context->rotation.gyroZ = axis;
-			}
-		}
 		value = mInputGetCustomValue(config, "gba", SDL_BINDING_BUTTON, "gyroSensitivity", name);
 		if (value) {
 			float sensitivity = strtof_u(value, &end);
@@ -416,11 +315,7 @@ void mSDLPlayerSaveConfig(const struct mSDLPlayer* context, struct Configuration
 	if (context->joystick) {
 #if SDL_VERSION_ATLEAST(2, 0, 0)
 		char name[34] = {0};
-#if SDL_VERSION_ATLEAST(2, 24, 0)
-		SDL_GUIDToString(SDL_JoystickGetGUID(context->joystick->joystick), name, sizeof(name));
-#else
 		SDL_JoystickGetGUIDString(SDL_JoystickGetGUID(context->joystick->joystick), name, sizeof(name));
-#endif
 #else
 		const char* name = SDL_JoystickName(SDL_JoystickIndex(context->joystick->joystick));
 		if (!name) {
@@ -436,8 +331,6 @@ void mSDLPlayerSaveConfig(const struct mSDLPlayer* context, struct Configuration
 		mInputSetCustomValue(config, "gba", SDL_BINDING_BUTTON, "gyroAxisX", value, name);
 		snprintf(value, sizeof(value), "%i", context->rotation.gyroY);
 		mInputSetCustomValue(config, "gba", SDL_BINDING_BUTTON, "gyroAxisY", value, name);
-		snprintf(value, sizeof(value), "%i", context->rotation.gyroZ);
-		mInputSetCustomValue(config, "gba", SDL_BINDING_BUTTON, "gyroAxisZ", value, name);
 		snprintf(value, sizeof(value), "%g", context->rotation.gyroSensitivity);
 		mInputSetCustomValue(config, "gba", SDL_BINDING_BUTTON, "gyroSensitivity", value, name);
 	}
@@ -450,135 +343,100 @@ void mSDLPlayerChangeJoystick(struct mSDLEvents* events, struct mSDLPlayer* play
 	player->joystick = SDL_JoystickListGetPointer(&events->joysticks, index);
 }
 
-void mSDLPlayerChangeId(struct mSDLEvents* events, struct mSDLPlayer* player, int id) {
-	if (id >= MAX_PLAYERS) {
-		return;
-	}
-	if (player != events->players[player->playerId]) {
-		return;
-	}
-	events->players[player->playerId] = NULL;
-	events->players[id] = player;
-	player->playerId = id;
-}
-
 void mSDLUpdateJoysticks(struct mSDLEvents* events, const struct Configuration* config) {
+	// Pump SDL joystick events without eating the rest of the events
+	SDL_JoystickUpdate();
 #if SDL_VERSION_ATLEAST(2, 0, 0)
-	// Most of what we want is in SDL_JoystickUpdate, but e.g. udev hotplug
-	// is only pumped in SDL_PumpEvents proper
-	SDL_PumpEvents();
 	SDL_Event event;
 	while (SDL_PeepEvents(&event, 1, SDL_GETEVENT, SDL_JOYDEVICEADDED, SDL_JOYDEVICEREMOVED) > 0) {
 		if (event.type == SDL_JOYDEVICEADDED) {
-			ssize_t joysticks[MAX_PLAYERS];
-			ssize_t i;
-			mLOG(SDL_EVENTS, DEBUG, "Joystick attached");
-			// Pointers can get invalidated, so we'll need to refresh them
-			for (i = 0; i < MAX_PLAYERS; ++i) {
-				if (!events->players[i]) {
-					joysticks[i] = -1;
-					continue;
-				}
-				joysticks[i] = events->players[i]->joystick ? (ssize_t) events->players[i]->joystick->index : -1;
-				events->players[i]->joystick = NULL;
-			}
-			struct SDL_JoystickCombo* joystick = _mSDLOpenJoystick(events, event.jdevice.which);
-			if (!joystick) {
-				mLOG(SDL_EVENTS, ERROR, "SDL joystick hotplug attach failed: %s", SDL_GetError());
+			SDL_Joystick* sdlJoystick = SDL_JoystickOpen(event.jdevice.which);
+			if (!sdlJoystick) {
 				continue;
 			}
-
-			// First pass: refresh existing controller pointers
-			for (i = 0; i < MAX_PLAYERS; ++i) {
+			ssize_t joysticks[MAX_PLAYERS];
+			ssize_t i;
+			// Pointers can get invalidated, so we'll need to refresh them
+			for (i = 0; i < events->playersAttached && i < MAX_PLAYERS; ++i) {
+				joysticks[i] = events->players[i]->joystick ? (ssize_t) SDL_JoystickListIndex(&events->joysticks, events->players[i]->joystick) : -1;
+				events->players[i]->joystick = NULL;
+			}
+			struct SDL_JoystickCombo* joystick = SDL_JoystickListAppend(&events->joysticks);
+			joystick->joystick = sdlJoystick;
+			joystick->id = SDL_JoystickInstanceID(joystick->joystick);
+			joystick->index = SDL_JoystickListSize(&events->joysticks) - 1;
+#if SDL_VERSION_ATLEAST(2, 0, 0)
+			joystick->haptic = SDL_HapticOpenFromJoystick(joystick->joystick);
+#endif
+			for (i = 0; i < events->playersAttached && i < MAX_PLAYERS; ++i) {
 				if (joysticks[i] != -1) {
 					events->players[i]->joystick = SDL_JoystickListGetPointer(&events->joysticks, joysticks[i]);
 				}
 			}
 
+#if SDL_VERSION_ATLEAST(2, 0, 0)
 			char joystickName[34] = {0};
-#if SDL_VERSION_ATLEAST(2, 24, 0)
-			SDL_GUIDToString(SDL_JoystickGetGUID(joystick->joystick), joystickName, sizeof(joystickName));
-#else
 			SDL_JoystickGetGUIDString(SDL_JoystickGetGUID(joystick->joystick), joystickName, sizeof(joystickName));
+#else
+			const char* joystickName = SDL_JoystickName(SDL_JoystickIndex(joystick->joystick));
+			if (joystickName)
 #endif
-			// Second pass: see if new controller matches preferred one for any player missing a controller
-			for (i = 0; i < MAX_PLAYERS; ++i) {
-				if (!events->players[i] || events->players[i]->joystick) {
-					continue;
+			{
+				for (i = 0; (int) i < events->playersAttached; ++i) {
+					if (events->players[i]->joystick) {
+						continue;
+					}
+					if (events->preferredJoysticks[i] && strcmp(events->preferredJoysticks[i], joystickName) == 0) {
+						events->players[i]->joystick = joystick;
+						if (config) {
+							mInputProfileLoad(events->players[i]->bindings, SDL_BINDING_BUTTON, config, joystickName);
+						}
+						return;
+					}
 				}
-				if (!events->preferredJoysticks[i].type || strcmp(events->preferredJoysticks[i].type, joystickName) != 0) {
-					continue;
-				}
-				if (events->preferredJoysticks[i].serial && strcmp(events->preferredJoysticks[i].type, joystickName) != 0) {
-					continue;
-				}
-				mLOG(SDL_EVENTS, DEBUG, "Joystick matched player %" PRIz "i preferred device", i + 1);
-				events->players[i]->joystick = joystick;
-				if (config && joystickName[0]) {
-					mInputProfileLoad(events->players[i]->bindings, SDL_BINDING_CONTROLLER, config, joystickName);
-				}
-				return;
 			}
-
-			// Third pass: if not, give it to the first player missing a controller
-			for (i = 0; i < MAX_PLAYERS; ++i) {
-				if (!events->players[i] || events->players[i]->joystick) {
+			for (i = 0; (int) i < events->playersAttached; ++i) {
+				if (events->players[i]->joystick) {
 					continue;
 				}
-				mLOG(SDL_EVENTS, DEBUG, "Unmatched joystick assigned to player %" PRIz "i", i + 1);
 				events->players[i]->joystick = joystick;
-				if (config && joystickName[0]) {
-					mInputProfileLoad(events->players[i]->bindings, SDL_BINDING_CONTROLLER, config, joystickName);
+				if (config
+#if !SDL_VERSION_ATLEAST(2, 0, 0)
+					&& joystickName
+#endif
+					) {
+					mInputProfileLoad(events->players[i]->bindings, SDL_BINDING_BUTTON, config, joystickName);
 				}
 				break;
 			}
 		} else if (event.type == SDL_JOYDEVICEREMOVED) {
 			SDL_JoystickID ids[MAX_PLAYERS] = { 0 };
 			size_t i;
-			int p;
-			mLOG(SDL_EVENTS, INFO, "Joystick ID %i detached", event.jdevice.which);
-			// Invalidate existing pointers in advance
-			for (p = 0; p < MAX_PLAYERS; ++p) {
-				if (events->players[p] && events->players[p]->joystick) {
-					ids[p] = events->players[p]->joystick->id;
-					events->players[p]->joystick = NULL;
-
-					if (ids[p] == event.jdevice.which) {
-						mLOG(SDL_EVENTS, DEBUG, "Removed joystick for player %i", p + 1);
-					}
+			for (i = 0; (int) i < events->playersAttached; ++i) {
+				if (events->players[i]->joystick) {
+					ids[i] = events->players[i]->joystick->id;
+					events->players[i]->joystick = 0;
 				} else {
-					ids[p] = -1;
+					ids[i] = -1;
 				}
 			}
-
-			// First pass: remove joystick from our list
-			for (i = 0; i < SDL_JoystickListSize(&events->joysticks); ++i) {
-				struct SDL_JoystickCombo* joystick = SDL_JoystickListGetPointer(&events->joysticks, i);
-				if (joystick->id != event.jdevice.which) {
-					continue;
-				}
-				SDL_JoystickListShift(&events->joysticks, i, 1);
-				break;
-			}
-
-			// Second pass: refresh existing controller pointers
 			for (i = 0; i < SDL_JoystickListSize(&events->joysticks);) {
 				struct SDL_JoystickCombo* joystick = SDL_JoystickListGetPointer(&events->joysticks, i);
-				joystick->index = i;
-
-				for (p = 0; p < MAX_PLAYERS; ++p) {
+				if (joystick->id == event.jdevice.which) {
+					SDL_JoystickListShift(&events->joysticks, i, 1);
+					continue;
+				}
+				SDL_JoystickListGetPointer(&events->joysticks, i)->index = i;
+				int p;
+				for (p = 0; p < events->playersAttached; ++p) {
 					if (joystick->id == ids[p]) {
 						events->players[p]->joystick = SDL_JoystickListGetPointer(&events->joysticks, i);
-						break;
 					}
 				}
 				++i;
 			}
 		}
 	}
-#else
-	// Pump SDL joystick events without eating the rest of the events
-	SDL_JoystickUpdate();
 #endif
 }
 
@@ -589,15 +447,8 @@ static void _pauseAfterFrame(struct mCoreThread* context) {
 
 static void _mSDLHandleKeypress(struct mCoreThread* context, struct mSDLPlayer* sdlContext, const struct SDL_KeyboardEvent* event) {
 	int key = -1;
-#if SDL_VERSION_ATLEAST(3, 0, 0)
-	SDL_Keycode keycode = event->key;
-	uint16_t modifiers = event->mod;
-#else
-	SDL_Keycode keycode = event->keysym.sym;
-	uint16_t modifiers = event->keysym.mod;
-#endif
-	if (!(modifiers & ~(KMOD_NUM | KMOD_CAPS))) {
-		key = mInputMapKey(sdlContext->bindings, SDL_BINDING_KEY, keycode);
+	if (!(event->keysym.mod & ~(KMOD_NUM | KMOD_CAPS))) {
+		key = mInputMapKey(sdlContext->bindings, SDL_BINDING_KEY, event->keysym.sym);
 	}
 	if (key != -1) {
 		mCoreThreadInterrupt(context);
@@ -609,16 +460,16 @@ static void _mSDLHandleKeypress(struct mCoreThread* context, struct mSDLPlayer* 
 		mCoreThreadContinue(context);
 		return;
 	}
-	if (keycode == SDLK_TAB) {
+	if (event->keysym.sym == SDLK_TAB) {
 		context->impl->sync.audioWait = event->type != SDL_KEYDOWN;
 		return;
 	}
-	if (keycode == SDLK_BACKQUOTE) {
+	if (event->keysym.sym == SDLK_BACKQUOTE) {
 		mCoreThreadSetRewinding(context, event->type == SDL_KEYDOWN);
 	}
 	if (event->type == SDL_KEYDOWN) {
-		switch (keycode) {
-#ifdef ENABLE_DEBUGGERS
+		switch (event->keysym.sym) {
+#ifdef USE_DEBUGGERS
 		case SDLK_F11:
 			if (context->core->debugger) {
 				mDebuggerEnter(context->core->debugger, DEBUGGER_ENTER_MANUAL, NULL);
@@ -635,16 +486,15 @@ static void _mSDLHandleKeypress(struct mCoreThread* context, struct mSDLPlayer* 
 			context->frameCallback = _pauseAfterFrame;
 			mCoreThreadUnpause(context);
 			return;
+#ifdef BUILD_PANDORA
+		case SDLK_ESCAPE:
+			mCoreThreadEnd(context);
+			return;
+#endif
 		default:
-			if ((modifiers & GUI_MOD) && (modifiers & GUI_MOD) == modifiers) {
-				switch (keycode) {
-#if SDL_VERSION_ATLEAST(3, 0, 0)
-				case SDLK_F:
-					sdlContext->fullscreen = !sdlContext->fullscreen;
-					SDL_SetWindowFullscreen(sdlContext->window, sdlContext->fullscreen);
-					sdlContext->windowUpdated = 1;
-					break;
-#elif SDL_VERSION_ATLEAST(2, 0, 0)
+			if ((event->keysym.mod & GUI_MOD) && (event->keysym.mod & GUI_MOD) == event->keysym.mod) {
+				switch (event->keysym.sym) {
+#if SDL_VERSION_ATLEAST(2, 0, 0)
 				case SDLK_f:
 					SDL_SetWindowFullscreen(sdlContext->window, sdlContext->fullscreen ? 0 : SDL_WINDOW_FULLSCREEN_DESKTOP);
 					sdlContext->fullscreen = !sdlContext->fullscreen;
@@ -666,8 +516,8 @@ static void _mSDLHandleKeypress(struct mCoreThread* context, struct mSDLPlayer* 
 					break;
 				}
 			}
-			if (modifiers & KMOD_SHIFT) {
-				switch (keycode) {
+			if (event->keysym.mod & KMOD_SHIFT) {
+				switch (event->keysym.sym) {
 				case SDLK_F1:
 				case SDLK_F2:
 				case SDLK_F3:
@@ -678,14 +528,14 @@ static void _mSDLHandleKeypress(struct mCoreThread* context, struct mSDLPlayer* 
 				case SDLK_F8:
 				case SDLK_F9:
 					mCoreThreadInterrupt(context);
-					mCoreSaveState(context->core, keycode - SDLK_F1 + 1, SAVESTATE_SAVEDATA | SAVESTATE_SCREENSHOT | SAVESTATE_RTC);
+					mCoreSaveState(context->core, event->keysym.sym - SDLK_F1 + 1, SAVESTATE_SAVEDATA | SAVESTATE_SCREENSHOT | SAVESTATE_RTC);
 					mCoreThreadContinue(context);
 					break;
 				default:
 					break;
 				}
 			} else {
-				switch (keycode) {
+				switch (event->keysym.sym) {
 				case SDLK_F1:
 				case SDLK_F2:
 				case SDLK_F3:
@@ -696,7 +546,7 @@ static void _mSDLHandleKeypress(struct mCoreThread* context, struct mSDLPlayer* 
 				case SDLK_F8:
 				case SDLK_F9:
 					mCoreThreadInterrupt(context);
-					mCoreLoadState(context->core, keycode - SDLK_F1 + 1, SAVESTATE_SCREENSHOT | SAVESTATE_RTC);
+					mCoreLoadState(context->core, event->keysym.sym - SDLK_F1 + 1, SAVESTATE_SCREENSHOT | SAVESTATE_RTC);
 					mCoreThreadContinue(context);
 					break;
 				default:
@@ -708,47 +558,6 @@ static void _mSDLHandleKeypress(struct mCoreThread* context, struct mSDLPlayer* 
 	}
 }
 
-#if SDL_VERSION_ATLEAST(2, 0, 0)
-static void _mSDLHandleControllerButton(struct mCoreThread* context, struct mSDLPlayer* sdlContext, const struct SDL_ControllerButtonEvent* event) {
-	int key = 0;
-	key = mInputMapKey(sdlContext->bindings, SDL_BINDING_CONTROLLER, event->button);
-	if (key == -1) {
-		return;
-	}
-
-	mCoreThreadInterrupt(context);
-	if (event->type == SDL_CONTROLLERBUTTONDOWN) {
-		context->core->addKeys(context->core, 1 << key);
-	} else {
-		context->core->clearKeys(context->core, 1 << key);
-	}
-	mCoreThreadContinue(context);
-}
-
-static void _mSDLHandleControllerAxis(struct mCoreThread* context, struct mSDLPlayer* sdlContext, const struct SDL_ControllerAxisEvent* event) {
-	int clearKeys = ~mInputClearAxis(sdlContext->bindings, SDL_BINDING_CONTROLLER, event->axis, -1);
-	int newKeys = 0;
-	int key = mInputMapAxis(sdlContext->bindings, SDL_BINDING_CONTROLLER, event->axis, event->value);
-	if (key != -1) {
-		newKeys |= 1 << key;
-	}
-	clearKeys &= ~newKeys;
-	mCoreThreadInterrupt(context);
-	context->core->clearKeys(context->core, clearKeys);
-	context->core->addKeys(context->core, newKeys);
-	mCoreThreadContinue(context);
-}
-
-#if !SDL_VERSION_ATLEAST(3, 0, 0)
-static void _mSDLHandleWindowEvent(struct mSDLPlayer* sdlContext, const struct SDL_WindowEvent* event) {
-	switch (event->event) {
-	case SDL_WINDOWEVENT_SIZE_CHANGED:
-		sdlContext->windowUpdated = 1;
-		break;
-	}
-}
-#endif
-#else
 static void _mSDLHandleJoyButton(struct mCoreThread* context, struct mSDLPlayer* sdlContext, const struct SDL_JoyButtonEvent* event) {
 	int key = 0;
 	key = mInputMapKey(sdlContext->bindings, SDL_BINDING_BUTTON, event->button);
@@ -791,6 +600,16 @@ static void _mSDLHandleJoyAxis(struct mCoreThread* context, struct mSDLPlayer* s
 	context->core->clearKeys(context->core, clearKeys);
 	context->core->addKeys(context->core, newKeys);
 	mCoreThreadContinue(context);
+
+}
+
+#if SDL_VERSION_ATLEAST(2, 0, 0)
+static void _mSDLHandleWindowEvent(struct mSDLPlayer* sdlContext, const struct SDL_WindowEvent* event) {
+	switch (event->event) {
+	case SDL_WINDOWEVENT_SIZE_CHANGED:
+		sdlContext->windowUpdated = 1;
+		break;
+	}
 }
 #endif
 
@@ -799,33 +618,20 @@ void mSDLHandleEvent(struct mCoreThread* context, struct mSDLPlayer* sdlContext,
 	case SDL_QUIT:
 		mCoreThreadEnd(context);
 		break;
-#if SDL_VERSION_ATLEAST(3, 0, 0)
-	case SDL_EVENT_WINDOW_RESIZED:
-		sdlContext->windowUpdated = 1;
-		break;
-	case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
-	case SDL_EVENT_GAMEPAD_BUTTON_UP:
-		_mSDLHandleControllerButton(context, sdlContext, &event->gbutton);
-		break;
-	case SDL_EVENT_GAMEPAD_AXIS_MOTION:
-		_mSDLHandleControllerAxis(context, sdlContext, &event->gaxis);
-		break;
-#elif SDL_VERSION_ATLEAST(2, 0, 0)
+#if SDL_VERSION_ATLEAST(2, 0, 0)
 	case SDL_WINDOWEVENT:
 		_mSDLHandleWindowEvent(sdlContext, &event->window);
-		break;
-	case SDL_CONTROLLERBUTTONDOWN:
-	case SDL_CONTROLLERBUTTONUP:
-		_mSDLHandleControllerButton(context, sdlContext, &event->cbutton);
-		break;
-	case SDL_CONTROLLERAXISMOTION:
-		_mSDLHandleControllerAxis(context, sdlContext, &event->caxis);
 		break;
 #else
 	case SDL_VIDEORESIZE:
 		sdlContext->newWidth = event->resize.w;
 		sdlContext->newHeight = event->resize.h;
 		sdlContext->windowUpdated = 1;
+		break;
+#endif
+	case SDL_KEYDOWN:
+	case SDL_KEYUP:
+		_mSDLHandleKeypress(context, sdlContext, &event->key);
 		break;
 	case SDL_JOYBUTTONDOWN:
 	case SDL_JOYBUTTONUP:
@@ -837,54 +643,37 @@ void mSDLHandleEvent(struct mCoreThread* context, struct mSDLPlayer* sdlContext,
 	case SDL_JOYAXISMOTION:
 		_mSDLHandleJoyAxis(context, sdlContext, &event->jaxis);
 		break;
-#endif
-	case SDL_KEYDOWN:
-	case SDL_KEYUP:
-		_mSDLHandleKeypress(context, sdlContext, &event->key);
-		break;
 	}
 }
 
 #if SDL_VERSION_ATLEAST(2, 0, 0)
-static void _mSDLSetRumble(struct mRumbleIntegrator* rumble, float level) {
+static void _mSDLSetRumble(struct mRumble* rumble, int enable) {
 	struct mSDLRumble* sdlRumble = (struct mSDLRumble*) rumble;
-	if (!sdlRumble->p->joystick) {
+	if (!sdlRumble->p->joystick || !sdlRumble->p->joystick->haptic || !SDL_HapticRumbleSupported(sdlRumble->p->joystick->haptic)) {
 		return;
 	}
-
-#if !SDL_VERSION_ATLEAST(2, 0, 9)
-	if (!sdlRumble->p->joystick->haptic || !SDL_HapticRumbleSupported(sdlRumble->p->joystick->haptic)) {
+	int8_t originalLevel = sdlRumble->level;
+	sdlRumble->level += enable;
+	if (CircleBufferSize(&sdlRumble->history) == RUMBLE_PWM) {
+		int8_t oldLevel;
+		CircleBufferRead8(&sdlRumble->history, &oldLevel);
+		sdlRumble->level -= oldLevel;
+	}
+	CircleBufferWrite8(&sdlRumble->history, enable);
+	if (sdlRumble->level == originalLevel) {
 		return;
 	}
-#endif
-
-#if SDL_VERSION_ATLEAST(3, 0, 0)
-	if (!sdlRumble->p->joystick->controller || !SDL_GetBooleanProperty(SDL_GetGamepadProperties(sdlRumble->p->joystick->controller), SDL_PROP_GAMEPAD_CAP_RUMBLE_BOOLEAN, false)) {
+	float activeLevel = ceil(RUMBLE_STEPS * sdlRumble->level / (float) RUMBLE_PWM) / RUMBLE_STEPS;
+	if (fabsf(sdlRumble->activeLevel - activeLevel) < 0.75 / RUMBLE_STEPS) {
 		return;
 	}
-#elif SDL_VERSION_ATLEAST(2, 0, 18)
-	if (!sdlRumble->p->joystick->controller || !SDL_GameControllerHasRumble(sdlRumble->p->joystick->controller)) {
-		return;
-	}
-#endif
-
-#if SDL_VERSION_ATLEAST(2, 0, 9)
-	if (sdlRumble->activeLevel > RUMBLE_THRESHOLD || level > RUMBLE_THRESHOLD) {
-		if (sdlRumble->p->joystick->controller) {
-			SDL_GameControllerRumble(sdlRumble->p->joystick->controller, level * 0xFFFF, level * 0xFFFF, 67);
-		} else {
-			SDL_JoystickRumble(sdlRumble->p->joystick->joystick, level * 0xFFFF, level * 0xFFFF, 67);
-		}
-	}
-#else
-	if (sdlRumble->activeLevel > RUMBLE_THRESHOLD || level > RUMBLE_THRESHOLD) {
+	sdlRumble->activeLevel = activeLevel;
+	if (sdlRumble->activeLevel > 0.5 / RUMBLE_STEPS) {
 		SDL_HapticRumbleStop(sdlRumble->p->joystick->haptic);
-		SDL_HapticRumblePlay(sdlRumble->p->joystick->haptic, level, 500);
+		SDL_HapticRumblePlay(sdlRumble->p->joystick->haptic, activeLevel, 500);
 	} else {
 		SDL_HapticRumbleStop(sdlRumble->p->joystick->haptic);
 	}
-#endif
-	sdlRumble->activeLevel = level;
 }
 #endif
 
@@ -897,17 +686,11 @@ static int32_t _readTilt(struct mSDLPlayer* player, int axis) {
 
 static int32_t _mSDLReadTiltX(struct mRotationSource* source) {
 	struct mSDLRotation* rotation = (struct mSDLRotation*) source;
-	if (rotation->axisX < 0) {
-		return rotation->accelX * -0x2000000;
-	}
 	return _readTilt(rotation->p, rotation->axisX);
 }
 
 static int32_t _mSDLReadTiltY(struct mRotationSource* source) {
 	struct mSDLRotation* rotation = (struct mSDLRotation*) source;
-	if (rotation->axisY < 0) {
-		return rotation->accelY * -0x2000000;
-	}
 	return _readTilt(rotation->p, rotation->axisY);
 }
 
@@ -921,34 +704,6 @@ static void _mSDLRotationSample(struct mRotationSource* source) {
 	struct mSDLRotation* rotation = (struct mSDLRotation*) source;
 	SDL_JoystickUpdate();
 	if (!rotation->p->joystick) {
-		return;
-	}
-
-#if SDL_VERSION_ATLEAST(2, 0, 14)
-	if (rotation->p->joystick->controller) {
-		SDL_GameController* controller = rotation->p->joystick->controller;
-		if (SDL_GameControllerHasSensor(controller, SDL_SENSOR_ACCEL)) {
-			float accel[3];
-			int count = SDL_GameControllerGetSensorData(controller, SDL_SENSOR_ACCEL, accel, 3);
-			if (count >= 0) {
-				rotation->accelX = accel[0];
-				rotation->accelY = accel[2];
-				rotation->axisX = -1;
-				rotation->axisY = -1;
-			}
-		}
-		if (SDL_GameControllerHasSensor(controller, SDL_SENSOR_GYRO)) {
-			float theta[3];
-			int count = SDL_GameControllerGetSensorData(controller, SDL_SENSOR_GYRO, theta, 3);
-			if (count >= 0) {
-				rotation->zDelta = theta[1] / -20.f;
-			}
-			return;
-		}
-	}
-#endif
-	if (rotation->gyroZ >= 0) {
-		rotation->zDelta = SDL_JoystickGetAxis(rotation->p->joystick->joystick, rotation->gyroZ) / 2.e5f;
 		return;
 	}
 
@@ -969,10 +724,10 @@ static void _mSDLRotationSample(struct mRotationSource* source) {
 	rotation->oldY = y;
 
 	float oldZ = 0;
-	if (mCircleBufferSize(&rotation->zHistory) == GYRO_STEPS * sizeof(float)) {
-		mCircleBufferRead32(&rotation->zHistory, (int32_t*) &oldZ);
+	if (CircleBufferSize(&rotation->zHistory) == GYRO_STEPS * sizeof(float)) {
+		CircleBufferRead32(&rotation->zHistory, (int32_t*) &oldZ);
 	}
-	mCircleBufferWrite32(&rotation->zHistory, theta.i);
+	CircleBufferWrite32(&rotation->zHistory, theta.i);
 	rotation->zDelta += theta.f - oldZ;
 }
 
@@ -1004,228 +759,4 @@ void mSDLSetScreensaverSuspendable(struct mSDLEvents* events, bool suspendable) 
 		SDL_EnableScreenSaver();
 	}
 }
-
-static const char* const buttonNamesXbox360[SDL_CONTROLLER_BUTTON_MAX] = {
-	[SDL_CONTROLLER_BUTTON_A] = "A",
-	[SDL_CONTROLLER_BUTTON_B] = "B",
-	[SDL_CONTROLLER_BUTTON_X] = "X",
-	[SDL_CONTROLLER_BUTTON_Y] = "Y",
-	[SDL_CONTROLLER_BUTTON_BACK] = "Back",
-	[SDL_CONTROLLER_BUTTON_GUIDE] = "Xbox",
-	[SDL_CONTROLLER_BUTTON_START] = "Start",
-	[SDL_CONTROLLER_BUTTON_LEFTSTICK] = "LS",
-	[SDL_CONTROLLER_BUTTON_RIGHTSTICK] = "RS",
-	[SDL_CONTROLLER_BUTTON_LEFTSHOULDER] = "LB",
-	[SDL_CONTROLLER_BUTTON_RIGHTSHOULDER] = "RB",
-#if SDL_VERSION_ATLEAST(2, 0, 14)
-	[SDL_CONTROLLER_BUTTON_MISC1] = "Misc",
-	[SDL_CONTROLLER_BUTTON_PADDLE1] = "P1",
-	[SDL_CONTROLLER_BUTTON_PADDLE2] = "P2",
-	[SDL_CONTROLLER_BUTTON_PADDLE3] = "P3",
-	[SDL_CONTROLLER_BUTTON_PADDLE4] = "P4",
-	[SDL_CONTROLLER_BUTTON_TOUCHPAD] = "Touch",
-#endif
-};
-
-#if SDL_VERSION_ATLEAST(2, 0, 12)
-static const char* const buttonNamesXboxOne[SDL_CONTROLLER_BUTTON_MAX] = {
-	[SDL_CONTROLLER_BUTTON_A] = "A",
-	[SDL_CONTROLLER_BUTTON_B] = "B",
-	[SDL_CONTROLLER_BUTTON_X] = "X",
-	[SDL_CONTROLLER_BUTTON_Y] = "Y",
-	[SDL_CONTROLLER_BUTTON_BACK] = "View",
-	[SDL_CONTROLLER_BUTTON_GUIDE] = "Xbox",
-	[SDL_CONTROLLER_BUTTON_START] = "Menu",
-	[SDL_CONTROLLER_BUTTON_LEFTSTICK] = "LS",
-	[SDL_CONTROLLER_BUTTON_RIGHTSTICK] = "RS",
-	[SDL_CONTROLLER_BUTTON_LEFTSHOULDER] = "LB",
-	[SDL_CONTROLLER_BUTTON_RIGHTSHOULDER] = "RB",
-#if SDL_VERSION_ATLEAST(2, 0, 14)
-	[SDL_CONTROLLER_BUTTON_MISC1] = "Share",
-	[SDL_CONTROLLER_BUTTON_PADDLE1] = "P1",
-	[SDL_CONTROLLER_BUTTON_PADDLE2] = "P2",
-	[SDL_CONTROLLER_BUTTON_PADDLE3] = "P3",
-	[SDL_CONTROLLER_BUTTON_PADDLE4] = "P4",
-	[SDL_CONTROLLER_BUTTON_TOUCHPAD] = "Touch",
-#endif
-};
-
-static const char* const buttonNamesPlayStation[SDL_CONTROLLER_BUTTON_MAX] = {
-	[SDL_CONTROLLER_BUTTON_A] = "×",
-	[SDL_CONTROLLER_BUTTON_B] = "○",
-	[SDL_CONTROLLER_BUTTON_X] = "□",
-	[SDL_CONTROLLER_BUTTON_Y] = "△",
-	[SDL_CONTROLLER_BUTTON_BACK] = "Share",
-	[SDL_CONTROLLER_BUTTON_GUIDE] = "PS",
-	[SDL_CONTROLLER_BUTTON_START] = "Options",
-	[SDL_CONTROLLER_BUTTON_LEFTSTICK] = "L3",
-	[SDL_CONTROLLER_BUTTON_RIGHTSTICK] = "R3",
-	[SDL_CONTROLLER_BUTTON_LEFTSHOULDER] = "L1",
-	[SDL_CONTROLLER_BUTTON_RIGHTSHOULDER] = "R1",
-#if SDL_VERSION_ATLEAST(2, 0, 14)
-	[SDL_CONTROLLER_BUTTON_MISC1] = "Misc",
-	[SDL_CONTROLLER_BUTTON_PADDLE1] = "P1",
-	[SDL_CONTROLLER_BUTTON_PADDLE2] = "P2",
-	[SDL_CONTROLLER_BUTTON_PADDLE3] = "P3",
-	[SDL_CONTROLLER_BUTTON_PADDLE4] = "P4",
-	[SDL_CONTROLLER_BUTTON_TOUCHPAD] = "Touch",
-#endif
-};
-
-static const char* const buttonNamesNintedo[SDL_CONTROLLER_BUTTON_MAX] = {
-#if SDL_VERSION_ATLEAST(3, 0, 0)
-	[SDL_GAMEPAD_BUTTON_EAST] = "A",
-	[SDL_GAMEPAD_BUTTON_SOUTH] = "B",
-	[SDL_GAMEPAD_BUTTON_NORTH] = "X",
-	[SDL_GAMEPAD_BUTTON_WEST] = "Y",
-#else
-	[SDL_CONTROLLER_BUTTON_A] = "A",
-	[SDL_CONTROLLER_BUTTON_B] = "B",
-	[SDL_CONTROLLER_BUTTON_X] = "X",
-	[SDL_CONTROLLER_BUTTON_Y] = "Y",
-#endif
-	[SDL_CONTROLLER_BUTTON_BACK] = "-",
-	[SDL_CONTROLLER_BUTTON_GUIDE] = "Home",
-	[SDL_CONTROLLER_BUTTON_START] = "+",
-	[SDL_CONTROLLER_BUTTON_LEFTSTICK] = "LS",
-	[SDL_CONTROLLER_BUTTON_RIGHTSTICK] = "RS",
-	[SDL_CONTROLLER_BUTTON_LEFTSHOULDER] = "L",
-	[SDL_CONTROLLER_BUTTON_RIGHTSHOULDER] = "R",
-#if SDL_VERSION_ATLEAST(2, 0, 14)
-	[SDL_CONTROLLER_BUTTON_MISC1] = "Share",
-	[SDL_CONTROLLER_BUTTON_PADDLE1] = "P1",
-	[SDL_CONTROLLER_BUTTON_PADDLE2] = "P2",
-	[SDL_CONTROLLER_BUTTON_PADDLE3] = "P3",
-	[SDL_CONTROLLER_BUTTON_PADDLE4] = "P4",
-	[SDL_CONTROLLER_BUTTON_TOUCHPAD] = "Touch",
-#endif
-};
-
-static const char* const buttonNamesGeneric[SDL_CONTROLLER_BUTTON_MAX] = {
-	[SDL_CONTROLLER_BUTTON_A] = "A",
-	[SDL_CONTROLLER_BUTTON_B] = "B",
-	[SDL_CONTROLLER_BUTTON_X] = "X",
-	[SDL_CONTROLLER_BUTTON_Y] = "Y",
-	[SDL_CONTROLLER_BUTTON_BACK] = "Select",
-	[SDL_CONTROLLER_BUTTON_GUIDE] = "Guide",
-	[SDL_CONTROLLER_BUTTON_START] = "Start",
-	[SDL_CONTROLLER_BUTTON_LEFTSTICK] = "LS",
-	[SDL_CONTROLLER_BUTTON_RIGHTSTICK] = "RS",
-	[SDL_CONTROLLER_BUTTON_LEFTSHOULDER] = "LB",
-	[SDL_CONTROLLER_BUTTON_RIGHTSHOULDER] = "RB",
-#if SDL_VERSION_ATLEAST(2, 0, 14)
-	[SDL_CONTROLLER_BUTTON_MISC1] = "Misc",
-	[SDL_CONTROLLER_BUTTON_PADDLE1] = "P1",
-	[SDL_CONTROLLER_BUTTON_PADDLE2] = "P2",
-	[SDL_CONTROLLER_BUTTON_PADDLE3] = "P3",
-	[SDL_CONTROLLER_BUTTON_PADDLE4] = "P4",
-	[SDL_CONTROLLER_BUTTON_TOUCHPAD] = "Touch",
-#endif
-};
-#endif
-
-const char* mSDLButtonName(SDL_GameController* controller, SDL_GameControllerButton button) {
-	const char* const* buttonNames = buttonNamesXbox360;
-
-#if SDL_VERSION_ATLEAST(2, 0, 12)
-	switch (SDL_GameControllerGetType(controller)) {
-	case SDL_CONTROLLER_TYPE_XBOX360:
-		buttonNames = buttonNamesXbox360;
-		break;
-	case SDL_CONTROLLER_TYPE_XBOXONE:
-		buttonNames = buttonNamesXboxOne;
-		break;
-	case SDL_CONTROLLER_TYPE_PS3:
-	case SDL_CONTROLLER_TYPE_PS4:
-#if SDL_VERSION_ATLEAST(2, 0, 14)
-	case SDL_CONTROLLER_TYPE_PS5:
-#endif
-		buttonNames = buttonNamesPlayStation;
-		break;
-	case SDL_CONTROLLER_TYPE_NINTENDO_SWITCH_PRO:
-		buttonNames = buttonNamesNintedo;
-		break;
-	default:
-		buttonNames = buttonNamesGeneric;
-		break;
-	}
-#endif
-
-	switch (button) {
-	case SDL_CONTROLLER_BUTTON_DPAD_UP:
-		return "D↑";
-	case SDL_CONTROLLER_BUTTON_DPAD_DOWN:
-		return "D↓";
-	case SDL_CONTROLLER_BUTTON_DPAD_LEFT:
-		return "D←";
-	case SDL_CONTROLLER_BUTTON_DPAD_RIGHT:
-		return "D→";
-	default:
-		return buttonNames[button];
-	case SDL_CONTROLLER_BUTTON_INVALID:
-	case SDL_CONTROLLER_BUTTON_MAX:
-		break;
-	}
-	return NULL;
-}
-
-static const char* const axisNamesXbox[SDL_CONTROLLER_AXIS_MAX] = {
-	[SDL_CONTROLLER_AXIS_TRIGGERLEFT] = "LT",
-	[SDL_CONTROLLER_AXIS_TRIGGERRIGHT] = "RT",
-};
-
-#if SDL_VERSION_ATLEAST(2, 0, 12)
-static const char* const axisNamesPlayStation[SDL_CONTROLLER_AXIS_MAX] = {
-	[SDL_CONTROLLER_AXIS_TRIGGERLEFT] = "L3",
-	[SDL_CONTROLLER_AXIS_TRIGGERRIGHT] = "R3",
-};
-
-static const char* const axisNamesNintendo[SDL_CONTROLLER_AXIS_MAX] = {
-	[SDL_CONTROLLER_AXIS_TRIGGERLEFT] = "ZL",
-	[SDL_CONTROLLER_AXIS_TRIGGERRIGHT] = "ZR",
-};
-#endif
-
-const char* mSDLAxisName(SDL_GameController* controller, SDL_GameControllerAxis axis) {
-	const char* const* axisNames = axisNamesXbox;
-
-#if SDL_VERSION_ATLEAST(2, 0, 12)
-	switch (SDL_GameControllerGetType(controller)) {
-	case SDL_CONTROLLER_TYPE_XBOX360:
-	case SDL_CONTROLLER_TYPE_XBOXONE:
-	default:
-		axisNames = axisNamesXbox;
-		break;
-	case SDL_CONTROLLER_TYPE_PS3:
-	case SDL_CONTROLLER_TYPE_PS4:
-#if SDL_VERSION_ATLEAST(2, 0, 14)
-	case SDL_CONTROLLER_TYPE_PS5:
-#endif
-		axisNames = axisNamesPlayStation;
-		break;
-	case SDL_CONTROLLER_TYPE_NINTENDO_SWITCH_PRO:
-		axisNames = axisNamesNintendo;
-		break;
-	}
-#endif
-
-	switch (axis) {
-	case SDL_CONTROLLER_AXIS_LEFTX:
-		return "X";
-	case SDL_CONTROLLER_AXIS_LEFTY:
-		return "Y";
-	case SDL_CONTROLLER_AXIS_RIGHTX:
-		return "RX";
-	case SDL_CONTROLLER_AXIS_RIGHTY:
-		return "RY";
-	case SDL_CONTROLLER_AXIS_TRIGGERLEFT:
-	case SDL_CONTROLLER_AXIS_TRIGGERRIGHT:
-		return axisNames[axis];
-	case SDL_CONTROLLER_AXIS_INVALID:
-	case SDL_CONTROLLER_AXIS_MAX:
-		break;
-	}
-	return NULL;
-}
-
 #endif

@@ -9,7 +9,6 @@
 
 class QLineEdit;
 class QPushButton;
-class QRadioButton;
 
 namespace QGBA {
 
@@ -35,9 +34,6 @@ private:
 
 	QLineEdit* m_portEdit;
 	QLineEdit* m_bindAddressEdit;
-	QRadioButton* m_watchpointsStandardRadio;
-	QRadioButton* m_watchpointsOverrideLogicRadio;
-	QRadioButton* m_watchpointsOverrideLogicAnyWriteRadio;
 	QPushButton* m_startStopButton;
 	QPushButton* m_breakButton;
 };

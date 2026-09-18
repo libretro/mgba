@@ -8,55 +8,94 @@
 #include <mgba/core/config.h>
 #include <mgba-util/vfs.h>
 
-#if defined(ENABLE_VFS) && defined(ENABLE_DIRECTORIES)
+#if !defined(MINIMAL_CORE) || MINIMAL_CORE < 2
 void mDirectorySetInit(struct mDirectorySet* dirs) {
-	dirs->base = NULL;
-	dirs->archive = NULL;
-	dirs->save = NULL;
-	dirs->patch = NULL;
-	dirs->state = NULL;
-	dirs->screenshot = NULL;
-	dirs->cheats = NULL;
-}
-
-static void mDirectorySetDetachDir(struct mDirectorySet* dirs, struct VDir* dir) {
-	if (!dir) {
-		return;
-	}
-
-	if (dirs->base == dir) {
-		dirs->base = NULL;
-	}
-	if (dirs->archive == dir) {
-		dirs->archive = NULL;
-	}
-	if (dirs->save == dir) {
-		dirs->save = NULL;
-	}
-	if (dirs->patch == dir) {
-		dirs->patch = NULL;
-	}
-	if (dirs->state == dir) {
-		dirs->state = NULL;
-	}
-	if (dirs->screenshot == dir) {
-		dirs->screenshot = NULL;
-	}
-	if (dirs->cheats == dir) {
-		dirs->cheats = NULL;
-	}
-
-	dir->close(dir);
+	dirs->base = 0;
+	dirs->archive = 0;
+	dirs->save = 0;
+	dirs->patch = 0;
+	dirs->state = 0;
+	dirs->screenshot = 0;
+	dirs->cheats = 0;
 }
 
 void mDirectorySetDeinit(struct mDirectorySet* dirs) {
 	mDirectorySetDetachBase(dirs);
-	mDirectorySetDetachDir(dirs, dirs->archive);
-	mDirectorySetDetachDir(dirs, dirs->save);
-	mDirectorySetDetachDir(dirs, dirs->patch);
-	mDirectorySetDetachDir(dirs, dirs->state);
-	mDirectorySetDetachDir(dirs, dirs->screenshot);
-	mDirectorySetDetachDir(dirs, dirs->cheats);
+
+	if (dirs->archive) {
+		if (dirs->archive == dirs->save) {
+			dirs->save = NULL;
+		}
+		if (dirs->archive == dirs->patch) {
+			dirs->patch = NULL;
+		}
+		if (dirs->archive == dirs->state) {
+			dirs->state = NULL;
+		}
+		if (dirs->archive == dirs->screenshot) {
+			dirs->screenshot = NULL;
+		}
+		if (dirs->archive == dirs->cheats) {
+			dirs->cheats = NULL;
+		}
+		dirs->archive->close(dirs->archive);
+		dirs->archive = NULL;
+	}
+
+	if (dirs->save) {
+		if (dirs->save == dirs->patch) {
+			dirs->patch = NULL;
+		}
+		if (dirs->save == dirs->state) {
+			dirs->state = NULL;
+		}
+		if (dirs->save == dirs->screenshot) {
+			dirs->screenshot = NULL;
+		}
+		if (dirs->save == dirs->cheats) {
+			dirs->cheats = NULL;
+		}
+		dirs->save->close(dirs->save);
+		dirs->save = NULL;
+	}
+
+	if (dirs->patch) {
+		if (dirs->patch == dirs->state) {
+			dirs->state = NULL;
+		}
+		if (dirs->patch == dirs->screenshot) {
+			dirs->screenshot = NULL;
+		}
+		if (dirs->patch == dirs->cheats) {
+			dirs->cheats = NULL;
+		}
+		dirs->patch->close(dirs->patch);
+		dirs->patch = NULL;
+	}
+
+	if (dirs->state) {
+		if (dirs->state == dirs->screenshot) {
+			dirs->state = NULL;
+		}
+		if (dirs->state == dirs->cheats) {
+			dirs->cheats = NULL;
+		}
+		dirs->state->close(dirs->state);
+		dirs->state = NULL;
+	}
+
+	if (dirs->screenshot) {
+		if (dirs->screenshot == dirs->cheats) {
+			dirs->cheats = NULL;
+		}
+		dirs->screenshot->close(dirs->screenshot);
+		dirs->screenshot = NULL;
+	}
+
+	if (dirs->cheats) {
+		dirs->cheats->close(dirs->cheats);
+		dirs->cheats = NULL;
+	}
 }
 
 void mDirectorySetAttachBase(struct mDirectorySet* dirs, struct VDir* base) {
@@ -79,20 +118,36 @@ void mDirectorySetAttachBase(struct mDirectorySet* dirs, struct VDir* base) {
 }
 
 void mDirectorySetDetachBase(struct mDirectorySet* dirs) {
-	mDirectorySetDetachDir(dirs, dirs->archive);
-	mDirectorySetDetachDir(dirs, dirs->base);
+	if (dirs->save == dirs->base) {
+		dirs->save = NULL;
+	}
+	if (dirs->patch == dirs->base) {
+		dirs->patch = NULL;
+	}
+	if (dirs->state == dirs->base) {
+		dirs->state = NULL;
+	}
+	if (dirs->screenshot == dirs->base) {
+		dirs->screenshot = NULL;
+	}
+	if (dirs->cheats == dirs->base) {
+		dirs->cheats = NULL;
+	}
+
+	if (dirs->base) {
+		dirs->base->close(dirs->base);
+		dirs->base = NULL;
+	}
 }
 
 struct VFile* mDirectorySetOpenPath(struct mDirectorySet* dirs, const char* path, bool (*filter)(struct VFile*)) {
-	struct VDir* archive = VDirOpenArchive(path);
+	dirs->archive = VDirOpenArchive(path);
 	struct VFile* file;
-	if (archive) {
-		file = VDirFindFirst(archive, filter);
+	if (dirs->archive) {
+		file = VDirFindFirst(dirs->archive, filter);
 		if (!file) {
-			archive->close(archive);
-		} else {
-			mDirectorySetDetachDir(dirs, dirs->archive);
-			dirs->archive = archive;
+			dirs->archive->close(dirs->archive);
+			dirs->archive = 0;
 		}
 	} else {
 		file = VFileOpen(path, O_RDONLY);
@@ -110,24 +165,16 @@ struct VFile* mDirectorySetOpenPath(struct mDirectorySet* dirs, const char* path
 }
 
 struct VFile* mDirectorySetOpenSuffix(struct mDirectorySet* dirs, struct VDir* dir, const char* suffix, int mode) {
-	if (!dir) {
-		return NULL;
-	}
 	char name[PATH_MAX + 1] = "";
 	snprintf(name, sizeof(name) - 1, "%s%s", dirs->baseName, suffix);
 	return dir->openFile(dir, name, mode);
 }
 
 void mDirectorySetMapOptions(struct mDirectorySet* dirs, const struct mCoreOptions* opts) {
-	char abspath[PATH_MAX + 1];
-	char configDir[PATH_MAX + 1];
-	mCoreConfigDirectory(configDir, sizeof(configDir));
-
 	if (opts->savegamePath) {
-		makeAbsolute(opts->savegamePath, configDir, abspath);
-		struct VDir* dir = VDirOpen(abspath);
-		if (!dir && VDirCreate(abspath)) {
-			dir = VDirOpen(abspath);
+		struct VDir* dir = VDirOpen(opts->savegamePath);
+		if (!dir && VDirCreate(opts->savegamePath)) {
+			dir = VDirOpen(opts->savegamePath);
 		}
 		if (dir) {
 			if (dirs->save && dirs->save != dirs->base) {
@@ -138,10 +185,9 @@ void mDirectorySetMapOptions(struct mDirectorySet* dirs, const struct mCoreOptio
 	}
 
 	if (opts->savestatePath) {
-		makeAbsolute(opts->savestatePath, configDir, abspath);
-		struct VDir* dir = VDirOpen(abspath);
-		if (!dir && VDirCreate(abspath)) {
-			dir = VDirOpen(abspath);
+		struct VDir* dir = VDirOpen(opts->savestatePath);
+		if (!dir && VDirCreate(opts->savestatePath)) {
+			dir = VDirOpen(opts->savestatePath);
 		}
 		if (dir) {
 			if (dirs->state && dirs->state != dirs->base) {
@@ -152,10 +198,9 @@ void mDirectorySetMapOptions(struct mDirectorySet* dirs, const struct mCoreOptio
 	}
 
 	if (opts->screenshotPath) {
-		makeAbsolute(opts->screenshotPath, configDir, abspath);
-		struct VDir* dir = VDirOpen(abspath);
-		if (!dir && VDirCreate(abspath)) {
-			dir = VDirOpen(abspath);
+		struct VDir* dir = VDirOpen(opts->screenshotPath);
+		if (!dir && VDirCreate(opts->screenshotPath)) {
+			dir = VDirOpen(opts->screenshotPath);
 		}
 		if (dir) {
 			if (dirs->screenshot && dirs->screenshot != dirs->base) {
@@ -166,10 +211,9 @@ void mDirectorySetMapOptions(struct mDirectorySet* dirs, const struct mCoreOptio
 	}
 
 	if (opts->patchPath) {
-		makeAbsolute(opts->patchPath, configDir, abspath);
-		struct VDir* dir = VDirOpen(abspath);
-		if (!dir && VDirCreate(abspath)) {
-			dir = VDirOpen(abspath);
+		struct VDir* dir = VDirOpen(opts->patchPath);
+		if (!dir && VDirCreate(opts->patchPath)) {
+			dir = VDirOpen(opts->patchPath);
 		}
 		if (dir) {
 			if (dirs->patch && dirs->patch != dirs->base) {
@@ -180,10 +224,9 @@ void mDirectorySetMapOptions(struct mDirectorySet* dirs, const struct mCoreOptio
 	}
 
 	if (opts->cheatsPath) {
-		makeAbsolute(opts->cheatsPath, configDir, abspath);
-		struct VDir* dir = VDirOpen(abspath);
-		if (!dir && VDirCreate(abspath)) {
-			dir = VDirOpen(abspath);
+		struct VDir* dir = VDirOpen(opts->cheatsPath);
+		if (!dir && VDirCreate(opts->cheatsPath)) {
+			dir = VDirOpen(opts->cheatsPath);
 		}
 		if (dir) {
 			if (dirs->cheats && dirs->cheats != dirs->base) {

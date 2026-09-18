@@ -23,7 +23,7 @@ class GIFView : public QWidget {
 Q_OBJECT
 
 public:
-	GIFView(std::shared_ptr<CoreController> controller, QWidget* parent = nullptr);
+	GIFView(QWidget* parent = nullptr);
 	virtual ~GIFView();
 
 	mAVStream* getStream() { return &m_encoder.d; }
@@ -41,7 +41,6 @@ signals:
 private slots:
 	void selectFile();
 	void setFilename(const QString&);
-	void changeExtension();
 
 private:
 	Ui::GIFView m_ui;

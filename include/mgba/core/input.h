@@ -43,8 +43,8 @@ struct mInputMap {
 struct mInputAxis {
 	int highDirection;
 	int lowDirection;
-	int16_t deadHigh;
-	int16_t deadLow;
+	int32_t deadHigh;
+	int32_t deadLow;
 };
 
 void mInputMapInit(struct mInputMap*, const struct mInputPlatformInfo* info);
@@ -55,10 +55,8 @@ int mInputMapKeyBits(const struct mInputMap* map, uint32_t type, uint32_t bits, 
 void mInputBindKey(struct mInputMap*, uint32_t type, int key, int input);
 int mInputQueryBinding(const struct mInputMap*, uint32_t type, int input);
 void mInputUnbindKey(struct mInputMap*, uint32_t type, int input);
-void mInputUnbindAllKeys(struct mInputMap*, uint32_t type);
 
-int mInputMapAxis(const struct mInputMap*, uint32_t type, int axis, int16_t value);
-int mInputMapAxisBit(const struct mInputMap*, uint32_t type, int axis, int16_t value);
+int mInputMapAxis(const struct mInputMap*, uint32_t type, int axis, int value);
 int mInputClearAxis(const struct mInputMap*, uint32_t type, int axis, int keys);
 void mInputBindAxis(struct mInputMap*, uint32_t type, int axis, const struct mInputAxis* description);
 void mInputUnbindAxis(struct mInputMap*, uint32_t type, int axis);
@@ -71,18 +69,15 @@ void mInputBindHat(struct mInputMap*, uint32_t type, int id, const struct mInput
 bool mInputQueryHat(const struct mInputMap*, uint32_t type, int id, struct mInputHatBindings* bindings);
 void mInputUnbindHat(struct mInputMap*, uint32_t type, int id);
 void mInputUnbindAllHats(struct mInputMap*, uint32_t type);
-void mInputEnumerateHats(const struct mInputMap*, uint32_t type, void (handler(int hat, const struct mInputHatBindings* bindings, void* user)), void* user);
 
-bool mInputMapLoad(struct mInputMap*, uint32_t type, const struct Configuration*);
+void mInputMapLoad(struct mInputMap*, uint32_t type, const struct Configuration*);
 void mInputMapSave(const struct mInputMap*, uint32_t type, struct Configuration*);
 
 bool mInputProfileLoad(struct mInputMap*, uint32_t type, const struct Configuration*, const char* profile);
 void mInputProfileSave(const struct mInputMap*, uint32_t type, struct Configuration*, const char* profile);
 
-const char* mInputGetPreferredDeviceType(const struct Configuration*, const char* platformName, uint32_t type, int playerId);
-const char* mInputGetPreferredDeviceSerial(const struct Configuration*, const char* platformName, uint32_t type, int playerId);
-void mInputSetPreferredDeviceType(struct Configuration*, const char* platformName, uint32_t type, int playerId, const char* deviceType);
-void mInputSetPreferredDeviceSerial(struct Configuration*, const char* platformName, uint32_t type, int playerId, const char* serial);
+const char* mInputGetPreferredDevice(const struct Configuration*, const char* platformName, uint32_t type, int playerId);
+void mInputSetPreferredDevice(struct Configuration*, const char* platformName, uint32_t type, int playerId, const char* deviceName);
 
 const char* mInputGetCustomValue(const struct Configuration* config, const char* platformName, uint32_t type, const char* key,
                                  const char* profile);

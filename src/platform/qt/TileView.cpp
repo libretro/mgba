@@ -4,13 +4,13 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 #include "TileView.h"
-#include "moc_TileView.cpp"
 
 #include "CoreController.h"
 #include "GBAApp.h"
 
 #include <QAction>
 #include <QClipboard>
+#include <QFontDatabase>
 #include <QTimer>
 
 #ifdef M_CORE_GB
@@ -26,43 +26,22 @@ TileView::TileView(std::shared_ptr<CoreController> controller, QWidget* parent)
 	m_ui.setupUi(this);
 	m_ui.tile->setController(controller);
 
-	connect(m_ui.tiles, &TilePainter::indexPressed, this, [this](int index) {
-		if (m_ui.tilesObj->isChecked()) {
-			switch (m_controller->platform()) {
-#ifdef M_CORE_GBA
-			case mPLATFORM_GBA:
-				index += 2048 >> m_ui.palette256->isChecked();
-				break;
-#endif
-			default:
-				break;
-			}
-		}
-		m_ui.tile->selectIndex(index);
-	});
+	connect(m_ui.tiles, &TilePainter::indexPressed, m_ui.tile, &AssetTile::selectIndex);
 	connect(m_ui.tiles, &TilePainter::needsRedraw, this, [this]() {
-		updateTiles(true);
-	});
-	connect(m_ui.tilesSelector, qOverload<QAbstractButton*>(&QButtonGroup::buttonClicked), this, [this]() {
 		updateTiles(true);
 	});
 	connect(m_ui.paletteId, static_cast<void (QSpinBox::*)(int)>(&QSpinBox::valueChanged), this, &TileView::updatePalette);
 
 	switch (m_controller->platform()) {
 #ifdef M_CORE_GBA
-	case mPLATFORM_GBA:
+	case PLATFORM_GBA:
 		m_ui.tile->setBoundary(2048, 0, 2);
-		m_ui.tile->setMaxTile(3072);
 		break;
 #endif
 #ifdef M_CORE_GB
-	case mPLATFORM_GB:
-		m_ui.tilesBg->setEnabled(false);
-		m_ui.tilesObj->setEnabled(false);
-		m_ui.tilesBoth->setEnabled(false);
+	case PLATFORM_GB:
 		m_ui.palette256->setEnabled(false);
 		m_ui.tile->setBoundary(1024, 0, 0);
-		m_ui.tile->setMaxTile(896);
 		break;
 #endif
 	default:
@@ -75,13 +54,12 @@ TileView::TileView(std::shared_ptr<CoreController> controller, QWidget* parent)
 		}
 		switch (m_controller->platform()) {
 #ifdef M_CORE_GBA
-		case mPLATFORM_GBA:
+		case PLATFORM_GBA:
 			m_ui.tile->setBoundary(2048 >> selected, selected, selected + 2);
-			m_ui.tile->setMaxTile(3072 >> selected);
 			break;
 #endif
 #ifdef M_CORE_GB
-		case mPLATFORM_GB:
+		case PLATFORM_GB:
 			return;
 #endif
 		default:
@@ -130,69 +108,43 @@ TileView::TileView(std::shared_ptr<CoreController> controller, QWidget* parent)
 #ifdef M_CORE_GBA
 void TileView::updateTilesGBA(bool force) {
 	if (m_ui.palette256->isChecked()) {
-		if (m_ui.tilesBg->isChecked()) {
-			m_ui.tiles->setTileCount(1024);
-		} else if (m_ui.tilesObj->isChecked()) {
-			m_ui.tiles->setTileCount(512);
-		} else {
-			m_ui.tiles->setTileCount(1536);
-		}
-		mTileCache* cache;
-		int objOffset = 1024;
-		if (!m_ui.tilesObj->isChecked()) {
-			objOffset = 0;
-			cache = mTileCacheSetGetPointer(&m_cacheSet->tiles, 1);
-			for (int i = 0; i < 1024; ++i) {
-				const mColor* data = mTileCacheGetTileIfDirty(cache, &m_tileStatus[16 * i], i, 0);
-				if (data) {
-					m_ui.tiles->setTile(i, data);
-				} else if (force) {
-					m_ui.tiles->setTile(i, mTileCacheGetTile(cache, i, 0));
-				}
+		m_ui.tiles->setTileCount(1536);
+		mTileCache* cache = mTileCacheSetGetPointer(&m_cacheSet->tiles, 1);
+		for (int i = 0; i < 1024; ++i) {
+			const color_t* data = mTileCacheGetTileIfDirty(cache, &m_tileStatus[16 * i], i, 0);
+			if (data) {
+				m_ui.tiles->setTile(i, data);
+			} else if (force) {
+				m_ui.tiles->setTile(i, mTileCacheGetTile(cache, i, 0));
 			}
 		}
-		if (!m_ui.tilesBg->isChecked()) {
-			cache = mTileCacheSetGetPointer(&m_cacheSet->tiles, 3);
-			for (int i = 1024; i < 1536; ++i) {
-				const mColor* data = mTileCacheGetTileIfDirty(cache, &m_tileStatus[16 * i], i - 1024, 0);
-				if (data) {
-					m_ui.tiles->setTile(i - objOffset, data);
-				} else if (force) {
-					m_ui.tiles->setTile(i - objOffset, mTileCacheGetTile(cache, i - 1024, 0));
-				}
+		cache = mTileCacheSetGetPointer(&m_cacheSet->tiles, 3);
+		for (int i = 1024; i < 1536; ++i) {
+			const color_t* data = mTileCacheGetTileIfDirty(cache, &m_tileStatus[16 * i], i - 1024, 0);
+			if (data) {
+				m_ui.tiles->setTile(i, data);
+			} else if (force) {
+				m_ui.tiles->setTile(i, mTileCacheGetTile(cache, i - 1024, 0));
 			}
 		}
 	} else {
-		if (m_ui.tilesBg->isChecked()) {
-			m_ui.tiles->setTileCount(2048);
-		} else if (m_ui.tilesObj->isChecked()) {
-			m_ui.tiles->setTileCount(1024);
-		} else {
-			m_ui.tiles->setTileCount(3072);
-		}
-		mTileCache* cache;
-		int objOffset = 2048;
-		if (!m_ui.tilesObj->isChecked()) {
-			objOffset = 0;
-			cache = mTileCacheSetGetPointer(&m_cacheSet->tiles, 0);
-			for (int i = 0; i < 2048; ++i) {
-				const mColor* data = mTileCacheGetTileIfDirty(cache, &m_tileStatus[16 * i], i, m_paletteId);
-				if (data) {
-					m_ui.tiles->setTile(i, data);
-				} else if (force) {
-					m_ui.tiles->setTile(i, mTileCacheGetTile(cache, i, m_paletteId));
-				}
+		mTileCache* cache = mTileCacheSetGetPointer(&m_cacheSet->tiles, 0);
+		m_ui.tiles->setTileCount(3072);
+		for (int i = 0; i < 2048; ++i) {
+			const color_t* data = mTileCacheGetTileIfDirty(cache, &m_tileStatus[16 * i], i, m_paletteId);
+			if (data) {
+				m_ui.tiles->setTile(i, data);
+			} else if (force) {
+				m_ui.tiles->setTile(i, mTileCacheGetTile(cache, i, m_paletteId));
 			}
 		}
-		if (!m_ui.tilesBg->isChecked()) {
-			cache = mTileCacheSetGetPointer(&m_cacheSet->tiles, 2);
-			for (int i = 2048; i < 3072; ++i) {
-				const mColor* data = mTileCacheGetTileIfDirty(cache, &m_tileStatus[16 * i], i - 2048, m_paletteId);
-				if (data) {
-					m_ui.tiles->setTile(i - objOffset, data);
-				} else if (force) {
-					m_ui.tiles->setTile(i - objOffset, mTileCacheGetTile(cache, i - 2048, m_paletteId));
-				}
+		cache = mTileCacheSetGetPointer(&m_cacheSet->tiles, 2);
+		for (int i = 2048; i < 3072; ++i) {
+			const color_t* data = mTileCacheGetTileIfDirty(cache, &m_tileStatus[16 * i], i - 2048, m_paletteId);
+			if (data) {
+				m_ui.tiles->setTile(i, data);
+			} else if (force) {
+				m_ui.tiles->setTile(i, mTileCacheGetTile(cache, i - 2048, m_paletteId));
 			}
 		}
 	}
@@ -202,12 +154,11 @@ void TileView::updateTilesGBA(bool force) {
 #ifdef M_CORE_GB
 void TileView::updateTilesGB(bool force) {
 	const GB* gb = static_cast<const GB*>(m_controller->thread()->core->board);
-	// TODO: Strip out tiles 384-511, as they aren't valid
-	int count = gb->model >= GB_MODEL_CGB ? 896 : 384;
+	int count = gb->model >= GB_MODEL_CGB ? 1024 : 512;
 	m_ui.tiles->setTileCount(count);
 	mTileCache* cache = mTileCacheSetGetPointer(&m_cacheSet->tiles, 0);
 	for (int i = 0; i < count; ++i) {
-		const mColor* data = mTileCacheGetTileIfDirty(cache, &m_tileStatus[8 * i], i, m_paletteId);
+		const color_t* data = mTileCacheGetTileIfDirty(cache, &m_tileStatus[8 * i], i, m_paletteId);
 		if (data) {
 			m_ui.tiles->setTile(i, data);
 		} else if (force) {
@@ -250,6 +201,7 @@ void TileView::exportTile() {
 void TileView::copyTiles() {
 	CoreController::Interrupter interrupter(m_controller);
 	updateTiles(false);
+	QPixmap pixmap();
 	GBAApp::app()->clipboard()->setPixmap(m_ui.tiles->backing());
 }
 

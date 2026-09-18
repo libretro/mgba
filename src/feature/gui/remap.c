@@ -21,12 +21,12 @@ void mGUIRemapKeys(struct GUIParams* params, struct mInputMap* map, const struct
 	size_t i;
 	*GUIMenuItemListAppend(&menu.items) = (struct GUIMenuItem) {
 		.title = "Game keys:",
-		.readonly = true,
+		.data = 0,
 	};
 	for (i = 0; i < map->info->nKeys; ++i) {
 		*GUIMenuItemListAppend(&menu.items) = (struct GUIMenuItem) {
 			.title = map->info->keyId[i],
-			.data = GUI_V_U(GUI_INPUT_MAX + i + 1),
+			.data = (void*) (GUI_INPUT_MAX + i + 1),
 			.submenu = 0,
 			.state = mInputQueryBinding(map, keys->id, i) + 1,
 			.validStates = keyNames,
@@ -35,7 +35,7 @@ void mGUIRemapKeys(struct GUIParams* params, struct mInputMap* map, const struct
 	}
 	*GUIMenuItemListAppend(&menu.items) = (struct GUIMenuItem) {
 		.title = "Interface keys:",
-		.readonly = true,
+		.data = 0,
 	};
 	for (i = 0; i < params->keyMap.info->nKeys; ++i) {
 		if (!params->keyMap.info->keyId[i]) {
@@ -43,7 +43,7 @@ void mGUIRemapKeys(struct GUIParams* params, struct mInputMap* map, const struct
 		}
 		*GUIMenuItemListAppend(&menu.items) = (struct GUIMenuItem) {
 			.title = params->keyMap.info->keyId[i],
-			.data = GUI_V_U(i + 1),
+			.data = (void*) i + 1,
 			.submenu = 0,
 			.state = mInputQueryBinding(&params->keyMap, keys->id, i) + 1,
 			.validStates = keyNames,
@@ -52,30 +52,30 @@ void mGUIRemapKeys(struct GUIParams* params, struct mInputMap* map, const struct
 	}
 	*GUIMenuItemListAppend(&menu.items) = (struct GUIMenuItem) {
 		.title = "Save",
-		.data = GUI_V_I(-2),
+		.data = (void*) (GUI_INPUT_MAX + map->info->nKeys + 2),
 	};
 	*GUIMenuItemListAppend(&menu.items) = (struct GUIMenuItem) {
 		.title = "Cancel",
-		.data = GUI_V_I(-1),
+		.data = 0,
 	};
 
 	struct GUIMenuItem* item;
 	while (true) {
 		enum GUIMenuExitReason reason;
 		reason = GUIShowMenu(params, &menu, &item);
-		if (reason != GUI_MENU_EXIT_ACCEPT || GUIVariantCompareInt(item->data, -1)) {
+		if (reason != GUI_MENU_EXIT_ACCEPT || !item->data) {
 			break;
 		}
-		if (GUIVariantCompareInt(item->data, -2)) {
+		if (item->data == (void*) (GUI_INPUT_MAX + map->info->nKeys + 2)) {
 			for (i = 0; i < GUIMenuItemListSize(&menu.items); ++i) {
 				item = GUIMenuItemListGetPointer(&menu.items, i);
-				if (!GUIVariantIsUInt(item->data)) {
+				if ((uintptr_t) item->data < 1) {
 					continue;
 				}
-				if (item->data.v.u < GUI_INPUT_MAX + 1) {
-					mInputBindKey(&params->keyMap, keys->id, item->state - 1, item->data.v.u - 1);
-				} else if (item->data.v.u < GUI_INPUT_MAX + map->info->nKeys + 1) {
-					mInputBindKey(map, keys->id, item->state - 1, item->data.v.u - GUI_INPUT_MAX - 1);
+				if ((uintptr_t) item->data < GUI_INPUT_MAX + 1) {
+					mInputBindKey(&params->keyMap, keys->id, item->state - 1, (uintptr_t) item->data - 1);
+				} else if ((uintptr_t) item->data < GUI_INPUT_MAX + map->info->nKeys + 1) {
+					mInputBindKey(map, keys->id, item->state - 1, (uintptr_t) item->data - GUI_INPUT_MAX - 1);
 				}
 			}
 			break;
@@ -84,5 +84,4 @@ void mGUIRemapKeys(struct GUIParams* params, struct mInputMap* map, const struct
 			// TODO: Open remap menu
 		}
 	}
-	GUIMenuItemListDeinit(&menu.items);
 }

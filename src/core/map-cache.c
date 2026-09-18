@@ -18,7 +18,7 @@ void mMapCacheInit(struct mMapCache* cache) {
 static void _freeCache(struct mMapCache* cache) {
 	size_t tiles = (1 << mMapCacheSystemInfoGetTilesWide(cache->sysConfig)) * (1 << mMapCacheSystemInfoGetTilesHigh(cache->sysConfig));
 	if (cache->cache) {
-		mappedMemoryFree(cache->cache, 8 * 8 * sizeof(mColor) * tiles);
+		mappedMemoryFree(cache->cache, 8 * 8 * sizeof(color_t) * tiles);
 		cache->cache = NULL;
 	}
 	if (cache->status) {
@@ -32,8 +32,8 @@ static void _redoCacheSize(struct mMapCache* cache) {
 		return;
 	}
 
-	size_t tiles = mMapCacheTileCount(cache);
-	cache->cache = anonymousMemoryMap(8 * 8 * sizeof(mColor) * tiles);
+	size_t tiles = (1 << mMapCacheSystemInfoGetTilesWide(cache->sysConfig)) * (1 << mMapCacheSystemInfoGetTilesHigh(cache->sysConfig));
+	cache->cache = anonymousMemoryMap(8 * 8 * sizeof(color_t) * tiles);
 	cache->status = anonymousMemoryMap(tiles * sizeof(*cache->status));
 }
 
@@ -54,12 +54,12 @@ void mMapCacheConfigureSystem(struct mMapCache* cache, mMapCacheSystemInfo confi
 	cache->sysConfig = config;
 	_redoCacheSize(cache);
 
-	size_t mapSize = mMapCacheTileCount(cache);
+	size_t mapSize = (1 << mMapCacheSystemInfoGetTilesWide(cache->sysConfig)) * (1 << mMapCacheSystemInfoGetTilesHigh(cache->sysConfig));
 	cache->mapSize = mapSize << mMapCacheSystemInfoGetMapAlign(cache->sysConfig);
 }
 
 void mMapCacheConfigureMap(struct mMapCache* cache, uint32_t mapStart) {
-	size_t tiles = mMapCacheTileCount(cache);
+	size_t tiles = (1 << mMapCacheSystemInfoGetTilesWide(cache->sysConfig)) * (1 << mMapCacheSystemInfoGetTilesHigh(cache->sysConfig));
 	memset(cache->status, 0, tiles * sizeof(*cache->status));
 	cache->mapStart = mapStart;
 }
@@ -70,36 +70,27 @@ void mMapCacheDeinit(struct mMapCache* cache) {
 
 void mMapCacheWriteVRAM(struct mMapCache* cache, uint32_t address) {
 	if (address >= cache->mapStart && address < cache->mapStart + cache->mapSize) {
-		uint32_t align = 1 << (mMapCacheSystemInfoGetWriteAlign(cache->sysConfig) - mMapCacheSystemInfoGetMapAlign(cache->sysConfig));
 		address -= cache->mapStart;
-		address >>= mMapCacheSystemInfoGetMapAlign(cache->sysConfig);
-
-		uint32_t i;
-		for (i = 0; i < align; ++i) {
-			if (address + i >= (cache->mapSize >> mMapCacheSystemInfoGetMapAlign(cache->sysConfig))) {
-				break;
-			}
-			struct mMapCacheEntry* status = &cache->status[address + i];
-			++status->vramVersion;
-			status->flags = mMapCacheEntryFlagsClearVramClean(status->flags);
-			status->tileStatus[mMapCacheEntryFlagsGetPaletteId(status->flags)].vramClean = 0;
-		}
+		struct mMapCacheEntry* status = &cache->status[address >> mMapCacheSystemInfoGetMapAlign(cache->sysConfig)];
+		++status->vramVersion;
+		status->flags = mMapCacheEntryFlagsClearVramClean(status->flags);
+		status->tileStatus[mMapCacheEntryFlagsGetPaletteId(status->flags)].vramClean = 0;
 	}
 }
 
-static inline void _cleanTile(struct mMapCache* cache, const mColor* tile, mColor* mapOut, const struct mMapCacheEntry* status) {
+static inline void _cleanTile(struct mMapCache* cache, const color_t* tile, color_t* mapOut, const struct mMapCacheEntry* status) {
 	size_t stride = 8 << mMapCacheSystemInfoGetTilesWide(cache->sysConfig);
 	int x, y;
 	switch (mMapCacheEntryFlagsGetMirror(status->flags)) {
 	case 0:
-		memcpy(mapOut, tile, sizeof(mColor) * 8);
-		memcpy(&mapOut[stride], &tile[0x08], sizeof(mColor) * 8);
-		memcpy(&mapOut[stride * 2], &tile[0x10], sizeof(mColor) * 8);
-		memcpy(&mapOut[stride * 3], &tile[0x18], sizeof(mColor) * 8);
-		memcpy(&mapOut[stride * 4], &tile[0x20], sizeof(mColor) * 8);
-		memcpy(&mapOut[stride * 5], &tile[0x28], sizeof(mColor) * 8);
-		memcpy(&mapOut[stride * 6], &tile[0x30], sizeof(mColor) * 8);
-		memcpy(&mapOut[stride * 7], &tile[0x38], sizeof(mColor) * 8);
+		memcpy(mapOut, tile, sizeof(color_t) * 8);
+		memcpy(&mapOut[stride], &tile[0x08], sizeof(color_t) * 8);
+		memcpy(&mapOut[stride * 2], &tile[0x10], sizeof(color_t) * 8);
+		memcpy(&mapOut[stride * 3], &tile[0x18], sizeof(color_t) * 8);
+		memcpy(&mapOut[stride * 4], &tile[0x20], sizeof(color_t) * 8);
+		memcpy(&mapOut[stride * 5], &tile[0x28], sizeof(color_t) * 8);
+		memcpy(&mapOut[stride * 6], &tile[0x30], sizeof(color_t) * 8);
+		memcpy(&mapOut[stride * 7], &tile[0x38], sizeof(color_t) * 8);
 		break;
 	case 1:
 		for (y = 0; y < 8; ++y) {
@@ -109,14 +100,14 @@ static inline void _cleanTile(struct mMapCache* cache, const mColor* tile, mColo
 		}
 		break;
 	case 2:
-		memcpy(&mapOut[stride * 7], tile, sizeof(mColor) * 8);
-		memcpy(&mapOut[stride * 6], &tile[0x08], sizeof(mColor) * 8);
-		memcpy(&mapOut[stride * 5], &tile[0x10], sizeof(mColor) * 8);
-		memcpy(&mapOut[stride * 4], &tile[0x18], sizeof(mColor) * 8);
-		memcpy(&mapOut[stride * 3], &tile[0x20], sizeof(mColor) * 8);
-		memcpy(&mapOut[stride * 2], &tile[0x28], sizeof(mColor) * 8);
-		memcpy(&mapOut[stride], &tile[0x30], sizeof(mColor) * 8);
-		memcpy(mapOut, &tile[0x38], sizeof(mColor) * 8);
+		memcpy(&mapOut[stride * 7], tile, sizeof(color_t) * 8);
+		memcpy(&mapOut[stride * 6], &tile[0x08], sizeof(color_t) * 8);
+		memcpy(&mapOut[stride * 5], &tile[0x10], sizeof(color_t) * 8);
+		memcpy(&mapOut[stride * 4], &tile[0x18], sizeof(color_t) * 8);
+		memcpy(&mapOut[stride * 3], &tile[0x20], sizeof(color_t) * 8);
+		memcpy(&mapOut[stride * 2], &tile[0x28], sizeof(color_t) * 8);
+		memcpy(&mapOut[stride], &tile[0x30], sizeof(color_t) * 8);
+		memcpy(mapOut, &tile[0x38], sizeof(color_t) * 8);
 		break;
 	case 3:
 		for (y = 0; y < 8; ++y) {
@@ -146,7 +137,7 @@ uint32_t mMapCacheTileId(struct mMapCache* cache, unsigned x, unsigned y) {
 void mMapCacheCleanTile(struct mMapCache* cache, struct mMapCacheEntry* entry, unsigned x, unsigned y) {
 	size_t location = mMapCacheTileId(cache, x, y);
 	struct mMapCacheEntry* status = &cache->status[location];
-	const mColor* tile = NULL;
+	const color_t* tile = NULL;
 	if (!mMapCacheEntryFlagsIsVramClean(status->flags)) {
 		status->flags = mMapCacheEntryFlagsFillVramClean(status->flags);
 		cache->mapParser(cache, status, &cache->vram[cache->mapStart + (location << mMapCacheSystemInfoGetMapAlign(cache->sysConfig))]);
@@ -164,7 +155,7 @@ void mMapCacheCleanTile(struct mMapCache* cache, struct mMapCacheEntry* entry, u
 	}
 
 	size_t stride = 8 << mMapCacheSystemInfoGetTilesWide(cache->sysConfig);
-	mColor* mapOut = &cache->cache[(y * stride + x) * 8];
+	color_t* mapOut = &cache->cache[(y * stride + x) * 8];
 	_cleanTile(cache, tile, mapOut, status);
 	entry[location] = *status;
 }
@@ -173,7 +164,7 @@ bool mMapCacheCheckTile(struct mMapCache* cache, const struct mMapCacheEntry* en
 	size_t location = mMapCacheTileId(cache, x, y);
 	struct mMapCacheEntry* status = &cache->status[location];
 	int paletteId = mMapCacheEntryFlagsGetPaletteId(status->flags);
-	const mColor* tile = NULL;
+	const color_t* tile = NULL;
 	if (mMapCacheEntryFlagsIsVramClean(status->flags) && memcmp(status, &entry[location], sizeof(*entry)) == 0) {
 		unsigned tileId = status->tileId + cache->tileStart;
 		if (tileId >= mTileCacheSystemInfoGetMaxTiles(cache->tileCache->sysConfig)) {
@@ -207,13 +198,13 @@ void mMapCacheCleanRow(struct mMapCache* cache, unsigned y) {
 		if (tileId >= mTileCacheSystemInfoGetMaxTiles(cache->tileCache->sysConfig)) {
 			tileId = 0;
 		}
-		const mColor* tile = mTileCacheGetTile(cache->tileCache, tileId, mMapCacheEntryFlagsGetPaletteId(status->flags));
-		mColor* mapOut = &cache->cache[(y * stride + x) * 8];
+		const color_t* tile = mTileCacheGetTile(cache->tileCache, tileId, mMapCacheEntryFlagsGetPaletteId(status->flags));
+		color_t* mapOut = &cache->cache[(y * stride + x) * 8];
 		_cleanTile(cache, tile, mapOut, status);
 	}
 }
 
-const mColor* mMapCacheGetRow(struct mMapCache* cache, unsigned y) {
+const color_t* mMapCacheGetRow(struct mMapCache* cache, unsigned y) {
 	size_t stride = 8 << mMapCacheSystemInfoGetTilesWide(cache->sysConfig);
 	return &cache->cache[y * stride];
 }

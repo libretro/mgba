@@ -1,14 +1,14 @@
+
 /* powerpc_init.c - POWERPC optimised filter functions
  *
- * Copyright (c) 2018 Cosmin Truta
  * Copyright (c) 2017 Glenn Randers-Pehrson
  * Written by Vadim Barkov, 2017.
+ * Last changed in libpng 1.6.29 [March 16, 2017]
  *
  * This code is released under the libpng license.
  * For conditions of distribution and use, see the disclaimer
  * and license in png.h
  */
-
 /* Below, after checking __linux__, various non-C90 POSIX 1003.1 functions are
  * called.
  */
@@ -46,7 +46,7 @@ static int png_have_vsx(png_structp png_ptr);
 #include PNG_POWERPC_VSX_FILE
 
 #else  /* PNG_POWERPC_VSX_FILE */
-#  error PNG_POWERPC_VSX_FILE undefined: no support for run-time POWERPC VSX checks
+#  error "PNG_POWERPC_VSX_FILE undefined: no support for run-time POWERPC VSX checks"
 #endif /* PNG_POWERPC_VSX_FILE */
 #endif /* PNG_POWERPC_VSX_CHECK_SUPPORTED */
 

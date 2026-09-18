@@ -1,11 +1,11 @@
-/* pngconf.h - machine-configurable file for libpng
+
+/* pngconf.h - machine configurable file for libpng
  *
- * libpng version 1.6.51
+ * libpng version 1.6.34, September 29, 2017
  *
- * Copyright (c) 2018-2025 Cosmin Truta
- * Copyright (c) 1998-2002,2004,2006-2016,2018 Glenn Randers-Pehrson
- * Copyright (c) 1996-1997 Andreas Dilger
- * Copyright (c) 1995-1996 Guy Eric Schalnat, Group 42, Inc.
+ * Copyright (c) 1998-2002,2004,2006-2016 Glenn Randers-Pehrson
+ * (Version 0.96 Copyright (c) 1996, 1997 Andreas Dilger)
+ * (Version 0.88 Copyright (c) 1995, 1996 Guy Eric Schalnat, Group 42, Inc.)
  *
  * This code is released under the libpng license.
  * For conditions of distribution and use, see the disclaimer
@@ -57,13 +57,14 @@
 
 #endif /* PNG_BUILDING_SYMBOL_TABLE */
 
-/* Prior to 1.6.0, it was possible to turn off 'const' in declarations,
- * using PNG_NO_CONST.  This is no longer supported.
+/* Prior to 1.6.0 it was possible to turn off 'const' in declarations using
+ * PNG_NO_CONST; this is no longer supported except for data declarations which
+ * apparently still cause problems in 2011 on some compilers.
  */
 #define PNG_CONST const /* backward compatibility only */
 
-/* This controls optimization of the reading of 16-bit and 32-bit
- * values from PNG files.  It can be set on a per-app-file basis: it
+/* This controls optimization of the reading of 16-bit and 32-bit values
+ * from PNG files.  It can be set on a per-app-file basis - it
  * just changes whether a macro is used when the function is called.
  * The library builder sets the default; if read functions are not
  * built into the library the macro implementation is forced on.
@@ -87,7 +88,7 @@
 
 /* The PNGARG macro was used in versions of libpng prior to 1.6.0 to protect
  * against legacy (pre ISOC90) compilers that did not understand function
- * prototypes.  [Deprecated.]
+ * prototypes.  It is not required for modern C compilers.
  */
 #ifndef PNGARG
 #  define PNGARG(arglist) arglist
@@ -126,7 +127,7 @@
  *
  * These cases only differ if the operating system does not use the C
  * calling convention, at present this just means the above cases
- * (x86 DOS/Windows systems) and, even then, this does not apply to
+ * (x86 DOS/Windows sytems) and, even then, this does not apply to
  * Cygwin running on those systems.
  *
  * Note that the value must be defined in pnglibconf.h so that what
@@ -179,8 +180,8 @@
  * compiler-specific macros to the values required to change the calling
  * conventions of the various functions.
  */
-#if defined(_WIN32) || defined(__WIN32__) || defined(__NT__) || \
-    defined(__CYGWIN__)
+#if defined(_Windows) || defined(_WINDOWS) || defined(WIN32) ||\
+    defined(_WIN32) || defined(__WIN32__) || defined(__CYGWIN__)
   /* Windows system (DOS doesn't support DLLs).  Includes builds under Cygwin or
    * MinGW on any architecture currently supported by Windows.  Also includes
    * Watcom builds but these need special treatment because they are not
@@ -219,13 +220,25 @@
   /* NOTE: PNGCBAPI always defaults to PNGCAPI. */
 
 #  if defined(PNGAPI) && !defined(PNG_USER_PRIVATEBUILD)
-#     error PNG_USER_PRIVATEBUILD must be defined if PNGAPI is changed
+#     error "PNG_USER_PRIVATEBUILD must be defined if PNGAPI is changed"
 #  endif
 
-#  define PNG_DLL_EXPORT __declspec(dllexport)
-#  ifndef PNG_DLL_IMPORT
-#    define PNG_DLL_IMPORT __declspec(dllimport)
-#  endif
+#  if (defined(_MSC_VER) && _MSC_VER < 800) ||\
+      (defined(__BORLANDC__) && __BORLANDC__ < 0x500)
+   /* older Borland and MSC
+    * compilers used '__export' and required this to be after
+    * the type.
+    */
+#    ifndef PNG_EXPORT_TYPE
+#      define PNG_EXPORT_TYPE(type) type PNG_IMPEXP
+#    endif
+#    define PNG_DLL_EXPORT __export
+#  else /* newer compiler */
+#    define PNG_DLL_EXPORT __declspec(dllexport)
+#    ifndef PNG_DLL_IMPORT
+#      define PNG_DLL_IMPORT __declspec(dllimport)
+#    endif
+#  endif /* compiler */
 
 #else /* !Windows */
 #  if (defined(__IBMC__) || defined(__IBMCPP__)) && defined(__OS2__)
@@ -285,7 +298,7 @@
 
 #ifndef PNG_EXPORTA
 #  define PNG_EXPORTA(ordinal, type, name, args, attributes) \
-      PNG_FUNCTION(PNG_EXPORT_TYPE(type), (PNGAPI name), args, \
+      PNG_FUNCTION(PNG_EXPORT_TYPE(type), (PNGAPI name), PNGARG(args), \
       PNG_LINKAGE_API attributes)
 #endif
 
@@ -303,7 +316,7 @@
 #endif
 
 #ifndef PNG_CALLBACK
-#  define PNG_CALLBACK(type, name, args) type (PNGCBAPI name) args
+#  define PNG_CALLBACK(type, name, args) type (PNGCBAPI name) PNGARG(args)
 #endif
 
 /* Support for compiler specific function attributes.  These are used
@@ -467,7 +480,7 @@
 #if CHAR_BIT == 8 && UCHAR_MAX == 255
    typedef unsigned char png_byte;
 #else
-#  error libpng requires 8-bit bytes
+#  error "libpng requires 8-bit bytes"
 #endif
 
 #if INT_MIN == -32768 && INT_MAX == 32767
@@ -475,7 +488,7 @@
 #elif SHRT_MIN == -32768 && SHRT_MAX == 32767
    typedef short png_int_16;
 #else
-#  error libpng requires a signed 16-bit integer type
+#  error "libpng requires a signed 16-bit type"
 #endif
 
 #if UINT_MAX == 65535
@@ -483,7 +496,7 @@
 #elif USHRT_MAX == 65535
    typedef unsigned short png_uint_16;
 #else
-#  error libpng requires an unsigned 16-bit integer type
+#  error "libpng requires an unsigned 16-bit type"
 #endif
 
 #if INT_MIN < -2147483646 && INT_MAX > 2147483646
@@ -491,7 +504,7 @@
 #elif LONG_MIN < -2147483646 && LONG_MAX > 2147483646
    typedef long int png_int_32;
 #else
-#  error libpng requires a signed 32-bit (or longer) integer type
+#  error "libpng requires a signed 32-bit (or more) type"
 #endif
 
 #if UINT_MAX > 4294967294U
@@ -499,13 +512,11 @@
 #elif ULONG_MAX > 4294967294U
    typedef unsigned long int png_uint_32;
 #else
-#  error libpng requires an unsigned 32-bit (or longer) integer type
+#  error "libpng requires an unsigned 32-bit (or more) type"
 #endif
 
-/* Prior to 1.6.0, it was possible to disable the use of size_t and ptrdiff_t.
- * From 1.6.0 onwards, an ISO C90 compiler, as well as a standard-compliant
- * behavior of sizeof and ptrdiff_t are required.
- * The legacy typedefs are provided here for backwards compatibility.
+/* Prior to 1.6.0 it was possible to disable the use of size_t, 1.6.0, however,
+ * requires an ISOC90 compiler and relies on consistent behavior of sizeof.
  */
 typedef size_t png_size_t;
 typedef ptrdiff_t png_ptrdiff_t;
@@ -526,12 +537,13 @@ typedef ptrdiff_t png_ptrdiff_t;
 #  endif
 #endif
 
-/* png_alloc_size_t is guaranteed to be no smaller than size_t, and no smaller
- * than png_uint_32.  Casts from size_t or png_uint_32 to png_alloc_size_t are
- * not necessary; in fact, it is recommended not to use them at all, so that
- * the compiler can complain when something turns out to be problematic.
+/* png_alloc_size_t is guaranteed to be no smaller than png_size_t, and no
+ * smaller than png_uint_32.  Casts from png_size_t or png_uint_32 to
+ * png_alloc_size_t are not necessary; in fact, it is recommended not to use
+ * them at all so that the compiler can complain when something turns out to be
+ * problematic.
  *
- * Casts in the other direction (from png_alloc_size_t to size_t or
+ * Casts in the other direction (from png_alloc_size_t to png_size_t or
  * png_uint_32) should be explicitly applied; however, we do not expect to
  * encounter practical situations that require such conversions.
  *
@@ -541,7 +553,7 @@ typedef ptrdiff_t png_ptrdiff_t;
 #ifdef PNG_SMALL_SIZE_T
    typedef png_uint_32 png_alloc_size_t;
 #else
-   typedef size_t png_alloc_size_t;
+   typedef png_size_t png_alloc_size_t;
 #endif
 
 /* Prior to 1.6.0 libpng offered limited support for Microsoft C compiler
@@ -577,8 +589,12 @@ typedef char                  * png_charp;
 typedef const char            * png_const_charp;
 typedef png_fixed_point       * png_fixed_point_p;
 typedef const png_fixed_point * png_const_fixed_point_p;
-typedef size_t                * png_size_tp;
-typedef const size_t          * png_const_size_tp;
+typedef png_size_t            * png_size_tp;
+typedef const png_size_t      * png_const_size_tp;
+
+#ifdef PNG_STDIO_SUPPORTED
+typedef FILE            * png_FILE_p;
+#endif
 
 #ifdef PNG_FLOATING_POINT_SUPPORTED
 typedef double       * png_doublep;
@@ -600,15 +616,6 @@ typedef double          * * png_doublepp;
 
 /* Pointers to pointers to pointers; i.e., pointer to array */
 typedef char            * * * png_charppp;
-
-#ifdef PNG_STDIO_SUPPORTED
-/* With PNG_STDIO_SUPPORTED it was possible to use I/O streams that were
- * not necessarily stdio FILE streams, to allow building Windows applications
- * before Win32 and Windows CE applications before WinCE 3.0, but that kind
- * of support has long been discontinued.
- */
-typedef FILE            * png_FILE_p; /* [Deprecated] */
-#endif
 
 #endif /* PNG_BUILDING_SYMBOL_TABLE */
 

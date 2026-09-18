@@ -9,7 +9,7 @@
 #include <psp2/kernel/threadmgr.h>
 
 typedef SceUID Thread;
-typedef SceKernelLwMutexWork Mutex;
+typedef SceUID Mutex;
 typedef struct {
 	Mutex mutex;
 	SceUID semaphore;
@@ -17,26 +17,30 @@ typedef struct {
 } Condition;
 #define THREAD_ENTRY int
 typedef THREAD_ENTRY (*ThreadEntry)(void*);
-#define THREAD_EXIT(RES) return RES
 
 static inline int MutexInit(Mutex* mutex) {
-	return sceKernelCreateLwMutex(mutex, "mutex", 0, 0, 0);
+	Mutex id = sceKernelCreateMutex("mutex", 0, 0, 0);
+	if (id < 0) {
+		return id;
+	}
+	*mutex = id;
+	return 0;
 }
 
 static inline int MutexDeinit(Mutex* mutex) {
-	return sceKernelDeleteLwMutex(mutex);
+	return sceKernelDeleteMutex(*mutex);
 }
 
 static inline int MutexLock(Mutex* mutex) {
-	return sceKernelLockLwMutex(mutex, 1, 0);
+	return sceKernelLockMutex(*mutex, 1, 0);
 }
 
 static inline int MutexTryLock(Mutex* mutex) {
-	return sceKernelTryLockLwMutex(mutex, 1);
+	return sceKernelTryLockMutex(*mutex, 1);
 }
 
 static inline int MutexUnlock(Mutex* mutex) {
-	return sceKernelUnlockLwMutex(mutex, 1);
+	return sceKernelUnlockMutex(*mutex, 1);
 }
 
 static inline int ConditionInit(Condition* cond) {
@@ -139,23 +143,4 @@ static inline int ThreadSetName(const char* name) {
 	UNUSED(name);
 	return -1;
 }
-
-#if (__STDC_VERSION__ < 201112L) || (__STDC_NO_THREADS__ == 1)
-typedef int ThreadLocal;
-
-static inline void ThreadLocalInitKey(ThreadLocal* key) {
-	static int base = 0x90;
-	*key = __atomic_fetch_add(&base, 1, __ATOMIC_SEQ_CST);
-}
-
-static inline void ThreadLocalSetKey(ThreadLocal key, void* value) {
-	void** tls = sceKernelGetTLSAddr(key);
-	*tls = value;
-}
-
-static inline void* ThreadLocalGetValue(ThreadLocal key) {
-	void** tls = sceKernelGetTLSAddr(key);
-	return *tls;
-}
-#endif
 #endif

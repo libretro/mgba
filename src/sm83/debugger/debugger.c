@@ -11,57 +11,52 @@
 #include <mgba/internal/sm83/sm83.h>
 #include <mgba/internal/sm83/debugger/memory-debugger.h>
 
-static void _destroyBreakpoint(struct mDebugger* debugger, struct mBreakpoint* breakpoint) {
-	if (breakpoint->condition) {
-		parseFree(breakpoint->condition);
+static struct mBreakpoint* _lookupBreakpoint(struct mBreakpointList* breakpoints, struct SM83Core* cpu) {
+	size_t i;
+	for (i = 0; i < mBreakpointListSize(breakpoints); ++i) {
+		struct mBreakpoint* breakpoint = mBreakpointListGetPointer(breakpoints, i);
+		if (breakpoint->address != cpu->pc) {
+			continue;
+		}
+		if (breakpoint->segment < 0 || breakpoint->segment == cpu->memory.currentSegment(cpu, breakpoint->address)) {
+			return breakpoint;
+		}
 	}
-	TableRemove(&debugger->pointOwner, breakpoint->id);
+	return NULL;
 }
 
-static void _destroyWatchpoint(struct mDebugger* debugger, struct mWatchpoint* watchpoint) {
+static void _destroyBreakpoint(struct mBreakpoint* breakpoint) {
+	if (breakpoint->condition) {
+		parseFree(breakpoint->condition);
+		free(breakpoint->condition);
+	}
+}
+
+static void _destroyWatchpoint(struct mWatchpoint* watchpoint) {
 	if (watchpoint->condition) {
 		parseFree(watchpoint->condition);
+		free(watchpoint->condition);
 	}
-	TableRemove(&debugger->pointOwner, watchpoint->id);
 }
 
 static void SM83DebuggerCheckBreakpoints(struct mDebuggerPlatform* d) {
 	struct SM83Debugger* debugger = (struct SM83Debugger*) d;
-	struct SM83Core* cpu = debugger->cpu;
-
-	size_t i;
-	for (i = 0; i < mBreakpointListSize(&debugger->breakpoints); ++i) {
-		struct mBreakpoint* breakpoint = mBreakpointListGetPointer(&debugger->breakpoints, i);
-		if (breakpoint->disabled) {
-			continue;
-		}
-		int segment = cpu->memory.currentSegment(cpu, breakpoint->address);
-		if (breakpoint->address != cpu->pc) {
-			continue;
-		}
-		if (breakpoint->segment >= 0 && breakpoint->segment != segment) {
-			continue;
-		}
-		if (breakpoint->condition) {
-			int32_t value;
-			int segment;
-			if (!mDebuggerEvaluateParseTree(d->p, breakpoint->condition, &value, &segment) || !(value || segment >= 0)) {
-				continue;
-			}
-		}
-		struct mDebuggerEntryInfo info = {
-			.address = breakpoint->address,
-			.segment = segment,
-			.pointId = breakpoint->id,
-			.target = TableLookup(&d->p->pointOwner, breakpoint->id)
-		};
-		mDebuggerEnter(d->p, DEBUGGER_ENTER_BREAKPOINT, &info);
-		if (breakpoint->isTemporary) {
-			_destroyBreakpoint(debugger->d.p, breakpoint);
-			mBreakpointListShift(&debugger->breakpoints, i, 1);
-			--i;
+	struct mBreakpoint* breakpoint = _lookupBreakpoint(&debugger->breakpoints, debugger->cpu);
+	if (!breakpoint) {
+		return;
+	}
+	if (breakpoint->condition) {
+		int32_t value;
+		int segment;
+		if (!mDebuggerEvaluateParseTree(d->p, breakpoint->condition, &value, &segment) || !(value || segment >= 0)) {
+			return;
 		}
 	}
+	struct mDebuggerEntryInfo info = {
+		.address = breakpoint->address,
+		.pointId = breakpoint->id
+	};
+	mDebuggerEnter(d->p, DEBUGGER_ENTER_BREAKPOINT, &info);
 }
 
 static void SM83DebuggerInit(void* cpu, struct mDebuggerPlatform* platform);
@@ -69,16 +64,16 @@ static void SM83DebuggerDeinit(struct mDebuggerPlatform* platform);
 
 static void SM83DebuggerEnter(struct mDebuggerPlatform* d, enum mDebuggerEntryReason reason, struct mDebuggerEntryInfo* info);
 
-static ssize_t SM83DebuggerSetBreakpoint(struct mDebuggerPlatform*, struct mDebuggerModule* owner, const struct mBreakpoint*);
-static void SM83DebuggerListBreakpoints(struct mDebuggerPlatform*, struct mDebuggerModule* owner, struct mBreakpointList*);
+static ssize_t SM83DebuggerSetBreakpoint(struct mDebuggerPlatform*, const struct mBreakpoint*);
+static void SM83DebuggerListBreakpoints(struct mDebuggerPlatform*, struct mBreakpointList*);
 static bool SM83DebuggerClearBreakpoint(struct mDebuggerPlatform*, ssize_t id);
-static bool SM83DebuggerToggleBreakpoint(struct mDebuggerPlatform*, ssize_t id, bool status);
-static ssize_t SM83DebuggerSetWatchpoint(struct mDebuggerPlatform*, struct mDebuggerModule* owner, const struct mWatchpoint*);
-static void SM83DebuggerListWatchpoints(struct mDebuggerPlatform*, struct mDebuggerModule* owner, struct mWatchpointList*);
+static ssize_t SM83DebuggerSetWatchpoint(struct mDebuggerPlatform*, const struct mWatchpoint*);
+static void SM83DebuggerListWatchpoints(struct mDebuggerPlatform*, struct mWatchpointList*);
 static void SM83DebuggerCheckBreakpoints(struct mDebuggerPlatform*);
 static bool SM83DebuggerHasBreakpoints(struct mDebuggerPlatform*);
 static void SM83DebuggerTrace(struct mDebuggerPlatform*, char* out, size_t* length);
-static void SM83DebuggerNextInstructionInfo(struct mDebuggerPlatform* d, struct mDebuggerInstructionInfo* info);
+static bool SM83DebuggerGetRegister(struct mDebuggerPlatform*, const char* name, int32_t* value);
+static bool SM83DebuggerSetRegister(struct mDebuggerPlatform*, const char* name, int32_t value);
 
 struct mDebuggerPlatform* SM83DebuggerPlatformCreate(void) {
 	struct SM83Debugger* platform = malloc(sizeof(struct SM83Debugger));
@@ -88,16 +83,13 @@ struct mDebuggerPlatform* SM83DebuggerPlatformCreate(void) {
 	platform->d.setBreakpoint = SM83DebuggerSetBreakpoint;
 	platform->d.listBreakpoints = SM83DebuggerListBreakpoints;
 	platform->d.clearBreakpoint = SM83DebuggerClearBreakpoint;
-	platform->d.toggleBreakpoint = SM83DebuggerToggleBreakpoint;
 	platform->d.setWatchpoint = SM83DebuggerSetWatchpoint;
 	platform->d.listWatchpoints = SM83DebuggerListWatchpoints;
 	platform->d.checkBreakpoints = SM83DebuggerCheckBreakpoints;
 	platform->d.hasBreakpoints = SM83DebuggerHasBreakpoints;
 	platform->d.trace = SM83DebuggerTrace;
-	platform->d.getStackTraceMode = NULL;
-	platform->d.setStackTraceMode = NULL;
-	platform->d.updateStackTrace = NULL;
-	platform->d.nextInstructionInfo = SM83DebuggerNextInstructionInfo;
+	platform->d.getRegister = SM83DebuggerGetRegister;
+	platform->d.setRegister = SM83DebuggerSetRegister;
 	platform->printStatus = NULL;
 	return &platform->d;
 }
@@ -115,12 +107,12 @@ void SM83DebuggerDeinit(struct mDebuggerPlatform* platform) {
 	struct SM83Debugger* debugger = (struct SM83Debugger*) platform;
 	size_t i;
 	for (i = 0; i < mBreakpointListSize(&debugger->breakpoints); ++i) {
-		_destroyBreakpoint(debugger->d.p, mBreakpointListGetPointer(&debugger->breakpoints, i));
+		_destroyBreakpoint(mBreakpointListGetPointer(&debugger->breakpoints, i));
 	}
 	mBreakpointListDeinit(&debugger->breakpoints);
 
 	for (i = 0; i < mWatchpointListSize(&debugger->watchpoints); ++i) {
-		_destroyWatchpoint(debugger->d.p, mWatchpointListGetPointer(&debugger->watchpoints, i));
+		_destroyWatchpoint(mWatchpointListGetPointer(&debugger->watchpoints, i));
 	}
 	mWatchpointListDeinit(&debugger->watchpoints);
 }
@@ -131,16 +123,20 @@ static void SM83DebuggerEnter(struct mDebuggerPlatform* platform, enum mDebugger
 	struct SM83Debugger* debugger = (struct SM83Debugger*) platform;
 	struct SM83Core* cpu = debugger->cpu;
 	cpu->nextEvent = cpu->cycles;
+
+	if (debugger->d.p->entered) {
+		debugger->d.p->entered(debugger->d.p, reason, info);
+	}
 }
 
-static ssize_t SM83DebuggerSetBreakpoint(struct mDebuggerPlatform* d, struct mDebuggerModule* owner, const struct mBreakpoint* info) {
+static ssize_t SM83DebuggerSetBreakpoint(struct mDebuggerPlatform* d, const struct mBreakpoint* info) {
 	struct SM83Debugger* debugger = (struct SM83Debugger*) d;
 	struct mBreakpoint* breakpoint = mBreakpointListAppend(&debugger->breakpoints);
 	*breakpoint = *info;
 	breakpoint->id = debugger->nextId;
-	TableInsert(&debugger->d.p->pointOwner, breakpoint->id, owner);
 	++debugger->nextId;
 	return breakpoint->id;
+
 }
 
 static bool SM83DebuggerClearBreakpoint(struct mDebuggerPlatform* d, ssize_t id) {
@@ -151,7 +147,7 @@ static bool SM83DebuggerClearBreakpoint(struct mDebuggerPlatform* d, ssize_t id)
 	for (i = 0; i < mBreakpointListSize(breakpoints); ++i) {
 		struct mBreakpoint* breakpoint = mBreakpointListGetPointer(breakpoints, i);
 		if (breakpoint->id == id) {
-			_destroyBreakpoint(debugger->d.p, breakpoint);
+			_destroyBreakpoint(breakpoint);
 			mBreakpointListShift(breakpoints, i, 1);
 			return true;
 		}
@@ -161,35 +157,11 @@ static bool SM83DebuggerClearBreakpoint(struct mDebuggerPlatform* d, ssize_t id)
 	for (i = 0; i < mWatchpointListSize(watchpoints); ++i) {
 		struct mWatchpoint* watchpoint = mWatchpointListGetPointer(watchpoints, i);
 		if (watchpoint->id == id) {
-			_destroyWatchpoint(debugger->d.p, watchpoint);
+			_destroyWatchpoint(watchpoint);
 			mWatchpointListShift(watchpoints, i, 1);
 			if (!mWatchpointListSize(&debugger->watchpoints)) {
 				SM83DebuggerRemoveMemoryShim(debugger);
 			}
-			return true;
-		}
-	}
-	return false;
-}
-
-static bool SM83DebuggerToggleBreakpoint(struct mDebuggerPlatform* d, ssize_t id, bool status) {
-	struct SM83Debugger* debugger = (struct SM83Debugger*) d;
-	size_t i;
-
-	struct mBreakpointList* breakpoints = &debugger->breakpoints;
-	for (i = 0; i < mBreakpointListSize(breakpoints); ++i) {
-		struct mBreakpoint* breakpoint = mBreakpointListGetPointer(breakpoints, i);
-		if (breakpoint->id == id) {
-			breakpoint->disabled = !status;
-			return true;
-		}
-	}
-
-	struct mWatchpointList* watchpoints = &debugger->watchpoints;
-	for (i = 0; i < mWatchpointListSize(watchpoints); ++i) {
-		struct mWatchpoint* watchpoint = mWatchpointListGetPointer(watchpoints, i);
-		if (watchpoint->id == id) {
-			watchpoint->disabled = !status;
 			return true;
 		}
 	}
@@ -201,7 +173,7 @@ static bool SM83DebuggerHasBreakpoints(struct mDebuggerPlatform* d) {
 	return mBreakpointListSize(&debugger->breakpoints) || mWatchpointListSize(&debugger->watchpoints);
 }
 
-static ssize_t SM83DebuggerSetWatchpoint(struct mDebuggerPlatform* d, struct mDebuggerModule* owner, const struct mWatchpoint* info) {
+static ssize_t SM83DebuggerSetWatchpoint(struct mDebuggerPlatform* d, const struct mWatchpoint* info) {
 	struct SM83Debugger* debugger = (struct SM83Debugger*) d;
 	if (!mWatchpointListSize(&debugger->watchpoints)) {
 		SM83DebuggerInstallMemoryShim(debugger);
@@ -209,43 +181,20 @@ static ssize_t SM83DebuggerSetWatchpoint(struct mDebuggerPlatform* d, struct mDe
 	struct mWatchpoint* watchpoint = mWatchpointListAppend(&debugger->watchpoints);
 	*watchpoint = *info;
 	watchpoint->id = debugger->nextId;
-	TableInsert(&debugger->d.p->pointOwner, watchpoint->id, owner);
 	++debugger->nextId;
 	return watchpoint->id;
 }
 
-static void SM83DebuggerListBreakpoints(struct mDebuggerPlatform* d, struct mDebuggerModule* owner, struct mBreakpointList* list) {
+static void SM83DebuggerListBreakpoints(struct mDebuggerPlatform* d, struct mBreakpointList* list) {
 	struct SM83Debugger* debugger = (struct SM83Debugger*) d;
 	mBreakpointListClear(list);
-	if (owner) {
-		size_t i;
-		for (i = 0; i < mBreakpointListSize(&debugger->breakpoints); ++i) {
-			struct mBreakpoint* point = mBreakpointListGetPointer(&debugger->breakpoints, i);
-			if (TableLookup(&debugger->d.p->pointOwner, point->id) != owner) {
-				continue;
-			}
-			memcpy(mBreakpointListAppend(list), point, sizeof(*point));
-		}
-	} else {
-		mBreakpointListCopy(list, &debugger->breakpoints);
-	}
+	mBreakpointListCopy(list, &debugger->breakpoints);
 }
 
-static void SM83DebuggerListWatchpoints(struct mDebuggerPlatform* d, struct mDebuggerModule* owner, struct mWatchpointList* list) {
+static void SM83DebuggerListWatchpoints(struct mDebuggerPlatform* d, struct mWatchpointList* list) {
 	struct SM83Debugger* debugger = (struct SM83Debugger*) d;
 	mWatchpointListClear(list);
-	if (owner) {
-		size_t i;
-		for (i = 0; i < mWatchpointListSize(&debugger->watchpoints); ++i) {
-			struct mWatchpoint* point = mWatchpointListGetPointer(&debugger->watchpoints, i);
-			if (TableLookup(&debugger->d.p->pointOwner, point->id) != owner) {
-				continue;
-			}
-			memcpy(mWatchpointListAppend(list), point, sizeof(*point));
-		}
-	} else {
-		mWatchpointListCopy(list, &debugger->watchpoints);
-	}
+	mWatchpointListCopy(list, &debugger->watchpoints);
 }
 
 static void SM83DebuggerTrace(struct mDebuggerPlatform* d, char* out, size_t* length) {
@@ -276,20 +225,130 @@ static void SM83DebuggerTrace(struct mDebuggerPlatform* d, char* out, size_t* le
 		               cpu->sp, cpu->memory.currentSegment(cpu, cpu->pc), cpu->pc, disassembly);
 }
 
-static void SM83DebuggerNextInstructionInfo(struct mDebuggerPlatform* d, struct mDebuggerInstructionInfo* info) {
+bool SM83DebuggerGetRegister(struct mDebuggerPlatform* d, const char* name, int32_t* value) {
 	struct SM83Debugger* debugger = (struct SM83Debugger*) d;
-	info->address = debugger->cpu->pc;
-	uint8_t opcode = debugger->cpu->memory.cpuLoad8(debugger->cpu, info->address);
-	info->width = SM83InstructionLength(opcode);
-	info->segment = debugger->cpu->memory.currentSegment(debugger->cpu, info->address);
-	info->flags[0] = mDebuggerAccessLogFlagsFillAccess8(0);
-	info->flags[1] = mDebuggerAccessLogFlagsFillAccess8(0);
-	info->flags[2] = mDebuggerAccessLogFlagsFillAccess8(0);
-	info->flagsEx[0] = mDebuggerAccessLogFlagsExFillExecuteOpcode(0);
-	info->flagsEx[1] = mDebuggerAccessLogFlagsExFillExecuteOperand(0);
-	info->flagsEx[2] = mDebuggerAccessLogFlagsExFillExecuteOperand(0);
-	if (info->width == 0) {
-		info->width = 1;
-		info->flagsEx[0] = mDebuggerAccessLogFlagsExFillErrorIllegalOpcode(info->flagsEx[0]);
+	struct SM83Core* cpu = debugger->cpu;
+
+	if (strcmp(name, "a") == 0) {
+		*value = cpu->a;
+		return true;
 	}
+	if (strcmp(name, "b") == 0) {
+		*value = cpu->b;
+		return true;
+	}
+	if (strcmp(name, "c") == 0) {
+		*value = cpu->c;
+		return true;
+	}
+	if (strcmp(name, "d") == 0) {
+		*value = cpu->d;
+		return true;
+	}
+	if (strcmp(name, "e") == 0) {
+		*value = cpu->e;
+		return true;
+	}
+	if (strcmp(name, "h") == 0) {
+		*value = cpu->h;
+		return true;
+	}
+	if (strcmp(name, "l") == 0) {
+		*value = cpu->l;
+		return true;
+	}
+	if (strcmp(name, "bc") == 0) {
+		*value = cpu->bc;
+		return true;
+	}
+	if (strcmp(name, "de") == 0) {
+		*value = cpu->de;
+		return true;
+	}
+	if (strcmp(name, "hl") == 0) {
+		*value = cpu->hl;
+		return true;
+	}
+	if (strcmp(name, "af") == 0) {
+		*value = cpu->af;
+		return true;
+	}
+	if (strcmp(name, "pc") == 0) {
+		*value = cpu->pc;
+		return true;
+	}
+	if (strcmp(name, "sp") == 0) {
+		*value = cpu->sp;
+		return true;
+	}
+	if (strcmp(name, "f") == 0) {
+		*value = cpu->f.packed;
+		return true;
+	}
+	return false;
+}
+
+bool SM83DebuggerSetRegister(struct mDebuggerPlatform* d, const char* name, int32_t value) {
+	struct SM83Debugger* debugger = (struct SM83Debugger*) d;
+	struct SM83Core* cpu = debugger->cpu;
+
+	if (strcmp(name, "a") == 0) {
+		cpu->a = value;
+		return true;
+	}
+	if (strcmp(name, "b") == 0) {
+		cpu->b = value;
+		return true;
+	}
+	if (strcmp(name, "c") == 0) {
+		cpu->c = value;
+		return true;
+	}
+	if (strcmp(name, "d") == 0) {
+		cpu->d = value;
+		return true;
+	}
+	if (strcmp(name, "e") == 0) {
+		cpu->e = value;
+		return true;
+	}
+	if (strcmp(name, "h") == 0) {
+		cpu->h = value;
+		return true;
+	}
+	if (strcmp(name, "l") == 0) {
+		cpu->l = value;
+		return true;
+	}
+	if (strcmp(name, "bc") == 0) {
+		cpu->bc = value;
+		return true;
+	}
+	if (strcmp(name, "de") == 0) {
+		cpu->de = value;
+		return true;
+	}
+	if (strcmp(name, "hl") == 0) {
+		cpu->hl = value;
+		return true;
+	}
+	if (strcmp(name, "af") == 0) {
+		cpu->af = value;
+		cpu->f.packed &= 0xF0;
+		return true;
+	}
+	if (strcmp(name, "pc") == 0) {
+		cpu->pc = value;
+		cpu->memory.setActiveRegion(cpu, cpu->pc);
+		return true;
+	}
+	if (strcmp(name, "sp") == 0) {
+		cpu->sp = value;
+		return true;
+	}
+	if (strcmp(name, "f") == 0) {
+		cpu->f.packed = value & 0xF0;
+		return true;
+	}
+	return false;
 }

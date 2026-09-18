@@ -4,13 +4,10 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 #include "ShortcutController.h"
-#include "moc_ShortcutController.cpp"
 
 #include "ConfigController.h"
-#include "input/GamepadButtonEvent.h"
-#include "input/GamepadHatEvent.h"
+#include "GamepadButtonEvent.h"
 #include "InputProfile.h"
-#include "scripting/ScriptingController.h"
 
 #include <QAction>
 #include <QKeyEvent>
@@ -33,10 +30,6 @@ void ShortcutController::setActionMapper(ActionMapper* actions) {
 	connect(actions, &ActionMapper::actionAdded, this, &ShortcutController::generateItem);
 	connect(actions, &ActionMapper::menuCleared, this, &ShortcutController::menuCleared);
 	rebuildItems();
-}
-
-void ShortcutController::setScriptingController(ScriptingController* controller) {
-	m_scripting = controller;
 }
 
 void ShortcutController::updateKey(const QString& name, int keySequence) {
@@ -139,14 +132,9 @@ void ShortcutController::rebuildItems() {
 	onSubitems({}, std::bind(&ShortcutController::generateItem, this, std::placeholders::_1));
 }
 
-bool ShortcutController::eventFilter(QObject* obj, QEvent* event) {
+bool ShortcutController::eventFilter(QObject*, QEvent* event) {
 	if (event->type() == QEvent::KeyPress || event->type() == QEvent::KeyRelease) {
 		QKeyEvent* keyEvent = static_cast<QKeyEvent*>(event);
-#ifdef ENABLE_SCRIPTING
-		if (m_scripting) {
-			m_scripting->scriptingEvent(obj, event);
-		}
-#endif
 		if (keyEvent->isAutoRepeat()) {
 			return false;
 		}
@@ -161,19 +149,15 @@ bool ShortcutController::eventFilter(QObject* obj, QEvent* event) {
 			Action::BooleanFunction fn = item.value()->action()->booleanAction();
 			fn(event->type() == QEvent::KeyPress);
 			event->accept();
+			return true;
 		}
 	}
 	if (event->type() == GamepadButtonEvent::Down()) {
-#ifdef ENABLE_SCRIPTING
-		if (m_scripting) {
-			m_scripting->scriptingEvent(obj, event);
-		}
-#endif
 		auto item = m_buttons.find(static_cast<GamepadButtonEvent*>(event)->value());
 		if (item == m_buttons.end()) {
 			return false;
 		}
-		auto action = item.value()->action();
+		Action* action = item.value()->action();
 		if (action) {
 			if (m_actions->isHeld(action->name())) {
 				action->trigger(true);
@@ -185,16 +169,11 @@ bool ShortcutController::eventFilter(QObject* obj, QEvent* event) {
 		return true;
 	}
 	if (event->type() == GamepadButtonEvent::Up()) {
-#ifdef ENABLE_SCRIPTING
-		if (m_scripting) {
-			m_scripting->scriptingEvent(obj, event);
-		}
-#endif
 		auto item = m_buttons.find(static_cast<GamepadButtonEvent*>(event)->value());
 		if (item == m_buttons.end()) {
 			return false;
 		}
-		auto action = item.value()->action();
+		Action* action = item.value()->action();
 		if (action && m_actions->isHeld(action->name())) {
 			action->trigger(false);
 		}
@@ -207,7 +186,7 @@ bool ShortcutController::eventFilter(QObject* obj, QEvent* event) {
 		if (item == m_axes.end()) {
 			return false;
 		}
-		auto action = item.value()->action();
+		Action* action = item.value()->action();
 		if (action) {
 			if (gae->isNew()) {
 				if (m_actions->isHeld(action->name())) {
@@ -222,13 +201,6 @@ bool ShortcutController::eventFilter(QObject* obj, QEvent* event) {
 		event->accept();
 		return true;
 	}
-#ifdef ENABLE_SCRIPTING
-	if (event->type() == GamepadHatEvent::Type()) {
-		if (m_scripting) {
-			m_scripting->scriptingEvent(obj, event);
-		}
-	}
-#endif
 	return false;
 }
 
@@ -236,7 +208,7 @@ void ShortcutController::generateItem(const QString& itemName) {
 	if (itemName.isNull() || itemName[0] == '.') {
 		return;
 	}
-	auto action = m_actions->getAction(itemName);
+	Action* action = m_actions->getAction(itemName);
 	if (action) {
 		std::shared_ptr<Shortcut> item = std::make_shared<Shortcut>(action);
 		m_items[itemName] = item;
@@ -252,13 +224,10 @@ bool ShortcutController::loadShortcuts(std::shared_ptr<Shortcut> item) {
 	loadGamepadShortcuts(item);
 	QVariant shortcut = m_config->getQtOption(item->name(), KEY_SECTION);
 	if (!shortcut.isNull()) {
-		QString s = shortcut.toString();
-		if (s.endsWith('+') &&
-			(s.contains("Ctrl") || s.contains("Shift") ||
-			s.contains("Alt") || s.contains("Meta"))) {
-			updateKey(item, toModifierShortcut(s));
+		if (shortcut.toString().endsWith("+")) {
+			updateKey(item, toModifierShortcut(shortcut.toString()));
 		} else {
-			updateKey(item, QKeySequence(s)[0]);
+			updateKey(item, QKeySequence(shortcut.toString())[0]);
 		}
 		return true;
 	} else {
@@ -330,7 +299,7 @@ void ShortcutController::loadProfile(const QString& profile) {
 	m_profileName = profile;
 	m_profile = InputProfile::findProfile(profile);
 	onSubitems({}, [this](std::shared_ptr<Shortcut> item) {
-		loadGamepadShortcuts(std::move(item));
+		loadGamepadShortcuts(item);
 	});
 }
 
@@ -466,7 +435,7 @@ int ShortcutController::count(const QString& name) const {
 	return menu.count();
 }
 
-Shortcut::Shortcut(std::shared_ptr<Action> action)
+Shortcut::Shortcut(Action* action)
 	: m_action(action)
 {
 }

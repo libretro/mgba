@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <ui version="4.0">
- <class>QGBA::PrinterView</class>
- <widget class="QWidget" name="QGBA::PrinterView">
+ <class>PrinterView</class>
+ <widget class="QWidget" name="PrinterView">
   <property name="geometry">
    <rect>
     <x>0</x>
@@ -164,7 +164,7 @@
         </sizepolicy>
        </property>
        <property name="suffix">
-        <string notr="true">×</string>
+        <string>×</string>
        </property>
        <property name="minimum">
         <number>1</number>
@@ -197,51 +197,11 @@
     </layout>
    </item>
    <item>
-    <layout class="QHBoxLayout" name="horizontalLayout_3">
-     <item>
-      <spacer name="horizontalSpacer_5">
-       <property name="orientation">
-        <enum>Qt::Horizontal</enum>
-       </property>
-       <property name="sizeHint" stdset="0">
-        <size>
-         <width>0</width>
-         <height>20</height>
-        </size>
-       </property>
-      </spacer>
-     </item>
-     <item>
-      <widget class="QPushButton" name="copyButton">
-       <property name="sizePolicy">
-        <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
-         <horstretch>0</horstretch>
-         <verstretch>0</verstretch>
-        </sizepolicy>
-       </property>
-       <property name="text">
-        <string>Copy</string>
-       </property>
-       <property name="icon">
-        <iconset theme="edit-copy">
-         <normaloff>.</normaloff>.</iconset>
-       </property>
-      </widget>
-     </item>
-     <item>
-      <widget class="QDialogButtonBox" name="buttonBox">
-       <property name="sizePolicy">
-        <sizepolicy hsizetype="Fixed" vsizetype="Fixed">
-         <horstretch>0</horstretch>
-         <verstretch>0</verstretch>
-        </sizepolicy>
-       </property>
-       <property name="standardButtons">
-        <set>QDialogButtonBox::Close|QDialogButtonBox::Save</set>
-       </property>
-      </widget>
-     </item>
-    </layout>
+    <widget class="QDialogButtonBox" name="buttonBox">
+     <property name="standardButtons">
+      <set>QDialogButtonBox::Close|QDialogButtonBox::Save</set>
+     </property>
+    </widget>
    </item>
   </layout>
  </widget>
@@ -250,7 +210,7 @@
   <connection>
    <sender>buttonBox</sender>
    <signal>rejected()</signal>
-   <receiver>QGBA::PrinterView</receiver>
+   <receiver>PrinterView</receiver>
    <slot>close()</slot>
    <hints>
     <hint type="sourcelabel">

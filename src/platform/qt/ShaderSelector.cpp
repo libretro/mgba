@@ -4,7 +4,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 #include "ShaderSelector.h"
-#include "moc_ShaderSelector.cpp"
 
 #include "ConfigController.h"
 #include "GBAApp.h"
@@ -12,18 +11,15 @@
 #include "VFileDevice.h"
 
 #include <QCheckBox>
-#include <QDir>
 #include <QDoubleSpinBox>
 #include <QFileDialog>
 #include <QFormLayout>
 #include <QGridLayout>
-#include <QMessageBox>
-#include <QRegularExpression>
 #include <QSpinBox>
 
 #include <mgba/core/version.h>
-#include <mgba/feature/video-backend.h>
 #include <mgba-util/vfs.h>
+#include "platform/video-backend.h"
 
 #if defined(BUILD_GL) || defined(BUILD_GLES2)
 
@@ -52,28 +48,6 @@ ShaderSelector::~ShaderSelector() {
 	clear();
 }
 
-void ShaderSelector::saveSettings() {
-	QString oldPath = m_config->getOption("shader");
-	if (oldPath != m_shaderPath) {
-		if (m_shaderPath.isEmpty()) {
-			clearShader(true);
-		} else {
-			loadShader(m_shaderPath, true);
-		}
-	}
-	emit saveSettingsRequested();
-}
-
-void ShaderSelector::revert() {
-	QString shaderPath = m_config->getOption("shader");
-	if (shaderPath.isEmpty()) {
-		clearShader();
-	} else {
-		loadShader(shaderPath);
-		emit reset();
-	}
-}
-
 void ShaderSelector::clear() {
 	m_ui.shaderName->setText(tr("No shader active"));
 	m_ui.description->clear();
@@ -86,53 +60,37 @@ void ShaderSelector::clear() {
 }
 
 void ShaderSelector::selectShader() {
-	QDir path(GBAApp::dataDir());
-	path.cd(QLatin1String("shaders"));
-#if !defined(USE_LIBZIP) && !defined(USE_MINIZIP)
-	QString name = GBAApp::app()->getOpenDirectoryName(this, tr("Load shader"), path.absolutePath());
-#else
-	QString filters = QStringLiteral("%1 (*.shader manifest.ini)").arg(tr("mGBA Shaders"));
-	QString name = GBAApp::app()->getOpenFileName(this, tr("Load shader"), filters, path.absolutePath());
-#endif
-	if (!name.isNull()) {
-		loadShader(name);
+	QString path(GBAApp::dataDir());
+	path += QLatin1String("/shaders");
+	QFileDialog dialog(nullptr, tr("Load shader"), path);
+	dialog.setFileMode(QFileDialog::Directory);
+	dialog.exec();
+	QStringList names = dialog.selectedFiles();
+	if (names.count() == 1) {
+		loadShader(names[0]);
 		refreshShaders();
 	}
 }
 
-void ShaderSelector::loadShader(const QString& path, bool saveToSettings) {
-	static const QString manifestIni = "/manifest.ini";
-	QString shaderPath = path;
-	if (shaderPath.endsWith(manifestIni)) {
-		shaderPath.chop(manifestIni.length());
-	}
-	VDir* shader = VFileDevice::openDir(shaderPath);
+void ShaderSelector::loadShader(const QString& path) {
+	VDir* shader = VFileDevice::openDir(path);
 	if (!shader) {
-		shader = VFileDevice::openArchive(shaderPath);
+		shader = VFileDevice::openArchive(path);
 	}
-	bool error = !shader || !m_display->setShaders(shader);
-	if (!error) {
-		if (saveToSettings) {
-			m_config->setOption("shader", shaderPath);
-		}
-		m_shaderPath = shaderPath;
-		refreshShaders();
+	if (!shader) {
+		return;
 	}
-	if (shader) {
-		shader->close(shader);
-	}
-	if (error) {
-		QMessageBox::warning(this, tr("Error loading shader"), tr("The shader \"%1\" could not be loaded successfully.").arg(shaderPath));
-	}
+	m_display->setShaders(shader);
+	shader->close(shader);
+	m_shaderPath = path;
+	m_config->setOption("shader", m_shaderPath);
 }
 
-void ShaderSelector::clearShader(bool saveToSettings) {
+void ShaderSelector::clearShader() {
 	m_display->clearShaders();
-	m_shaderPath = "";
-	if (saveToSettings) {
-		m_config->setOption("shader", m_shaderPath);
-	}
 	refreshShaders();
+	m_shaderPath = "";
+	m_config->setOption("shader", m_shaderPath);
 }
 
 void ShaderSelector::refreshShaders() {
@@ -157,18 +115,18 @@ void ShaderSelector::refreshShaders() {
 		m_ui.author->clear();
 	}
 
-	disconnect(this, &ShaderSelector::saveSettingsRequested, 0, 0);
+	disconnect(this, &ShaderSelector::saved, 0, 0);
 	disconnect(this, &ShaderSelector::reset, 0, 0);
 	disconnect(this, &ShaderSelector::resetToDefault, 0, 0);
 
 #if !defined(_WIN32) || defined(USE_EPOXY)
 	if (m_shaders->preprocessShader) {
-		m_ui.passes->addTab(makePage(static_cast<mGLES2Shader*>(m_shaders->preprocessShader), "default", 0, true), tr("Preprocessing"));
+		m_ui.passes->addTab(makePage(static_cast<mGLES2Shader*>(m_shaders->preprocessShader), "default", 0), tr("Preprocessing"));
 	}
 	mGLES2Shader* shaders = static_cast<mGLES2Shader*>(m_shaders->passes);
 	QFileInfo fi(m_shaderPath);
 	for (size_t p = 0; p < m_shaders->nPasses; ++p) {
-		QWidget* page = makePage(&shaders[p], fi.baseName(), p, false);
+		QWidget* page = makePage(&shaders[p], fi.baseName(), p);
 		if (page) {
 			m_ui.passes->addTab(page, tr("Pass %1").arg(p + 1));
 		}
@@ -196,7 +154,7 @@ void ShaderSelector::addUniform(QGridLayout* settings, const QString& section, c
 	connect(f, static_cast<void (QDoubleSpinBox::*)(double)>(&QDoubleSpinBox::valueChanged), [value](double v) {
 		*value = v;
 	});
-	connect(this, &ShaderSelector::saveSettingsRequested, [this, section, name, f]() {
+	connect(this, &ShaderSelector::saved, [this, section, name, f]() {
 		m_config->setQtOption(name, f->value(), section);
 	});
 	connect(this, &ShaderSelector::reset, [this, section, name, f]() {
@@ -230,7 +188,7 @@ void ShaderSelector::addUniform(QGridLayout* settings, const QString& section, c
 	connect(i, static_cast<void (QSpinBox::*)(int)>(&QSpinBox::valueChanged), [value](int v) {
 		*value = v;
 	});
-	connect(this, &ShaderSelector::saveSettingsRequested, [this, section, name, i]() {
+	connect(this, &ShaderSelector::saved, [this, section, name, i]() {
 		m_config->setQtOption(name, i->value(), section);
 	});
 	connect(this, &ShaderSelector::reset, [this, section, name, i]() {
@@ -245,13 +203,17 @@ void ShaderSelector::addUniform(QGridLayout* settings, const QString& section, c
 	});
 }
 
-void ShaderSelector::addMatchingUniformRows(mGLES2Shader* shader, QFormLayout* layout, const QString& name, int pass, const QString& uniformName, bool addAll) {
-	for (size_t u = 0; u < shader->nUniforms; ++u) {
-		mGLES2Uniform* uniform = &shader->uniforms[u];
-		if (uniform->name != uniformName && !addAll) {
-			continue;
-		}
+QWidget* ShaderSelector::makePage(mGLES2Shader* shader, const QString& name, int pass) {
+#if !defined(_WIN32) || defined(USE_EPOXY)
+	if (!shader->nUniforms) {
+		return nullptr;
+	}
+	QWidget* page = new QWidget;
+	QFormLayout* layout = new QFormLayout;
+	page->setLayout(layout);
+	for (size_t u = 0 ; u < shader->nUniforms; ++u) {
 		QGridLayout* settings = new QGridLayout;
+		mGLES2Uniform* uniform = &shader->uniforms[u];
 		QString section = QString("shader.%1.%2").arg(name).arg(pass);
 		QString name = QLatin1String(uniform->name);
 		switch (uniform->type) {
@@ -294,67 +256,6 @@ void ShaderSelector::addMatchingUniformRows(mGLES2Shader* shader, QFormLayout* l
 		}
 		layout->addRow(shader->uniforms[u].readableName, settings);
 	}
-}
-
-void ShaderSelector::parseShaderIni(mGLES2Shader* shader, QFormLayout* layout, const QString& name, int pass, QIODevice* file) {
-	static QRegularExpression uniformNameRe(R"(^\[pass\.(\d+)\.uniform\.([^]]+)\]$)");
-	char line[512];
-	while (true) {
-		qint64 bytesRead = file->readLine(line, sizeof(line));
-		if (bytesRead <= 0) {
-			break;
-		}
-
-		QString lineString(QString::fromUtf8(line, bytesRead));
-		auto match = uniformNameRe.match(lineString);
-		if (!match.hasMatch()) {
-			continue;
-		}
-		QString passString = match.captured(1);
-		bool ok = false;
-		int uniformPass = passString.toInt(&ok);
-		if (!ok || pass != uniformPass) {
-			continue;
-		}
-		QString uniformName = match.captured(2);
-		addMatchingUniformRows(shader, layout, name, pass, uniformName, false);
-	}
-	file->close();
-}
-
-QWidget* ShaderSelector::makePage(mGLES2Shader* shader, const QString& name, int pass, bool defaultPage) {
-#if !defined(_WIN32) || defined(USE_EPOXY)
-	if (!shader->nUniforms) {
-		return nullptr;
-	}
-	QWidget* page = new QWidget;
-	QFormLayout* layout = new QFormLayout;
-	page->setLayout(layout);
-	if (defaultPage) {
-		addMatchingUniformRows(shader, layout, name, pass, "", true);
-	} else {
-	#if defined(ENABLE_VFS) && defined(ENABLE_DIRECTORIES)
-		struct VDir* archive = VDirOpenArchive(m_shaderPath.toStdString().c_str());
-		if (archive) {
-			struct VFile* vf = archive->openFile(archive, "manifest.ini", O_RDONLY);
-			if (vf) {
-				parseShaderIni(shader, layout, name, pass, new VFileDevice(vf));
-			} else {
-				delete page;
-				page = nullptr;
-			}
-			archive->close(archive);
-		} else
-	#endif
-		{
-			QFile manifestfile(m_shaderPath + "/manifest.ini");
-			if (!manifestfile.open(QIODevice::ReadOnly)) {
-				delete page;
-				return nullptr;
-			}
-			parseShaderIni(shader, layout, name, pass, &manifestfile);
-		}
-	}
 	return page;
 #else
 	return nullptr;
@@ -365,6 +266,10 @@ void ShaderSelector::buttonPressed(QAbstractButton* button) {
 	switch (m_ui.buttonBox->standardButton(button)) {
 	case QDialogButtonBox::Reset:
 		emit reset();
+		break;
+	case QDialogButtonBox::Ok:
+		emit saved();
+		close();
 		break;
  	case QDialogButtonBox::RestoreDefaults:
 		emit resetToDefault();

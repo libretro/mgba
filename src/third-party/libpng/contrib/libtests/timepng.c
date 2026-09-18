@@ -2,6 +2,8 @@
  *
  * Copyright (c) 2013,2016 John Cunningham Bowler
  *
+ * Last changed in libpng 1.6.22 [May 26, 2016]
+ *
  * This code is released under the libpng license.
  * For conditions of distribution and use, see the disclaimer
  * and license in png.h
@@ -63,7 +65,7 @@ typedef struct
 }  io_data;
 
 static PNG_CALLBACK(void, read_and_copy,
-      (png_structp png_ptr, png_bytep buffer, size_t cb))
+      (png_structp png_ptr, png_bytep buffer, png_size_t cb))
 {
    io_data *io = (io_data*)png_get_io_ptr(png_ptr);
 
@@ -98,7 +100,7 @@ static void read_by_row(png_structp png_ptr, png_infop info_ptr,
    png_read_info(png_ptr, info_ptr);
 
    {
-      size_t rowbytes = png_get_rowbytes(png_ptr, info_ptr);
+      png_size_t rowbytes = png_get_rowbytes(png_ptr, info_ptr);
 
       row = voidcast(png_bytep,malloc(rowbytes));
       display = voidcast(png_bytep,malloc(rowbytes));
@@ -526,7 +528,7 @@ int main(int argc, char **argv)
       }
    }
 
-   else if (nfiles == 0) /* Read from stdin without --dissemble */
+   else if (nfiles == 0) /* Read from stdin withoout --dissemble */
    {
       char filename[FILENAME_MAX+1];
 

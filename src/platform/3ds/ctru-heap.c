@@ -7,12 +7,15 @@
 
 #include <mgba-util/common.h>
 
+u32 __ctru_heap_size = 0x02400000;
+u32 __ctru_linear_heap_size = 0x01400000;
+
 uint32_t* romBuffer = NULL;
 size_t romBufferSize;
 
 FS_Archive sdmcArchive;
 
-void userAppInit(void) {
+__attribute__((constructor)) static void init(void) {
 	FSUSER_OpenArchive(&sdmcArchive, ARCHIVE_SDMC, fsMakePath(PATH_EMPTY, ""));
 
 	romBuffer = malloc(0x02000000);

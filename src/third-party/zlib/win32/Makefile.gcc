@@ -11,6 +11,10 @@
 #
 #   make -fwin32/Makefile.gcc;  make test testdll -fwin32/Makefile.gcc
 #
+# To use the asm code, type:
+#   cp contrib/asm?86/match.S ./match.S
+#   make LOC=-DASMV OBJA=match.o -fwin32/Makefile.gcc
+#
 # To install libz.a, zconf.h and zlib.h in the system directories, type:
 #
 #   make install -fwin32/Makefile.gcc
@@ -34,7 +38,8 @@ IMPLIB    = libz.dll.a
 #
 SHARED_MODE=0
 
-#LOC = -DZLIB_DEBUG -g
+#LOC = -DASMV
+#LOC = -DDEBUG -g
 
 PREFIX =
 CC = $(PREFIX)gcc

@@ -27,8 +27,6 @@
 extern "C" {
 #endif
 
-struct option;
-
 #define	REPLACE_GETOPT		/* use this getopt as the system getopt(3) */
 
 #ifdef REPLACE_GETOPT

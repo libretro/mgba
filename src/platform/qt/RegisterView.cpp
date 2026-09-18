@@ -4,10 +4,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 #include "RegisterView.h"
-#include "moc_RegisterView.cpp"
 
 #include "CoreController.h"
-#include "GBAApp.h"
 
 #ifdef M_CORE_GBA
 #include <mgba/internal/arm/arm.h>
@@ -16,6 +14,7 @@
 #include <mgba/internal/sm83/sm83.h>
 #endif
 
+#include <QFontDatabase>
 #include <QFormLayout>
 #include <QLabel>
 
@@ -30,7 +29,7 @@ RegisterView::RegisterView(std::shared_ptr<CoreController> controller, QWidget* 
 
 	switch (controller->platform()) {
 #ifdef M_CORE_GBA
-	case mPLATFORM_GBA:
+	case PLATFORM_GBA:
 		addRegisters({
 			"r0",
 			"r1",
@@ -53,7 +52,7 @@ RegisterView::RegisterView(std::shared_ptr<CoreController> controller, QWidget* 
 		break;
 #endif
 #ifdef M_CORE_GB
-	case mPLATFORM_GB:
+	case PLATFORM_GB:
 		addRegisters({
 			"a",
 			"f",
@@ -75,7 +74,7 @@ RegisterView::RegisterView(std::shared_ptr<CoreController> controller, QWidget* 
 
 void RegisterView::addRegisters(const QStringList& names) {
 	QFormLayout* form = static_cast<QFormLayout*>(layout());
-	const QFont font = GBAApp::app()->monospaceFont();
+	const QFont font = QFontDatabase::systemFont(QFontDatabase::FixedFont);
 	for (const auto& reg : names) {
 		QLabel* value = new QLabel;
 		value->setTextInteractionFlags(Qt::TextSelectableByMouse);
@@ -89,12 +88,12 @@ void RegisterView::addRegisters(const QStringList& names) {
 void RegisterView::updateRegisters() {
 	switch (m_controller->platform()) {
 #ifdef M_CORE_GBA
-	case mPLATFORM_GBA:
+	case PLATFORM_GBA:
 		updateRegistersARM();
 		break;
 #endif
 #ifdef M_CORE_GB
-	case mPLATFORM_GB:
+	case PLATFORM_GB:
 		updateRegistersSM83();
 		break;
 #endif

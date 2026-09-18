@@ -4,7 +4,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 #include "Action.h"
-#include "moc_Action.cpp"
 
 using namespace QGBA;
 
@@ -13,17 +12,17 @@ Action::Action(QObject* parent)
 {
 }
 
-Action::Action(Function&& function, const QString& name, const QString& visibleName, QObject* parent)
+Action::Action(Function function, const QString& name, const QString& visibleName, QObject* parent)
 	: QObject(parent)
-	, m_function(std::move(function))
+	, m_function(function)
 	, m_name(name)
 	, m_visibleName(visibleName)
 {
 }
 
-Action::Action(Action::BooleanFunction&& function, const QString& name, const QString& visibleName, QObject* parent)
+Action::Action(Action::BooleanFunction function, const QString& name, const QString& visibleName, QObject* parent)
 	: QObject(parent)
-	, m_booleanFunction(std::move(function))
+	, m_booleanFunction(function)
 	, m_name(name)
 	, m_visibleName(visibleName)
 {
@@ -58,9 +57,9 @@ Action::Action(Action& other)
 {
 }
 
-void Action::connect(Function&& func) {
+void Action::connect(Function func) {
 	m_booleanFunction = {};
-	m_function = std::move(func);
+	m_function = func;
 }
 
 void Action::trigger(bool active) {
@@ -96,9 +95,6 @@ void Action::setActive(bool a) {
 		return;
 	}
 	m_active = a;
-	if (!m_enabled) {
-		return;
-	}
 	emit activated(a);
 }
 

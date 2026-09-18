@@ -15,16 +15,17 @@ struct mCoreThread;
 
 namespace QGBA {
 
-class ConfigController;
-
 class AudioProcessor : public QObject {
 Q_OBJECT
 
 public:
 	enum class Driver {
-		DUMMY = -1,
+#ifdef BUILD_QT_MULTIMEDIA
 		QT_MULTIMEDIA = 0,
+#endif
+#ifdef BUILD_SDL
 		SDL = 1,
+#endif
 	};
 
 	static AudioProcessor* create();
@@ -35,8 +36,6 @@ public:
 
 	int getBufferSamples() const { return m_samples; }
 	virtual unsigned sampleRate() const = 0;
-
-	virtual void configure(ConfigController*);
 
 public slots:
 	virtual void setInput(std::shared_ptr<CoreController>);

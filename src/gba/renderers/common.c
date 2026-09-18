@@ -16,43 +16,18 @@ int GBAVideoRendererCleanOAM(struct GBAObj* oam, struct GBAVideoRendererSprite* 
 		LOAD_16LE(obj.b, 0, &oam[i].b);
 		LOAD_16LE(obj.c, 0, &oam[i].c);
 		if (GBAObjAttributesAIsTransformed(obj.a) || !GBAObjAttributesAIsDisable(obj.a)) {
-			int width = GBAVideoObjSizes[GBAObjAttributesAGetShape(obj.a) * 4 + GBAObjAttributesBGetSize(obj.b)][0];
 			int height = GBAVideoObjSizes[GBAObjAttributesAGetShape(obj.a) * 4 + GBAObjAttributesBGetSize(obj.b)][1];
-			int32_t x = (uint32_t) GBAObjAttributesBGetX(obj.b) << 23;
-			x >>= 23;
-			int cycles;
 			if (GBAObjAttributesAIsTransformed(obj.a)) {
 				height <<= GBAObjAttributesAGetDoubleSize(obj.a);
-				width <<= GBAObjAttributesAGetDoubleSize(obj.a);
-				cycles = 8 + width * 2;
-				if (x < 0) {
-					cycles += x;
-				}
-			} else {
-				cycles = width - 2;
-				if (x < 0) {
-					if (x + width < 0) {
-						continue;
-					}
-					cycles += x >> 1;
-				}
 			}
-			if (GBAObjAttributesAGetY(obj.a) >= GBA_VIDEO_VERTICAL_PIXELS && GBAObjAttributesAGetY(obj.a) + height < VIDEO_VERTICAL_TOTAL_PIXELS) {
-				continue;
+			if (GBAObjAttributesAGetY(obj.a) < GBA_VIDEO_VERTICAL_PIXELS || GBAObjAttributesAGetY(obj.a) + height >= VIDEO_VERTICAL_TOTAL_PIXELS) {
+				int y = GBAObjAttributesAGetY(obj.a) + offsetY;
+				sprites[oamMax].y = y;
+				sprites[oamMax].endY = y + height;
+				sprites[oamMax].obj = obj;
+				sprites[oamMax].index = i;
+				++oamMax;
 			}
-			if (GBAObjAttributesBGetX(obj.b) >= GBA_VIDEO_HORIZONTAL_PIXELS && GBAObjAttributesBGetX(obj.b) + width < 512) {
-				continue;
-			}
-			int y = GBAObjAttributesAGetY(obj.a) + offsetY;
-			if (y + height > 256) {
-				y -= 256;
-			}
-			sprites[oamMax].y = y;
-			sprites[oamMax].endY = y + height;
-			sprites[oamMax].cycles = cycles;
-			sprites[oamMax].obj = obj;
-			sprites[oamMax].index = i;
-			++oamMax;
 		}
 	}
 	return oamMax;

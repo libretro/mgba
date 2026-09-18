@@ -14,12 +14,21 @@ CXX_GUARD_START
 #include "sdl-events.h"
 
 #ifdef BUILD_GL
-#include "gl-common.h"
 #include "platform/opengl/gl.h"
 #endif
 
-#if defined(BUILD_GLES2) || defined(BUILD_GLES3) || defined(USE_EPOXY)
-#include "gl-common.h"
+#ifdef BUILD_RASPI
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-function"
+#pragma GCC diagnostic ignored "-Wunused-but-set-variable"
+#include <SDL/SDL.h>
+#include <EGL/egl.h>
+
+#include <bcm_host.h>
+#pragma GCC diagnostic pop
+#endif
+
+#if defined(BUILD_GLES2) || defined(USE_EPOXY)
 #include "platform/opengl/gles2.h"
 #endif
 
@@ -30,7 +39,7 @@ CXX_GUARD_START
 struct mCore;
 struct mSDLRenderer {
 	struct mCore* core;
-	mColor* outputBuffer;
+	color_t* outputBuffer;
 
 	struct mSDLAudio audio;
 	struct mSDLEvents events;
@@ -44,11 +53,7 @@ struct mSDLRenderer {
 	SDL_Window* window;
 	SDL_Texture* sdlTex;
 	SDL_Renderer* sdlRenderer;
-#if SDL_VERSION_ATLEAST(3, 0, 0)
-	SDL_GLContext glCtx;
-#else
 	SDL_GLContext* glCtx;
-#endif
 #endif
 
 	unsigned width;
@@ -65,15 +70,26 @@ struct mSDLRenderer {
 #ifdef BUILD_GL
 	struct mGLContext gl;
 #endif
-#if defined(BUILD_GLES2) || defined(BUILD_GLES3) || defined(USE_EPOXY)
+#if defined(BUILD_GLES2) || defined(USE_EPOXY)
 	struct mGLES2Context gl2;
 #endif
-
-	struct VideoBackend* backend;
 
 #ifdef USE_PIXMAN
 	pixman_image_t* pix;
 	pixman_image_t* screenpix;
+#endif
+
+#ifdef BUILD_RASPI
+	EGLDisplay eglDisplay;
+	EGLSurface eglSurface;
+	EGLContext eglContext;
+	EGL_DISPMANX_WINDOW_T eglWindow;
+#endif
+
+#ifdef BUILD_PANDORA
+	int fb;
+	int odd;
+	void* base[2];
 #endif
 };
 

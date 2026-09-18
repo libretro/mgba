@@ -4,14 +4,10 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 #include "KeyEditor.h"
-#include "moc_KeyEditor.cpp"
 
-#include "InputController.h"
-#include "input/Gamepad.h"
-#include "input/GamepadAxisEvent.h"
-#include "input/GamepadButtonEvent.h"
+#include "GamepadAxisEvent.h"
+#include "GamepadButtonEvent.h"
 #include "ShortcutController.h"
-#include "utils.h"
 
 #include <QCoreApplication>
 #include <QFontMetrics>
@@ -21,7 +17,6 @@ using namespace QGBA;
 
 KeyEditor::KeyEditor(QWidget* parent)
 	: QLineEdit(parent)
-	, m_controller(nullptr)
 	, m_direction(GamepadAxisEvent::NEUTRAL)
 	, m_hatDirection(GamepadHatEvent::CENTER)
 {
@@ -30,22 +25,43 @@ KeyEditor::KeyEditor(QWidget* parent)
 	m_lastKey.setSingleShot(true);
 }
 
-void KeyEditor::setInputController(InputController* controller) {
-	m_controller = controller;
-	if (m_button) {
-		updateButtonText();
-	}
-}
-
 void KeyEditor::setValue(int key) {
 	m_key = key;
 	if (m_button) {
 		updateButtonText();
 	} else {
-		if (key == Qt::Key_unknown) {
+		if (key < 0) {
 			setText(tr("---"));
 		} else {
-			setText(keyName(key));
+			QKeySequence seq(key);
+			switch (key) {
+#ifndef Q_OS_MAC
+				case Qt::Key_Shift:
+					setText(QCoreApplication::translate("QShortcut", "Shift"));
+					break;
+				case Qt::Key_Control:
+					setText(QCoreApplication::translate("QShortcut", "Control"));
+					break;
+				case Qt::Key_Alt:
+					setText(QCoreApplication::translate("QShortcut", "Alt"));
+					break;
+				case Qt::Key_Meta:
+					setText(QCoreApplication::translate("QShortcut", "Meta"));
+					break;
+#endif
+				case Qt::Key_Super_L:
+					setText(tr("Super (L)"));
+					break;
+				case Qt::Key_Super_R:
+					setText(tr("Super (R)"));
+					break;
+				case Qt::Key_Menu:
+					setText(tr("Menu"));
+					break;
+				default:
+					setText(QKeySequence(key).toString(QKeySequence::NativeText));
+					break;
+				}
 		}
 	}
 	emit valueChanged(key);
@@ -79,7 +95,7 @@ void KeyEditor::setValueHat(int hat, GamepadHatEvent::Direction direction) {
 
 void KeyEditor::clearButton() {
 	m_button = true;
-	setValue(Qt::Key_unknown);
+	setValue(-1);
 }
 
 void KeyEditor::clearAxis() {
@@ -107,13 +123,48 @@ QSize KeyEditor::sizeHint() const {
 
 void KeyEditor::keyPressEvent(QKeyEvent* event) {
 	if (!m_button) {
-		if (!m_lastKey.isActive()) {
-			m_key = Qt::Key_unknown;
+		if (m_key < 0 || !m_lastKey.isActive()) {
+			m_key = 0;
 		}
 		m_lastKey.start(KEY_TIME);
-		setValue(ShortcutController::isModifierKey(event->key()) ?
-		             event->key() :
-		             event->key() | (event->modifiers() & ~Qt::KeypadModifier));
+		if (m_key) {
+			if (ShortcutController::isModifierKey(m_key)) {
+				switch (event->key()) {
+				case Qt::Key_Shift:
+					setValue(Qt::ShiftModifier);
+					break;
+				case Qt::Key_Control:
+					setValue(Qt::ControlModifier);
+					break;
+				case Qt::Key_Alt:
+					setValue(Qt::AltModifier);
+					break;
+				case Qt::Key_Meta:
+					setValue(Qt::MetaModifier);
+					break;
+				}
+			}
+			if (ShortcutController::isModifierKey(event->key())) {
+				switch (event->key()) {
+				case Qt::Key_Shift:
+					setValue(m_key | Qt::ShiftModifier);
+					break;
+				case Qt::Key_Control:
+					setValue(m_key | Qt::ControlModifier);
+					break;
+				case Qt::Key_Alt:
+					setValue(m_key | Qt::AltModifier);
+					break;
+				case Qt::Key_Meta:
+					setValue(m_key | Qt::MetaModifier);
+					break;
+				}
+			} else {
+				setValue(event->key() | (m_key & (Qt::ShiftModifier | Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier)));
+			}
+		} else {
+			setValue(event->key());
+		}
 	}
 	event->accept();
 }
@@ -158,50 +209,28 @@ bool KeyEditor::event(QEvent* event) {
 void KeyEditor::updateButtonText() {
 	QStringList text;
 	if (m_hat >= 0) {
-		QString hatId("%0");
-		if (m_hat) {
-			hatId += QString::number(m_hat);
-		}
 		switch (m_hatDirection) {
 		case GamepadHatEvent::UP:
-			text.append(hatId.arg("↑"));
+			text.append(QString("↑%0").arg(m_hat));
 			break;
 		case GamepadHatEvent::RIGHT:
-			text.append(hatId.arg("→"));
+			text.append(QString("→%0").arg(m_hat));
 			break;
 		case GamepadHatEvent::DOWN:
-			text.append(hatId.arg("↓"));
+			text.append(QString("↓%0").arg(m_hat));
 			break;
 		case GamepadHatEvent::LEFT:
-			text.append(hatId.arg("←"));
+			text.append(QString("←%0").arg(m_hat));
 			break;
 		default:
 			break;
 		}
 	}
-	if (m_key != Qt::Key_unknown) {
-		std::shared_ptr<Gamepad> gamepad;
-		if (m_controller && m_controller->gamepadDriver()) {
-			gamepad = m_controller->gamepadDriver()->activeGamepad();
-		}
-		if (!gamepad) {
-			text.append(QString::number(m_key));
-		} else {
-			text.append(gamepad->buttonHumanName(m_key));
-		}
+	if (m_key >= 0) {
+		text.append(QString::number(m_key));
 	}
 	if (m_direction != GamepadAxisEvent::NEUTRAL) {
-		QString name;
-		std::shared_ptr<Gamepad> gamepad;
-		if (m_controller && m_controller->gamepadDriver()) {
-			gamepad = m_controller->gamepadDriver()->activeGamepad();
-		}
-		if (!gamepad) {
-			name = QString::number(m_axis);
-		} else {
-			name = gamepad->axisHumanName(m_axis);
-		}
-		text.append((m_direction == GamepadAxisEvent::NEGATIVE ? "-" : "+") + name);
+		text.append((m_direction == GamepadAxisEvent::NEGATIVE ? "-" : "+") + QString::number(m_axis));
 	}
 	if (text.isEmpty()) {
 		setText(tr("---"));

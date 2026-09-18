@@ -7,9 +7,7 @@
 
 #ifdef USE_LZMA
 
-#include <mgba-util/memory.h>
 #include <mgba-util/string.h>
-#include <mgba-util/table.h>
 
 #include "third-party/lzma/7z.h"
 #include "third-party/lzma/7zAlloc.h"
@@ -28,19 +26,15 @@ struct VDirEntry7z {
 	char* utf8;
 };
 
-struct VDir7zAlloc {
-	ISzAlloc d;
-	struct Table allocs;
-};
-
 struct VDir7z {
 	struct VDir d;
 	struct VDirEntry7z dirent;
 
+	// What is all this garbage?
 	CFileInStream archiveStream;
 	CLookToRead2 lookStream;
 	CSzArEx db;
-	struct VDir7zAlloc allocImp;
+	ISzAlloc allocImp;
 	ISzAlloc allocTempImp;
 };
 
@@ -64,7 +58,7 @@ static void* _vf7zMap(struct VFile* vf, size_t size, int flags);
 static void _vf7zUnmap(struct VFile* vf, void* memory, size_t size);
 static void _vf7zTruncate(struct VFile* vf, size_t size);
 static ssize_t _vf7zSize(struct VFile* vf);
-static bool _vf7zSync(struct VFile* vf, void* buffer, size_t size);
+static bool _vf7zSync(struct VFile* vf, const void* buffer, size_t size);
 
 static bool _vd7zClose(struct VDir* vd);
 static void _vd7zRewind(struct VDir* vd);
@@ -75,43 +69,6 @@ static bool _vd7zDeleteFile(struct VDir* vd, const char* path);
 
 static const char* _vde7zName(struct VDirEntry* vde);
 static enum VFSType _vde7zType(struct VDirEntry* vde);
-
-static void* _vd7zAlloc(ISzAllocPtr p, size_t size) {
-	struct VDir7zAlloc* alloc = (struct VDir7zAlloc*) p;
-	void* address;
-	if (size >= 0x10000) {
-		address = anonymousMemoryMap(size);
-	} else {
-		address = malloc(size);
-	}
-	if (address) {
-		TableInsert(&alloc->allocs, (uintptr_t) address >> 2, (void*) size);
-	}
-	return address;
-}
-
-static void _vd7zFree(ISzAllocPtr p, void* address) {
-	struct VDir7zAlloc* alloc = (struct VDir7zAlloc*) p;
-	size_t size = (size_t) TableLookup(&alloc->allocs, (uintptr_t) address >> 2);
-	if (size) {
-		TableRemove(&alloc->allocs, (uintptr_t) address >> 2);
-		if (size >= 0x10000) {
-			mappedMemoryFree(address, size);
-		} else {
-			free(address);
-		}
-	}
-}
-
-static void* _vd7zAllocTemp(ISzAllocPtr p, size_t size) {
-	UNUSED(p);
-	return malloc(size);
-}
-
-static void _vd7zFreeTemp(ISzAllocPtr p, void* address) {
-	UNUSED(p);
-	free(address);
-}
 
 struct VDir* VDirOpen7z(const char* path, int flags) {
 	if (flags & O_WRONLY || flags & O_CREAT) {
@@ -126,12 +83,11 @@ struct VDir* VDirOpen7z(const char* path, int flags) {
 		return 0;
 	}
 
-	vd->allocImp.d.Alloc = _vd7zAlloc;
-	vd->allocImp.d.Free = _vd7zFree;
-	TableInit(&vd->allocImp.allocs, 0, NULL);
+	vd->allocImp.Alloc = SzAlloc;
+	vd->allocImp.Free = SzFree;
 
-	vd->allocTempImp.Alloc = _vd7zAllocTemp;
-	vd->allocTempImp.Free = _vd7zFreeTemp;
+	vd->allocTempImp.Alloc = SzAllocTemp;
+	vd->allocTempImp.Free = SzFreeTemp;
 
 	FileInStream_CreateVTable(&vd->archiveStream);
 	LookToRead2_CreateVTable(&vd->lookStream, False);
@@ -145,12 +101,11 @@ struct VDir* VDirOpen7z(const char* path, int flags) {
 	CrcGenerateTable();
 
 	SzArEx_Init(&vd->db);
-	SRes res = SzArEx_Open(&vd->db, &vd->lookStream.vt, &vd->allocImp.d, &vd->allocTempImp);
+	SRes res = SzArEx_Open(&vd->db, &vd->lookStream.vt, &vd->allocImp, &vd->allocTempImp);
 	if (res != SZ_OK) {
-		SzArEx_Free(&vd->db, &vd->allocImp.d);
+		SzArEx_Free(&vd->db, &vd->allocImp);
 		File_Close(&vd->archiveStream.file);
 		free(vd->lookStream.buf);
-		TableDeinit(&vd->allocImp.allocs);
 		free(vd);
 		return 0;
 	}
@@ -173,7 +128,7 @@ struct VDir* VDirOpen7z(const char* path, int flags) {
 
 bool _vf7zClose(struct VFile* vf) {
 	struct VFile7z* vf7z = (struct VFile7z*) vf;
-	IAlloc_Free(&vf7z->vd->allocImp.d, vf7z->outBuffer);
+	IAlloc_Free(&vf7z->vd->allocImp, vf7z->outBuffer);
 	free(vf7z);
 	return true;
 }
@@ -260,13 +215,12 @@ ssize_t _vf7zSize(struct VFile* vf) {
 
 bool _vd7zClose(struct VDir* vd) {
 	struct VDir7z* vd7z = (struct VDir7z*) vd;
-	SzArEx_Free(&vd7z->db, &vd7z->allocImp.d);
+	SzArEx_Free(&vd7z->db, &vd7z->allocImp);
 	File_Close(&vd7z->archiveStream.file);
 
 	free(vd7z->lookStream.buf);
 	free(vd7z->dirent.utf8);
 	vd7z->dirent.utf8 = 0;
-	TableDeinit(&vd7z->allocImp.allocs);
 
 	free(vd7z);
 	return true;
@@ -338,7 +292,7 @@ struct VFile* _vd7zOpenFile(struct VDir* vd, const char* path, int mode) {
 	SRes res = SzArEx_Extract(&vd7z->db, &vd7z->lookStream.vt, i, &blockIndex,
 		&vf->outBuffer, &outBufferSize,
 		&vf->bufferOffset, &vf->size,
-		&vd7z->allocImp.d, &vd7z->allocTempImp);
+		&vd7z->allocImp, &vd7z->allocTempImp);
 
 	if (res != SZ_OK) {
 		free(vf);
@@ -373,7 +327,7 @@ bool _vd7zDeleteFile(struct VDir* vd, const char* path) {
 	return false;
 }
 
-bool _vf7zSync(struct VFile* vf, void* memory, size_t size) {
+bool _vf7zSync(struct VFile* vf, const void* memory, size_t size) {
 	UNUSED(vf);
 	UNUSED(memory);
 	UNUSED(size);

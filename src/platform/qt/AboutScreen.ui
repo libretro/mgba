@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <ui version="4.0">
- <class>QGBA::AboutScreen</class>
- <widget class="QWidget" name="QGBA::AboutScreen">
+ <class>AboutScreen</class>
+ <widget class="QWidget" name="AboutScreen">
   <property name="geometry">
    <rect>
     <x>0</x>
@@ -55,7 +55,7 @@
       </font>
      </property>
      <property name="text">
-      <string notr="true">{projectName}</string>
+      <string>{projectName}</string>
      </property>
      <property name="alignment">
       <set>Qt::AlignBottom|Qt::AlignLeading|Qt::AlignLeft</set>
@@ -83,7 +83,7 @@
       </font>
      </property>
      <property name="text">
-      <string>© 2013 – {year} Jeffrey Pfau, licensed under the Mozilla Public License, version 2.0
+      <string>© 2013 – 2020 Jeffrey Pfau, licensed under the Mozilla Public License, version 2.0
 Game Boy Advance is a registered trademark of Nintendo Co., Ltd.</string>
      </property>
      <property name="alignment">
@@ -103,7 +103,7 @@ Game Boy Advance is a registered trademark of Nintendo Co., Ltd.</string>
       </font>
      </property>
      <property name="text">
-      <string notr="true">{projectVersion}</string>
+      <string>{projectVersion}</string>
      </property>
      <property name="alignment">
       <set>Qt::AlignBottom|Qt::AlignLeading|Qt::AlignLeft</set>
@@ -152,7 +152,7 @@ Game Boy Advance is a registered trademark of Nintendo Co., Ltd.</string>
         </size>
        </property>
        <property name="text">
-        <string notr="true">{logo}</string>
+        <string>{logo}</string>
        </property>
       </widget>
      </item>
@@ -187,7 +187,7 @@ Game Boy Advance is a registered trademark of Nintendo Co., Ltd.</string>
    <item row="7" column="0" colspan="2">
     <widget class="QLabel" name="patrons">
      <property name="text">
-      <string notr="true">{patrons}</string>
+      <string>{patrons}</string>
      </property>
      <property name="alignment">
       <set>Qt::AlignCenter</set>

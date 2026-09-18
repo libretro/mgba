@@ -72,9 +72,12 @@ static void _parElseBlock(struct GBACheatSet* cheats) {
 static bool _addPAR3Cond(struct GBACheatSet* cheats, uint32_t op1, uint32_t op2) {
 	enum GBAActionReplay3Condition condition = op1 & PAR3_COND;
 	int width = 1 << ((op1 & PAR3_WIDTH) >> PAR3_WIDTH_BASE);
+	if (width > 4) {
+		// TODO: Always false conditions
+		return false;
+	}
 	if ((op1 & PAR3_ACTION) == PAR3_ACTION_DISABLE) {
 		// TODO: Codes that disable
-		mLOG(CHEATS, STUB, "Disable-type PARv3 codes not yet supported");
 		return false;
 	}
 
@@ -132,11 +135,6 @@ static bool _addPAR3Cond(struct GBACheatSet* cheats, uint32_t op1, uint32_t op2)
 	case PAR3_COND_AND:
 		cheat->type = CHEAT_IF_AND;
 		break;
-	}
-
-	if (width > 4) {
-		cheat->width = 0;
-		cheat->type = CHEAT_NEVER;
 	}
 	return true;
 }
@@ -232,20 +230,24 @@ static bool _addPAR3Special(struct GBACheatSet* cheats, uint32_t op2) {
 		break;
 	}
 	if (romPatch >= 0) {
-		struct mCheatPatch* patch = mCheatPatchListAppend(&cheats->d.romPatches);
-		patch->address = GBA_BASE_ROM0 | ((op2 & 0xFFFFFF) << 1);
-		patch->applied = false;
-		patch->check = false;
-		patch->width = 2;
-		cheats->incompletePatch = patch;
+		while (cheats->romPatches[romPatch].exists) {
+			++romPatch;
+			if (romPatch >= MAX_ROM_PATCHES) {
+				break;
+			}
+		}
+		cheats->romPatches[romPatch].address = BASE_CART0 | ((op2 & 0xFFFFFF) << 1);
+		cheats->romPatches[romPatch].applied = false;
+		cheats->romPatches[romPatch].exists = true;
+		cheats->incompletePatch = &cheats->romPatches[romPatch];
 	}
 	return true;
 }
 
 bool GBACheatAddProActionReplayRaw(struct GBACheatSet* cheats, uint32_t op1, uint32_t op2) {
 	if (cheats->incompletePatch) {
-		cheats->incompletePatch->value = op1;
-		cheats->incompletePatch = NULL;
+		cheats->incompletePatch->newValue = op1;
+		cheats->incompletePatch = 0;
 		return true;
 	}
 	if (cheats->incompleteCheat != COMPLETE) {
@@ -282,7 +284,7 @@ bool GBACheatAddProActionReplayRaw(struct GBACheatSet* cheats, uint32_t op1, uin
 			return false;
 		}
 		cheats->hook = malloc(sizeof(*cheats->hook));
-		cheats->hook->address = GBA_BASE_ROM0 | (op1 & (GBA_SIZE_ROM0 - 2));
+		cheats->hook->address = BASE_CART0 | (op1 & (SIZE_CART0 - 2));
 		cheats->hook->mode = MODE_THUMB;
 		cheats->hook->refs = 1;
 		cheats->hook->reentries = 0;
@@ -320,7 +322,7 @@ bool GBACheatAddProActionReplayRaw(struct GBACheatSet* cheats, uint32_t op1, uin
 	case PAR3_BASE_OTHER:
 		width = ((op1 >> 24) & 1) + 1;
 		cheat->type = CHEAT_ASSIGN;
-		cheat->address = GBA_BASE_IO | (op1 & OFFSET_MASK);
+		cheat->address = BASE_IO | (op1 & OFFSET_MASK);
 		break;
 	}
 	if (op1 & 0x01000000 && (op1 & 0xFE000000) != 0xC6000000) {

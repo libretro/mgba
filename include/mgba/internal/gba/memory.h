@@ -14,67 +14,65 @@ CXX_GUARD_START
 
 #include <mgba/internal/arm/arm.h>
 #include <mgba/internal/gba/dma.h>
+#include <mgba/internal/gba/hardware.h>
 #include <mgba/internal/gba/savedata.h>
-#include <mgba/internal/gba/cart/ereader.h>
-#include <mgba/internal/gba/cart/gpio.h>
-#include <mgba/internal/gba/cart/matrix.h>
-#include <mgba/internal/gba/cart/unlicensed.h>
+#include <mgba/internal/gba/vfame.h>
+#include <mgba/internal/gba/matrix.h>
 
 enum GBAMemoryRegion {
-	GBA_REGION_BIOS = 0x0,
-	GBA_REGION_EWRAM = 0x2,
-	GBA_REGION_IWRAM = 0x3,
-	GBA_REGION_IO = 0x4,
-	GBA_REGION_PALETTE_RAM = 0x5,
-	GBA_REGION_VRAM = 0x6,
-	GBA_REGION_OAM = 0x7,
-	GBA_REGION_ROM0 = 0x8,
-	GBA_REGION_ROM0_EX = 0x9,
-	GBA_REGION_ROM1 = 0xA,
-	GBA_REGION_ROM1_EX = 0xB,
-	GBA_REGION_ROM2 = 0xC,
-	GBA_REGION_ROM2_EX = 0xD,
-	GBA_REGION_SRAM = 0xE,
-	GBA_REGION_SRAM_MIRROR = 0xF
+	REGION_BIOS = 0x0,
+	REGION_WORKING_RAM = 0x2,
+	REGION_WORKING_IRAM = 0x3,
+	REGION_IO = 0x4,
+	REGION_PALETTE_RAM = 0x5,
+	REGION_VRAM = 0x6,
+	REGION_OAM = 0x7,
+	REGION_CART0 = 0x8,
+	REGION_CART0_EX = 0x9,
+	REGION_CART1 = 0xA,
+	REGION_CART1_EX = 0xB,
+	REGION_CART2 = 0xC,
+	REGION_CART2_EX = 0xD,
+	REGION_CART_SRAM = 0xE,
+	REGION_CART_SRAM_MIRROR = 0xF
 };
 
 enum GBAMemoryBase {
-	GBA_BASE_BIOS = 0x00000000,
-	GBA_BASE_EWRAM = 0x02000000,
-	GBA_BASE_IWRAM = 0x03000000,
-	GBA_BASE_IO = 0x04000000,
-	GBA_BASE_PALETTE_RAM = 0x05000000,
-	GBA_BASE_VRAM = 0x06000000,
-	GBA_BASE_OAM = 0x07000000,
-	GBA_BASE_ROM0 = 0x08000000,
-	GBA_BASE_ROM0_EX = 0x09000000,
-	GBA_BASE_ROM1 = 0x0A000000,
-	GBA_BASE_ROM1_EX = 0x0B000000,
-	GBA_BASE_ROM2 = 0x0C000000,
-	GBA_BASE_ROM2_EX = 0x0D000000,
-	GBA_BASE_SRAM = 0x0E000000,
-	GBA_BASE_SRAM_MIRROR = 0x0F000000
+	BASE_BIOS = 0x00000000,
+	BASE_WORKING_RAM = 0x02000000,
+	BASE_WORKING_IRAM = 0x03000000,
+	BASE_IO = 0x04000000,
+	BASE_PALETTE_RAM = 0x05000000,
+	BASE_VRAM = 0x06000000,
+	BASE_OAM = 0x07000000,
+	BASE_CART0 = 0x08000000,
+	BASE_CART0_EX = 0x09000000,
+	BASE_CART1 = 0x0A000000,
+	BASE_CART1_EX = 0x0B000000,
+	BASE_CART2 = 0x0C000000,
+	BASE_CART2_EX = 0x0D000000,
+	BASE_CART_SRAM = 0x0E000000,
+	BASE_CART_SRAM_MIRROR = 0x0F000000
 };
 
 enum {
-	GBA_SIZE_BIOS = 0x00004000,
-	GBA_SIZE_EWRAM = 0x00040000,
-	GBA_SIZE_IWRAM = 0x00008000,
-	GBA_SIZE_IO = 0x00000400,
-	GBA_SIZE_PALETTE_RAM = 0x00000400,
-	GBA_SIZE_VRAM = 0x00018000,
-	GBA_SIZE_OAM = 0x00000400,
-	GBA_SIZE_ROM0 = 0x02000000,
-	GBA_SIZE_ROM1 = 0x02000000,
-	GBA_SIZE_ROM2 = 0x02000000,
-	GBA_SIZE_SRAM = 0x00008000,
-	GBA_SIZE_SRAM512 = 0x00010000,
-	GBA_SIZE_FLASH512 = 0x00010000,
-	GBA_SIZE_FLASH1M = 0x00020000,
-	GBA_SIZE_EEPROM = 0x00002000,
-	GBA_SIZE_EEPROM512 = 0x00000200,
+	SIZE_BIOS = 0x00004000,
+	SIZE_WORKING_RAM = 0x00040000,
+	SIZE_WORKING_IRAM = 0x00008000,
+	SIZE_IO = 0x00000400,
+	SIZE_PALETTE_RAM = 0x00000400,
+	SIZE_VRAM = 0x00018000,
+	SIZE_OAM = 0x00000400,
+	SIZE_CART0 = 0x02000000,
+	SIZE_CART1 = 0x02000000,
+	SIZE_CART2 = 0x02000000,
+	SIZE_CART_SRAM = 0x00008000,
+	SIZE_CART_FLASH512 = 0x00010000,
+	SIZE_CART_FLASH1M = 0x00020000,
+	SIZE_CART_EEPROM = 0x00002000,
+	SIZE_CART_EEPROM512 = 0x00000200,
 
-	GBA_SIZE_AGB_PRINT = 0x10000
+	SIZE_AGB_PRINT = 0x10000
 };
 
 enum {
@@ -86,8 +84,8 @@ enum {
 	AGB_PRINT_BASE = 0x00FD0000,
 	AGB_PRINT_TOP = 0x00FE0000,
 	AGB_PRINT_PROTECT = 0x00FE2FFE,
-	AGB_PRINT_STRUCT = 0x00FE20F8,
-	AGB_PRINT_FLUSH_ADDR = 0x00FE209C,
+	AGB_PRINT_STRUCT = 0x01FE20F8,
+	AGB_PRINT_FLUSH_ADDR = 0x01FE209C,
 };
 
 mLOG_DECLARE_CATEGORY(GBA_MEM);
@@ -108,9 +106,8 @@ struct GBAMemory {
 
 	struct GBACartridgeHardware hw;
 	struct GBASavedata savedata;
+	struct GBAVFameCart vfame;
 	struct GBAMatrix matrix;
-	struct GBAUnlCart unl;
-	struct GBACartEReader ereader;
 	size_t romSize;
 	uint32_t romMask;
 	uint16_t romID;
@@ -128,15 +125,13 @@ struct GBAMemory {
 	struct GBADMA dma[4];
 	struct mTimingEvent dmaEvent;
 	int activeDMA;
+	uint32_t dmaTransferRegister;
 
-	uint32_t agbPrintBase;
-	uint16_t agbPrintProtect;
+	uint16_t agbPrint;
 	struct GBAPrintContext agbPrintCtx;
 	uint16_t* agbPrintBuffer;
-	uint16_t agbPrintProtectBackup;
-	struct GBAPrintContext agbPrintCtxBackup;
-	uint32_t agbPrintFuncBackup;
-	uint16_t* agbPrintBufferBackup;
+
+	bool mirroring;
 };
 
 struct GBA;
@@ -144,7 +139,6 @@ void GBAMemoryInit(struct GBA* gba);
 void GBAMemoryDeinit(struct GBA* gba);
 
 void GBAMemoryReset(struct GBA* gba);
-void GBAMemoryClearAGBPrint(struct GBA* gba);
 
 uint32_t GBALoad32(struct ARMCore* cpu, uint32_t address, int* cycleCounter);
 uint32_t GBALoad16(struct ARMCore* cpu, uint32_t address, int* cycleCounter);
@@ -170,7 +164,6 @@ uint32_t GBAStoreMultiple(struct ARMCore*, uint32_t baseAddress, int mask, enum 
                           int* cycleCounter);
 
 void GBAAdjustWaitstates(struct GBA* gba, uint16_t parameters);
-void GBAAdjustEWRAMWaitstates(struct GBA* gba, uint16_t parameters);
 
 struct GBASerializedState;
 void GBAMemorySerialize(const struct GBAMemory* memory, struct GBASerializedState* state);

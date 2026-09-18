@@ -15,10 +15,6 @@
 #include <mgba-util/elf-read.h>
 #endif
 
-#ifdef USE_PNG
-#include <mgba-util/image/png-io.h>
-#endif
-
 #ifdef M_CORE_GB
 #include <mgba/gb/core.h>
 #include <mgba/gb/interface.h>
@@ -37,12 +33,12 @@ static const struct mCoreFilter {
 	enum mPlatform platform;
 } _filters[] = {
 #ifdef M_CORE_GBA
-	{ GBAIsROM, GBACoreCreate, mPLATFORM_GBA },
+	{ GBAIsROM, GBACoreCreate, PLATFORM_GBA },
 #endif
 #ifdef M_CORE_GB
-	{ GBIsROM, GBCoreCreate, mPLATFORM_GB },
+	{ GBIsROM, GBCoreCreate, PLATFORM_GB },
 #endif
-	{ 0, 0, mPLATFORM_NONE }
+	{ 0, 0, PLATFORM_NONE }
 };
 
 struct mCore* mCoreFindVF(struct VFile* vf) {
@@ -66,7 +62,7 @@ struct mCore* mCoreFindVF(struct VFile* vf) {
 
 enum mPlatform mCoreIsCompatible(struct VFile* vf) {
 	if (!vf) {
-		return mPLATFORM_NONE;
+		return PLATFORM_NONE;
 	}
 	const struct mCoreFilter* filter;
 	for (filter = &_filters[0]; filter->filter; ++filter) {
@@ -74,31 +70,19 @@ enum mPlatform mCoreIsCompatible(struct VFile* vf) {
 			return filter->platform;
 		}
 	}
-	return mPLATFORM_NONE;
+	return PLATFORM_NONE;
 }
 
-struct mCore* mCoreCreate(enum mPlatform platform) {
-	const struct mCoreFilter* filter;
-	for (filter = &_filters[0]; filter->filter; ++filter) {
-		if (filter->platform == platform) {
-			break;
-		}
-	}
-	if (filter->open) {
-		return filter->open();
-	}
-	return NULL;
-}
+#if !defined(MINIMAL_CORE) || MINIMAL_CORE < 2
+#include <mgba-util/png-io.h>
 
-#ifdef ENABLE_VFS
 #ifdef PSP2
 #include <psp2/photoexport.h>
 #endif
 
 struct mCore* mCoreFind(const char* path) {
-	struct mCore* core = NULL;
-#if defined(ENABLE_VFS) && defined(ENABLE_DIRECTORIES)
 	struct VDir* archive = VDirOpenArchive(path);
+	struct mCore* core = NULL;
 	if (archive) {
 		struct VDirEntry* dirent = archive->listNext(archive);
 		while (dirent) {
@@ -115,9 +99,7 @@ struct mCore* mCoreFind(const char* path) {
 			dirent = archive->listNext(archive);
 		}
 		archive->close(archive);
-	} else
-#endif
-	{
+	} else {
 		struct VFile* vf = VFileOpen(path, O_RDONLY);
 		if (!vf) {
 			return NULL;
@@ -132,19 +114,10 @@ struct mCore* mCoreFind(const char* path) {
 }
 
 bool mCoreLoadFile(struct mCore* core, const char* path) {
-	core->unloadROM(core);
 #ifdef FIXED_ROM_BUFFER
 	return mCorePreloadFile(core, path);
 #else
-#if defined(ENABLE_VFS) && defined(ENABLE_DIRECTORIES)
 	struct VFile* rom = mDirectorySetOpenPath(&core->dirs, path, core->isROM);
-#else
-	struct VFile* rom = VFileOpen(path, O_RDONLY);
-	if (rom && !core->isROM(rom)) {
-		rom->close(rom);
-		rom = NULL;
-	}
-#endif
 	if (!rom) {
 		return false;
 	}
@@ -173,46 +146,25 @@ bool mCorePreloadVFCB(struct mCore* core, struct VFile* vf, void (cb)(size_t, si
 	extern uint32_t* romBuffer;
 	extern size_t romBufferSize;
 	if (size > romBufferSize) {
-		if (size - romBufferSize < romBufferSize / 2) {
-			// Some ROM hacks accidentally overflow the size a bit, but since those are broken
-			// on hardware anyway we can just silently truncate them without issue.
-			size = romBufferSize;
-		} else {
-			return false;
-		}
+		size = romBufferSize;
 	}
 	vfm = VFileFromMemory(romBuffer, size);
 #else
 	vfm = VFileMemChunk(NULL, size);
 #endif
 
-	size_t chunkSize;
-#ifdef FIXED_ROM_BUFFER
-	uint8_t* buffer = (uint8_t*) romBuffer;
-	chunkSize = 0x10000;
-#else
-	uint8_t buffer[0x4000];
-	chunkSize = sizeof(buffer);
-#endif
+	uint8_t buffer[2048];
 	ssize_t read;
 	size_t total = 0;
 	vf->seek(vf, 0, SEEK_SET);
-	while ((read = vf->read(vf, buffer, chunkSize)) > 0) {
-#ifdef FIXED_ROM_BUFFER
-		buffer += read;
-#else
+	while ((read = vf->read(vf, buffer, sizeof(buffer))) > 0) {
 		vfm->write(vfm, buffer, read);
-#endif
 		total += read;
 		if (cb) {
 			cb(total, size, context);
 		}
 	}
 	vf->close(vf);
-	if (read < 0) {
-		vfm->close(vfm);
-		return false;
-	}
 	bool ret = core->loadROM(core, vfm);
 	if (!ret) {
 		vfm->close(vfm);
@@ -221,15 +173,7 @@ bool mCorePreloadVFCB(struct mCore* core, struct VFile* vf, void (cb)(size_t, si
 }
 
 bool mCorePreloadFileCB(struct mCore* core, const char* path, void (cb)(size_t, size_t, void*), void* context) {
-#if defined(ENABLE_VFS) && defined(ENABLE_DIRECTORIES)
 	struct VFile* rom = mDirectorySetOpenPath(&core->dirs, path, core->isROM);
-#else
-	struct VFile* rom = VFileOpen(path, O_RDONLY);
-	if (rom && !core->isROM(rom)) {
-		rom->close(rom);
-		rom = NULL;
-	}
-#endif
 	if (!rom) {
 		return false;
 	}
@@ -241,65 +185,31 @@ bool mCorePreloadFileCB(struct mCore* core, const char* path, void (cb)(size_t, 
 	return ret;
 }
 
-bool mCoreLoadSaveFile(struct mCore* core, const char* path, bool temporary) {
-	struct VFile* vf = VFileOpen(path, O_CREAT | O_RDWR);
-	if (!vf) {
-		return false;
-	}
-	if (temporary) {
-		return core->loadTemporarySave(core, vf);
-	} else {
-		return core->loadSave(core, vf);
-	}
-}
-
-#if defined(ENABLE_VFS) && defined(ENABLE_DIRECTORIES)
 bool mCoreAutoloadSave(struct mCore* core) {
 	if (!core->dirs.save) {
 		return false;
 	}
-	int savePlayerId = 0;
-	char sav[16] = ".sav";
-	mCoreConfigGetIntValue(&core->config, "savePlayerId", &savePlayerId);
-	if (savePlayerId > 1) {
-		snprintf(sav, sizeof(sav), ".sa%i", savePlayerId);
-	}
-	return core->loadSave(core, mDirectorySetOpenSuffix(&core->dirs, core->dirs.save, sav, O_CREAT | O_RDWR));
+	return core->loadSave(core, mDirectorySetOpenSuffix(&core->dirs, core->dirs.save, ".sav", O_CREAT | O_RDWR));
 }
 
 bool mCoreAutoloadPatch(struct mCore* core) {
 	if (!core->dirs.patch) {
 		return false;
 	}
-	struct VFile* vf = NULL;
-	if (!vf) {
-		vf = mDirectorySetOpenSuffix(&core->dirs, core->dirs.patch, ".bps", O_RDONLY);
-	}
-	if (!vf) {
-		vf = mDirectorySetOpenSuffix(&core->dirs, core->dirs.patch, ".ups", O_RDONLY);
-	}
-	if (!vf) {
-		vf = mDirectorySetOpenSuffix(&core->dirs, core->dirs.patch, ".ips", O_RDONLY);
-	}
-	if (!vf) {
-		return false;
-	}
-	bool result = core->loadPatch(core, vf);
-	vf->close(vf);
-	return result;
+	return core->loadPatch(core, mDirectorySetOpenSuffix(&core->dirs, core->dirs.patch, ".ups", O_RDONLY)) ||
+	       core->loadPatch(core, mDirectorySetOpenSuffix(&core->dirs, core->dirs.patch, ".ips", O_RDONLY)) ||
+	       core->loadPatch(core, mDirectorySetOpenSuffix(&core->dirs, core->dirs.patch, ".bps", O_RDONLY));
 }
 
 bool mCoreAutoloadCheats(struct mCore* core) {
-	bool success = !!core->dirs.cheats;
+	bool success = true;
 	int cheatAuto;
-	if (success && (!mCoreConfigGetIntValue(&core->config, "cheatAutoload", &cheatAuto) || cheatAuto)) {
+	if (!mCoreConfigGetIntValue(&core->config, "cheatAutoload", &cheatAuto) || cheatAuto) {
 		struct VFile* vf = mDirectorySetOpenSuffix(&core->dirs, core->dirs.cheats, ".cheats", O_RDONLY);
 		if (vf) {
 			struct mCheatDevice* device = core->cheatDevice(core);
 			success = mCheatParseFile(device, vf);
 			vf->close(vf);
-		} else {
-			success = false;
 		}
 	}
 	if (!mCoreConfigGetIntValue(&core->config, "cheatAutosave", &cheatAuto) || cheatAuto) {
@@ -345,9 +255,6 @@ struct VFile* mCoreGetState(struct mCore* core, int slot, bool write) {
 	if (!core->dirs.state) {
 		return NULL;
 	}
-	if (slot < 0) {
-		return NULL;
-	}
 	char name[PATH_MAX + 14]; // Quash warning
 	snprintf(name, sizeof(name), "%s.ss%i", core->dirs.baseName, slot);
 	return core->dirs.state->openFile(core->dirs.state, name, write ? (O_CREAT | O_TRUNC | O_RDWR) : O_RDONLY);
@@ -361,6 +268,10 @@ void mCoreDeleteState(struct mCore* core, int slot) {
 
 void mCoreTakeScreenshot(struct mCore* core) {
 #ifdef USE_PNG
+	size_t stride;
+	const void* pixels = 0;
+	unsigned width, height;
+	core->desiredVideoDimensions(core, &width, &height);
 	struct VFile* vf;
 #ifndef PSP2
 	vf = VDirFindNextAvailable(core->dirs.screenshot, core->dirs.baseName, "-", ".png", O_CREAT | O_TRUNC | O_WRONLY);
@@ -369,7 +280,11 @@ void mCoreTakeScreenshot(struct mCore* core) {
 #endif
 	bool success = false;
 	if (vf) {
-		success = mCoreTakeScreenshotVF(core, vf);
+		core->getPixels(core, &pixels, &stride);
+		png_structp png = PNGWriteOpen(vf);
+		png_infop info = PNGWriteHeader(png, width, height);
+		success = PNGWritePixels(png, width, height, stride, pixels);
+		PNGWriteClose(png, info);
 #ifdef PSP2
 		void* data = vf->map(vf, 0, 0);
 		PhotoExportParam param = {
@@ -393,33 +308,13 @@ void mCoreTakeScreenshot(struct mCore* core) {
 	mLOG(STATUS, WARN, "Failed to take screenshot");
 }
 #endif
-#endif
-
-bool mCoreTakeScreenshotVF(struct mCore* core, struct VFile* vf) {
-#ifdef USE_PNG
-	size_t stride;
-	const void* pixels = 0;
-	unsigned width, height;
-	core->currentVideoSize(core, &width, &height);
-	core->getPixels(core, &pixels, &stride);
-	png_structp png = PNGWriteOpen(vf);
-	png_infop info = PNGWriteHeader(png, width, height, mCOLOR_NATIVE);
-	bool success = PNGWritePixels(png, width, height, stride, pixels, mCOLOR_NATIVE);
-	PNGWriteClose(png, info);
-	return success;
-#else
-	UNUSED(core);
-	UNUSED(vf);
-	return false;
-#endif
-}
 
 void mCoreInitConfig(struct mCore* core, const char* port) {
 	mCoreConfigInit(&core->config, port);
 }
 
 void mCoreLoadConfig(struct mCore* core) {
-#ifdef ENABLE_VFS
+#if !defined(MINIMAL_CORE) || MINIMAL_CORE < 2
 	mCoreConfigLoad(&core->config);
 #endif
 	mCoreLoadForeignConfig(core, &core->config);
@@ -427,7 +322,7 @@ void mCoreLoadConfig(struct mCore* core) {
 
 void mCoreLoadForeignConfig(struct mCore* core, const struct mCoreConfig* config) {
 	mCoreConfigMap(config, &core->opts);
-#if defined(ENABLE_VFS) && defined(ENABLE_DIRECTORIES)
+#if !defined(MINIMAL_CORE) || MINIMAL_CORE < 2
 	mDirectorySetMapOptions(&core->dirs, &core->opts);
 #endif
 	if (core->opts.audioBuffers) {
@@ -436,7 +331,6 @@ void mCoreLoadForeignConfig(struct mCore* core, const struct mCoreConfig* config
 
 	mCoreConfigCopyValue(&core->config, config, "cheatAutosave");
 	mCoreConfigCopyValue(&core->config, config, "cheatAutoload");
-	mCoreConfigCopyValue(&core->config, config, "savePlayerId");
 
 	core->loadConfig(core, config);
 }
@@ -447,21 +341,6 @@ void mCoreSetRTC(struct mCore* core, struct mRTCSource* rtc) {
 }
 
 void* mCoreGetMemoryBlock(struct mCore* core, uint32_t start, size_t* size) {
-	return mCoreGetMemoryBlockMasked(core, start, size, mCORE_MEMORY_MAPPED);
-}
-
-void* mCoreGetMemoryBlockMasked(struct mCore* core, uint32_t start, size_t* size, uint32_t mask) {
-	const struct mCoreMemoryBlock* block = mCoreGetMemoryBlockInfo(core, start);
-	if (!block || !(block->flags & mask)) {
-		return NULL;
-	}
-	uint8_t* out = core->getMemoryBlock(core, block->id, size);
-	out += start - block->start;
-	*size -= start - block->start;
-	return out;
-}
-
-const struct mCoreMemoryBlock* mCoreGetMemoryBlockInfo(const struct mCore* core, uint32_t address) {
 	const struct mCoreMemoryBlock* blocks;
 	size_t nBlocks = core->listMemoryBlocks(core, &blocks);
 	size_t i;
@@ -469,33 +348,18 @@ const struct mCoreMemoryBlock* mCoreGetMemoryBlockInfo(const struct mCore* core,
 		if (!(blocks[i].flags & mCORE_MEMORY_MAPPED)) {
 			continue;
 		}
-		if (address < blocks[i].start) {
+		if (start < blocks[i].start) {
 			continue;
 		}
-		if (address >= blocks[i].start + blocks[i].size) {
+		if (start >= blocks[i].start + blocks[i].size) {
 			continue;
 		}
-		return &blocks[i];
+		uint8_t* out = core->getMemoryBlock(core, blocks[i].id, size);
+		out += start - blocks[i].start;
+		*size -= start - blocks[i].start;
+		return out;
 	}
 	return NULL;
-}
-
-const struct mCoreRegisterInfo* mCoreGetRegisterInfo(const struct mCore* core, const char* name) {
-	const struct mCoreRegisterInfo* registers;
-	size_t nRegisters = core->listRegisters(core, &registers);
-	size_t i;
-	for (i = 0; i < nRegisters; ++i) {
-		if (strcmp(name, registers[i].name) == 0) {
-			return &registers[i];
-		}
-	}
-	return NULL;
-}
-
-double mCoreCalculateFramerateRatio(const struct mCore* core, double desiredFrameRate) {
-	uint32_t clockRate = core->frequency(core);
-	uint32_t frameCycles = core->frameCycles(core);
-	return clockRate / (desiredFrameRate * frameCycles);
 }
 
 #ifdef USE_ELF
@@ -507,10 +371,7 @@ bool mCoreLoadELF(struct mCore* core, struct ELF* elf) {
 	for (i = 0; i < ELFProgramHeadersSize(&ph); ++i) {
 		size_t bsize, esize;
 		Elf32_Phdr* phdr = ELFProgramHeadersGetPointer(&ph, i);
-		if (!phdr->p_filesz) {
-			continue;
-		}
-		void* block = mCoreGetMemoryBlockMasked(core, phdr->p_paddr, &bsize, mCORE_MEMORY_WRITE | mCORE_MEMORY_WORM);
+		void* block = mCoreGetMemoryBlock(core, phdr->p_paddr, &bsize);
 		char* bytes = ELFBytes(elf, &esize);
 		if (block && bsize >= phdr->p_filesz && esize > phdr->p_offset && esize >= phdr->p_filesz + phdr->p_offset) {
 			memcpy(block, &bytes[phdr->p_offset], phdr->p_filesz);
@@ -523,7 +384,7 @@ bool mCoreLoadELF(struct mCore* core, struct ELF* elf) {
 	return true;
 }
 
-#ifdef ENABLE_DEBUGGERS
+#ifdef USE_DEBUGGERS
 void mCoreLoadELFSymbols(struct mDebuggerSymbols* symbols, struct ELF* elf) {
 	size_t symIndex = ELFFindSection(elf, ".symtab");
 	size_t names = ELFFindSection(elf, ".strtab");

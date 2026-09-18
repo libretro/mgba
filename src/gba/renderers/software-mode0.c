@@ -17,6 +17,7 @@
 
 #define DRAW_BACKGROUND_MODE_0_TILE_SUFFIX_16(BLEND, OBJWIN) \
 	paletteData = GBA_TEXT_MAP_PALETTE(mapData) << 4; \
+	palette = &mainPalette[paletteData]; \
 	charBase = (background->charBase + (GBA_TEXT_MAP_TILE(mapData) << 5)) + (localY << 2); \
 	LOAD_32(tileData, charBase, vram); \
 	if (!GBA_TEXT_MAP_HFLIP(mapData)) { \
@@ -35,6 +36,7 @@
 	charBase = (background->charBase + (GBA_TEXT_MAP_TILE(mapData) << 5)) + (localY << 2); \
 	LOAD_32(tileData, charBase, vram); \
 	paletteData = GBA_TEXT_MAP_PALETTE(mapData) << 4; \
+	palette = &mainPalette[paletteData]; \
 	pixel = &renderer->row[outX]; \
 	if (!GBA_TEXT_MAP_HFLIP(mapData)) { \
 		if (outX < renderer->start) { \
@@ -91,6 +93,7 @@
 			carryData = 0; \
 		} else { \
 			paletteData = GBA_TEXT_MAP_PALETTE(mapData) << 4; \
+			palette = &mainPalette[paletteData]; \
 			LOAD_32(tileData, charBase, vram); \
 			if (!GBA_TEXT_MAP_HFLIP(mapData)) { \
 				tileData >>= 4 * baseX; \
@@ -120,6 +123,7 @@
 					carryData = 0; \
 				} else { \
 					paletteData = GBA_TEXT_MAP_PALETTE(mapData) << 4; \
+					palette = &mainPalette[paletteData]; \
 					LOAD_32(tileData, charBase, vram); \
 					if (!GBA_TEXT_MAP_HFLIP(mapData)) { \
 						tileData >>= x * 4; \
@@ -150,26 +154,33 @@
 			localY = 7 - localY; \
 		} \
 		paletteData = GBA_TEXT_MAP_PALETTE(mapData) << 4; \
+		palette = &mainPalette[paletteData]; \
 		charBase = (background->charBase + (GBA_TEXT_MAP_TILE(mapData) << 5)) + (localY << 2); \
 		if (UNLIKELY(charBase >= 0x10000)) { \
 			pixel += 8; \
 			continue; \
 		} \
-		if (!GBA_TEXT_MAP_HFLIP(mapData)) { \
-			LOAD_32(tileData, charBase, vram); \
-		} else { \
-			LOAD_32BE(tileData, charBase, vram); \
-			tileData = ((tileData & 0xF0F0F0F0) >> 4) | ((tileData & 0x0F0F0F0F) << 4); \
-		} \
+		LOAD_32(tileData, charBase, vram); \
 		if (tileData) { \
-			BACKGROUND_DRAW_PIXEL_16(BLEND, OBJWIN, 0); \
-			BACKGROUND_DRAW_PIXEL_16(BLEND, OBJWIN, 1); \
-			BACKGROUND_DRAW_PIXEL_16(BLEND, OBJWIN, 2); \
-			BACKGROUND_DRAW_PIXEL_16(BLEND, OBJWIN, 3); \
-			BACKGROUND_DRAW_PIXEL_16(BLEND, OBJWIN, 4); \
-			BACKGROUND_DRAW_PIXEL_16(BLEND, OBJWIN, 5); \
-			BACKGROUND_DRAW_PIXEL_16(BLEND, OBJWIN, 6); \
-			BACKGROUND_DRAW_PIXEL_16(BLEND, OBJWIN, 7); \
+			if (!GBA_TEXT_MAP_HFLIP(mapData)) { \
+				BACKGROUND_DRAW_PIXEL_16(BLEND, OBJWIN, 0); \
+				BACKGROUND_DRAW_PIXEL_16(BLEND, OBJWIN, 1); \
+				BACKGROUND_DRAW_PIXEL_16(BLEND, OBJWIN, 2); \
+				BACKGROUND_DRAW_PIXEL_16(BLEND, OBJWIN, 3); \
+				BACKGROUND_DRAW_PIXEL_16(BLEND, OBJWIN, 4); \
+				BACKGROUND_DRAW_PIXEL_16(BLEND, OBJWIN, 5); \
+				BACKGROUND_DRAW_PIXEL_16(BLEND, OBJWIN, 6); \
+				BACKGROUND_DRAW_PIXEL_16(BLEND, OBJWIN, 7); \
+			} else { \
+				BACKGROUND_DRAW_PIXEL_16(BLEND, OBJWIN, 7); \
+				BACKGROUND_DRAW_PIXEL_16(BLEND, OBJWIN, 6); \
+				BACKGROUND_DRAW_PIXEL_16(BLEND, OBJWIN, 5); \
+				BACKGROUND_DRAW_PIXEL_16(BLEND, OBJWIN, 4); \
+				BACKGROUND_DRAW_PIXEL_16(BLEND, OBJWIN, 3); \
+				BACKGROUND_DRAW_PIXEL_16(BLEND, OBJWIN, 2); \
+				BACKGROUND_DRAW_PIXEL_16(BLEND, OBJWIN, 1); \
+				BACKGROUND_DRAW_PIXEL_16(BLEND, OBJWIN, 0); \
+			} \
 		} \
 		pixel += 8; \
 	}
@@ -376,7 +387,7 @@
 		} \
 		charBase = (background->charBase + (GBA_TEXT_MAP_TILE(mapData) << 6)) + (localY << 3); \
 		tileData = carryData; \
-		for (; x < 8 && length; ++x, --length) { \
+		for (x = 0; x < 8 && length; ++x, --length) { \
 			if (!mosaicWait) { \
 				if (UNLIKELY(charBase >= 0x10000)) { \
 					carryData = 0; \
@@ -408,7 +419,6 @@
 			BACKGROUND_DRAW_PIXEL_256(BLEND, OBJWIN, 0); \
 			++pixel; \
 		} \
-		x = 0; \
 	}
 
 #define DRAW_BACKGROUND_MODE_0(BPP, BLEND, OBJWIN) \
@@ -506,22 +516,30 @@ void GBAVideoSoftwareRendererDrawBackgroundMode0(struct GBAVideoSoftwareRenderer
 
 	unsigned xBase;
 
-	uint32_t flags = background->flags;
-	uint32_t objwinFlags = background->objwinFlags;
-	bool variant = background->variant;
+	uint32_t flags = (background->priority << OFFSET_PRIORITY) | (background->index << OFFSET_INDEX) | FLAG_IS_BACKGROUND;
+	flags |= FLAG_TARGET_2 * background->target2;
+	int objwinFlags = FLAG_TARGET_1 * (background->target1 && renderer->blendEffect == BLEND_ALPHA && GBAWindowControlIsBlendEnable(renderer->objwin.packed));
+	objwinFlags |= flags;
+	flags |= FLAG_TARGET_1 * (background->target1 && renderer->blendEffect == BLEND_ALPHA && GBAWindowControlIsBlendEnable(renderer->currentWindow.packed));
+	if (renderer->blendEffect == BLEND_ALPHA && renderer->blda == 0x10 && renderer->bldb == 0) {
+		flags &= ~(FLAG_TARGET_1 | FLAG_TARGET_2);
+		objwinFlags &= ~(FLAG_TARGET_1 | FLAG_TARGET_2);
+	}
 
 	uint32_t screenBase;
 	uint32_t charBase;
-	mColor* palette = renderer->normalPalette;
+	int variant = background->target1 && GBAWindowControlIsBlendEnable(renderer->currentWindow.packed) && (renderer->blendEffect == BLEND_BRIGHTEN || renderer->blendEffect == BLEND_DARKEN);
+	color_t* mainPalette = renderer->normalPalette;
 	if (renderer->d.highlightAmount && background->highlight) {
-		palette = renderer->highlightPalette;
+		mainPalette = renderer->highlightPalette;
 	}
 	if (variant) {
-		palette = renderer->variantPalette;
+		mainPalette = renderer->variantPalette;
 		if (renderer->d.highlightAmount && background->highlight) {
-			palette = renderer->highlightVariantPalette;
+			mainPalette = renderer->highlightVariantPalette;
 		}
 	}
+	color_t* palette = mainPalette;
 	PREPARE_OBJWIN;
 
 	int outX = renderer->start;

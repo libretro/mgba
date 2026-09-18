@@ -4,26 +4,38 @@
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
-#include "library/LibraryController.h"
-#include "library/moc_LibraryController.cpp"
+#include "LibraryController.h"
 
 #include "ConfigController.h"
 #include "GBAApp.h"
-#include "LibraryModel.h"
-#include "utils.h"
-
-#include <QHeaderView>
-#include <QListView>
-#include <QSortFilterProxyModel>
-#include <QTimer>
-#include <QTreeView>
+#include "LibraryGrid.h"
+#include "LibraryTree.h"
 
 using namespace QGBA;
+
+LibraryEntry::LibraryEntry(mLibraryEntry* entry)
+	: entry(entry)
+	, m_fullpath(QString("%1/%2").arg(entry->base, entry->filename))
+{
+}
+
+void AbstractGameList::addEntries(QList<LibraryEntryRef> items) {
+	for (LibraryEntryRef o : items) {
+		addEntry(o);
+	}
+}
+void AbstractGameList::removeEntries(QList<LibraryEntryRef> items) {
+	for (LibraryEntryRef o : items) {
+		removeEntry(o);
+	}
+}
 
 LibraryController::LibraryController(QWidget* parent, const QString& path, ConfigController* config)
 	: QStackedWidget(parent)
 	, m_config(config)
 {
+	mLibraryListingInit(&m_listing, 0);
+
 	if (!path.isNull()) {
 		// This can return NULL if the library is already open
 		m_library = std::shared_ptr<mLibrary>(mLibraryLoad(path.toUtf8().constData()), mLibraryDestroy);
@@ -34,152 +46,73 @@ LibraryController::LibraryController(QWidget* parent, const QString& path, Confi
 
 	mLibraryAttachGameDB(m_library.get(), GBAApp::app()->gameDB());
 
-	m_libraryModel = new LibraryModel(this);
+	m_libraryTree = std::make_unique<LibraryTree>(this);
+	addWidget(m_libraryTree->widget());
 
-	m_treeView = new QTreeView(this);
-	addWidget(m_treeView);
-	m_treeModel = new QSortFilterProxyModel(this);
-	m_treeModel->setSourceModel(m_libraryModel);
-	m_treeModel->setSortRole(Qt::EditRole);
-	m_treeView->setModel(m_treeModel);
-	m_treeView->setSortingEnabled(true);
-	m_treeView->setAlternatingRowColors(true);
+	m_libraryGrid = std::make_unique<LibraryGrid>(this);
+	addWidget(m_libraryGrid->widget());
 
-	m_listView = new QListView(this);
-	addWidget(m_listView);
-	m_listModel = new QSortFilterProxyModel(this);
-	m_listModel->setSourceModel(m_libraryModel);
-	m_listModel->setSortRole(Qt::EditRole);
-	m_listView->setModel(m_listModel);
-
-	QObject::connect(m_treeView, &QAbstractItemView::activated, this, &LibraryController::startGame);
-	QObject::connect(m_listView, &QAbstractItemView::activated, this, &LibraryController::startGame);
-	QObject::connect(m_treeView->header(), &QHeaderView::sortIndicatorChanged, this, &LibraryController::sortChanged);
-
-	m_expandThrottle.setInterval(100);
-	m_expandThrottle.setSingleShot(true);
-	QObject::connect(&m_expandThrottle, &QTimer::timeout, this, qOverload<>(&LibraryController::resizeTreeView));
-	QObject::connect(m_libraryModel, &QAbstractItemModel::modelReset, &m_expandThrottle, qOverload<>(&QTimer::start));
-	QObject::connect(m_libraryModel, &QAbstractItemModel::rowsInserted, &m_expandThrottle, qOverload<>(&QTimer::start));
-
-	QVariant librarySort, librarySortOrder;
-	if (m_config) {
-		LibraryStyle libraryStyle = LibraryStyle(m_config->getOption("libraryStyle", int(LibraryStyle::STYLE_LIST)).toInt());
-		updateViewStyle(libraryStyle);
-		librarySort = m_config->getQtOption("librarySort");
-		librarySortOrder = m_config->getQtOption("librarySortOrder");
-	} else {
-		updateViewStyle(LibraryStyle::STYLE_LIST);
-	}
-
-	if (librarySort.isNull() || !librarySort.canConvert<int>()) {
-		librarySort = 0;
-	}
-	if (librarySortOrder.isNull() || !librarySortOrder.canConvert<Qt::SortOrder>()) {
-		librarySortOrder = Qt::AscendingOrder;
-	}
-	m_treeModel->sort(librarySort.toInt(), librarySortOrder.value<Qt::SortOrder>());
-	m_listModel->sort(0, Qt::AscendingOrder);
+	m_currentStyle = LibraryStyle::STYLE_TREE; // Make sure setViewStyle does something
+	setViewStyle(LibraryStyle::STYLE_LIST);
 	refresh();
 }
 
 LibraryController::~LibraryController() {
+	freeLibrary();
+	mLibraryListingDeinit(&m_listing);
 }
 
 void LibraryController::setViewStyle(LibraryStyle newStyle) {
 	if (m_currentStyle == newStyle) {
 		return;
 	}
-	updateViewStyle(newStyle);
-}
-
-void LibraryController::updateViewStyle(LibraryStyle newStyle) {
-	QString selected;
-	if (m_currentView) {
-		QModelIndex selectedIndex = m_currentView->selectionModel()->currentIndex();
-		if (selectedIndex.isValid()) {
-			selected = selectedIndex.data(LibraryModel::FullPathRole).toString();
-		}
-	}
-
 	m_currentStyle = newStyle;
-	m_libraryModel->setTreeMode(newStyle == LibraryStyle::STYLE_TREE);
 
-	QAbstractItemView* newView = m_listView;
+	AbstractGameList* newCurrentList = nullptr;
 	if (newStyle == LibraryStyle::STYLE_LIST || newStyle == LibraryStyle::STYLE_TREE) {
-		newView = m_treeView;
+		newCurrentList = m_libraryTree.get();
+	} else {
+		newCurrentList = m_libraryGrid.get();
 	}
-
-	setCurrentWidget(newView);
-	m_currentView = newView;
-	selectEntry(selected);
+	newCurrentList->selectEntry(selectedEntry());
+	newCurrentList->setViewStyle(newStyle);
+	setCurrentWidget(newCurrentList->widget());
+	m_currentList = newCurrentList;
 }
 
-void LibraryController::sortChanged(int column, Qt::SortOrder order) {
-	if (m_config) {
-		m_config->setQtOption("librarySort", column);
-		m_config->setQtOption("librarySortOrder", order);
-	}
-}
-
-void LibraryController::selectEntry(const QString& fullpath) {
-	if (!m_currentView) {
+void LibraryController::selectEntry(LibraryEntryRef entry) {
+	if (!m_currentList) {
 		return;
 	}
-	QModelIndex index = m_libraryModel->index(fullpath);
-
-	// If the model is proxied in the current view, map the index to the proxy
-	QAbstractProxyModel* proxy = qobject_cast<QAbstractProxyModel*>(m_currentView->model());
-	if (proxy) {
-		index = proxy->mapFromSource(index);
-	}
-
-	if (index.isValid()) {
-		m_currentView->selectionModel()->setCurrentIndex(index, QItemSelectionModel::ClearAndSelect | QItemSelectionModel::Current);
-	}
+	m_currentList->selectEntry(entry);
 }
 
-LibraryEntry LibraryController::selectedEntry() {
-	if (!m_currentView) {
-		return {};
+LibraryEntryRef LibraryController::selectedEntry() {
+	if (!m_currentList) {
+		return LibraryEntryRef();
 	}
-	QModelIndex index = m_currentView->selectionModel()->currentIndex();
-	if (!index.isValid()) {
-		return {};
-	}
-	QString fullpath = index.data(LibraryModel::FullPathRole).toString();
-	return m_libraryModel->entry(fullpath);
+	return m_currentList->selectedEntry();
 }
 
 VFile* LibraryController::selectedVFile() {
-	LibraryEntry entry = selectedEntry();
-	if (!entry.isNull()) {
-		mLibraryEntry libentry = {0};
-		QByteArray baseUtf8(entry.base.toUtf8());
-		QByteArray filenameUtf8(entry.filename.toUtf8());
-		libentry.base = baseUtf8.constData();
-		libentry.filename = filenameUtf8.constData();
-		libentry.platform = mPLATFORM_NONE;
-		libentry.platformModels = M_LIBRARY_MODEL_UNKNOWN;
-		return mLibraryOpenVFile(m_library.get(), &libentry);
+	LibraryEntryRef entry = selectedEntry();
+	if (entry) {
+		return mLibraryOpenVFile(m_library.get(), entry->entry);
 	} else {
 		return nullptr;
 	}
 }
 
 QPair<QString, QString> LibraryController::selectedPath() {
-	LibraryEntry entry = selectedEntry();
-	if (!entry.isNull()) {
-		return qMakePair(QString(entry.base), QString(entry.filename));
-	} else {
-		return qMakePair(QString(), QString());
-	}
+	LibraryEntryRef e = selectedEntry();
+	return e ? qMakePair(e->base(), e->filename()) : qMakePair<QString, QString>("", "");
 }
 
-void LibraryController::addDirectory(const QString& dir, bool recursive) {
+void LibraryController::addDirectory(const QString& dir) {
 	// The worker thread temporarily owns the library
 	std::shared_ptr<mLibrary> library = m_library;
-	m_libraryJob = GBAApp::app()->submitWorkerJob(std::bind(&LibraryController::loadDirectory, this, dir, recursive), this, [this, library]() {
+	m_libraryJob = GBAApp::app()->submitWorkerJob(std::bind(&LibraryController::loadDirectory, this, dir), this, [this, library]() {
+		m_libraryJob = -1;
 		refresh();
 	});
 }
@@ -200,39 +133,38 @@ void LibraryController::refresh() {
 
 	setDisabled(true);
 
-	QSet<QString> removedEntries(qListToSet(m_knownGames.keys()));
-	QList<LibraryEntry> updatedEntries;
-	QList<LibraryEntry> newEntries;
+	QStringList allEntries;
+	QList<LibraryEntryRef> newEntries;
 
-	mLibraryListing listing;
-	mLibraryListingInit(&listing, 0);
-	mLibraryGetEntries(m_library.get(), &listing, 0, 0, nullptr);
-	for (size_t i = 0; i < mLibraryListingSize(&listing); i++) {
-		const mLibraryEntry* entry = mLibraryListingGetConstPointer(&listing, i);
-		uint64_t checkHash = LibraryEntry::checkHash(entry);
-		QString fullpath = QStringLiteral("%1/%2").arg(entry->base, entry->filename);
-		if (!m_knownGames.contains(fullpath)) {
-			newEntries.append(entry);
-		} else if (checkHash != m_knownGames[fullpath]) {
-			updatedEntries.append(entry);
+	freeLibrary();
+	mLibraryGetEntries(m_library.get(), &m_listing, 0, 0, nullptr);
+	for (size_t i = 0; i < mLibraryListingSize(&m_listing); i++) {
+		mLibraryEntry* entry = mLibraryListingGetPointer(&m_listing, i);
+		QString fullpath = QString("%1/%2").arg(entry->base, entry->filename);
+		if (m_entries.contains(fullpath)) {
+			m_entries.value(fullpath)->entry = entry;
+		} else {
+			LibraryEntryRef libentry = std::make_shared<LibraryEntry>(entry);
+			m_entries.insert(fullpath, libentry);
+			newEntries.append(libentry);
 		}
-		removedEntries.remove(fullpath);
-		m_knownGames[fullpath] = checkHash;
+		allEntries.append(fullpath);
 	}
 
 	// Check for entries that were removed
-	for (const QString& path : removedEntries) {
-		m_knownGames.remove(path);
+	QList<LibraryEntryRef> removedEntries;
+	for (QString& path : m_entries.keys()) {
+		if (!allEntries.contains(path)) {
+			removedEntries.append(m_entries.value(path));
+			m_entries.remove(path);
+		}
 	}
 
-	m_libraryModel->removeEntries(removedEntries.values());
-	m_libraryModel->updateEntries(updatedEntries);
-	m_libraryModel->addEntries(newEntries);
+	m_libraryTree->addEntries(newEntries);
+	m_libraryGrid->addEntries(newEntries);
 
-	for (size_t i = 0; i < mLibraryListingSize(&listing); ++i) {
-		mLibraryEntryFree(mLibraryListingGetPointer(&listing, i));
-	}
-	mLibraryListingDeinit(&listing);
+	m_libraryTree->removeEntries(removedEntries);
+	m_libraryGrid->removeEntries(removedEntries);
 
 	setDisabled(false);
 	selectLastBootedGame();
@@ -244,73 +176,20 @@ void LibraryController::selectLastBootedGame() {
 		return;
 	}
 	const QString lastfile = m_config->getMRU().first();
-	if (m_knownGames.contains(lastfile)) {
-		selectEntry(lastfile);
+	if (m_entries.contains(lastfile)) {
+		selectEntry(m_entries.value(lastfile));
 	}
 }
 
-void LibraryController::loadDirectory(const QString& dir, bool recursive) {
-	// This class can get deleted during this function (sigh) so we need to hold onto this
+void LibraryController::loadDirectory(const QString& dir) {
+	// This class can get delted during this function (sigh) so we need to hold onto this
 	std::shared_ptr<mLibrary> library = m_library;
-	qint64 libraryJob = m_libraryJob;
-	mLibraryLoadDirectory(library.get(), dir.toUtf8().constData(), recursive);
-	m_libraryJob.testAndSetOrdered(libraryJob, -1);
+	mLibraryLoadDirectory(library.get(), dir.toUtf8().constData());
 }
 
-void LibraryController::setShowFilename(bool showFilename) {
-	if (showFilename == m_showFilename) {
-		return;
+void LibraryController::freeLibrary() {
+	for (size_t i = 0; i < mLibraryListingSize(&m_listing); ++i) {
+		mLibraryEntryFree(mLibraryListingGetPointer(&m_listing, i));
 	}
-	m_showFilename = showFilename;
-	m_libraryModel->setShowFilename(m_showFilename);
-	refresh();
-}
-
-void LibraryController::showEvent(QShowEvent*) {
-	resizeTreeView(false);
-}
-
-void LibraryController::resizeEvent(QResizeEvent*) {
-	resizeTreeView(false);
-}
-
-// This function automatically reallocates the horizontal space between the
-// columns in the view in a useful way when the window is resized.
-void LibraryController::resizeTreeView(bool expand) {
-	// When new items are added to the model, make sure they are revealed.
-	if (expand) {
-		m_treeView->expandAll();
-	}
-
-	// Start off by asking the view how wide it thinks each column should be.
-	int viewportWidth = m_treeView->viewport()->width();
-	int totalWidth = m_treeView->header()->sectionSizeHint(LibraryModel::MAX_COLUMN);
-	for (int column = 0; column < LibraryModel::MAX_COLUMN; column++) {
-		totalWidth += m_treeView->columnWidth(column);
-	}
-
-	// If there would be empty space, ask the view to redistribute it.
-	// The final column is set to fill any remaining width, so this
-	// should (at least) fill the window.
-	if (totalWidth < viewportWidth) {
-		totalWidth = 0;
-		for (int column = 0; column <= LibraryModel::MAX_COLUMN; column++) {
-			m_treeView->resizeColumnToContents(column);
-			totalWidth += m_treeView->columnWidth(column);
-		}
-	}
-
-	// If the columns would be too wide for the view now, try shrinking the
-	// "Location" column down to reduce horizontal scrolling, with a fixed
-	// minimum width of 100px.
-	if (totalWidth > viewportWidth) {
-		int locationWidth = m_treeView->columnWidth(LibraryModel::COL_LOCATION);
-		if (locationWidth > 100) {
-			int newLocationWidth = m_treeView->viewport()->width() - (totalWidth - locationWidth);
-			if (newLocationWidth < 100) {
-				newLocationWidth = 100;
-			}
-			m_treeView->setColumnWidth(LibraryModel::COL_LOCATION, newLocationWidth);
-		}
-	}
+	mLibraryListingClear(&m_listing);
 }

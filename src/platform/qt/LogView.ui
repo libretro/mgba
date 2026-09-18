@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <ui version="4.0">
- <class>QGBA::LogView</class>
- <widget class="QWidget" name="QGBA::LogView">
+ <class>LogView</class>
+ <widget class="QWidget" name="LogView">
   <property name="geometry">
    <rect>
     <x>0</x>
@@ -100,13 +100,6 @@
          </widget>
         </item>
        </layout>
-      </widget>
-     </item>
-     <item>
-      <widget class="QPushButton" name="advanced">
-       <property name="text">
-        <string>Advanced settings</string>
-       </property>
       </widget>
      </item>
      <item>

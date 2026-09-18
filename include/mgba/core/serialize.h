@@ -16,11 +16,7 @@ enum mStateExtdataTag {
 	EXTDATA_SAVEDATA = 2,
 	EXTDATA_CHEATS = 3,
 	EXTDATA_RTC = 4,
-	EXTDATA_SCREENSHOT_DIMENSIONS = 5,
-	EXTDATA_SUBSYSTEM_START = 0x40,
-	EXTDATA_SUBSYSTEM_MAX = 0x7F,
 	EXTDATA_META_TIME = 0x101,
-	EXTDATA_META_CREATOR = 0x102,
 	EXTDATA_MAX
 };
 
@@ -29,7 +25,6 @@ enum mStateExtdataTag {
 #define SAVESTATE_CHEATS     4
 #define SAVESTATE_RTC        8
 #define SAVESTATE_METADATA   16
-#define SAVESTATE_ALL        31
 
 struct mStateExtdataItem {
 	int32_t size;
@@ -41,10 +36,10 @@ struct mStateExtdata {
 	struct mStateExtdataItem data[EXTDATA_MAX];
 };
 
-void mStateExtdataInit(struct mStateExtdata*);
+bool mStateExtdataInit(struct mStateExtdata*);
 void mStateExtdataDeinit(struct mStateExtdata*);
 void mStateExtdataPut(struct mStateExtdata*, enum mStateExtdataTag, struct mStateExtdataItem*);
-bool mStateExtdataGet(const struct mStateExtdata*, enum mStateExtdataTag, struct mStateExtdataItem*);
+bool mStateExtdataGet(struct mStateExtdata*, enum mStateExtdataTag, struct mStateExtdataItem*);
 
 struct VFile;
 bool mStateExtdataSerialize(struct mStateExtdata* extdata, struct VFile* vf);
@@ -54,7 +49,6 @@ struct mCore;
 bool mCoreSaveStateNamed(struct mCore* core, struct VFile* vf, int flags);
 bool mCoreLoadStateNamed(struct mCore* core, struct VFile* vf, int flags);
 void* mCoreExtractState(struct mCore* core, struct VFile* vf, struct mStateExtdata* extdata);
-bool mCoreExtractExtdata(struct mCore* core, struct VFile* vf, struct mStateExtdata* extdata);
 
 CXX_GUARD_END
 

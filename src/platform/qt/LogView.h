@@ -13,13 +13,12 @@
 namespace QGBA {
 
 class LogController;
-class Window;
 
 class LogView : public QWidget {
 Q_OBJECT
 
 public:
-	LogView(LogController* log, Window* window, QWidget* parent = nullptr);
+	LogView(LogController* log, QWidget* parent = nullptr);
 
 signals:
 	void levelsEnabled(int levels);

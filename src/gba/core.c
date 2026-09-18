@@ -7,45 +7,37 @@
 
 #include <mgba/core/core.h>
 #include <mgba/core/log.h>
-#include <mgba/core/serialize.h>
 #include <mgba/internal/arm/debugger/debugger.h>
-#include <mgba/internal/arm/isa-inlines.h>
 #include <mgba/internal/debugger/symbols.h>
 #include <mgba/internal/gba/cheats.h>
 #include <mgba/internal/gba/gba.h>
 #include <mgba/internal/gba/io.h>
-#include <mgba/internal/gba/debugger/cli.h>
+#include <mgba/internal/gba/extra/audio-mixer.h>
+#include <mgba/internal/gba/extra/cli.h>
 #include <mgba/internal/gba/overrides.h>
 #ifndef DISABLE_THREADING
 #include <mgba/feature/thread-proxy.h>
 #endif
-#ifdef BUILD_GLES3
+#if defined(BUILD_GLES2) || defined(BUILD_GLES3)
 #include <mgba/internal/gba/renderers/gl.h>
 #endif
 #include <mgba/internal/gba/renderers/proxy.h>
 #include <mgba/internal/gba/renderers/video-software.h>
 #include <mgba/internal/gba/savedata.h>
 #include <mgba/internal/gba/serialize.h>
-#include <mgba-util/crc32.h>
 #ifdef USE_ELF
 #include <mgba-util/elf-read.h>
 #endif
-#include <mgba-util/md5.h>
-#include <mgba-util/sha1.h>
 #include <mgba-util/memory.h>
 #include <mgba-util/patch.h>
 #include <mgba-util/vfs.h>
-#include <errno.h>
 
 static const struct mCoreChannelInfo _GBAVideoLayers[] = {
-	{ GBA_LAYER_BG0, "bg0", "Background 0", NULL },
-	{ GBA_LAYER_BG1, "bg1", "Background 1", NULL },
-	{ GBA_LAYER_BG2, "bg2", "Background 2", NULL },
-	{ GBA_LAYER_BG3, "bg3", "Background 3", NULL },
-	{ GBA_LAYER_OBJ, "obj", "Objects", NULL },
-	{ GBA_LAYER_WIN0, "win0", "Window 0", NULL },
-	{ GBA_LAYER_WIN1, "win1", "Window 1", NULL },
-	{ GBA_LAYER_OBJWIN, "objwin", "Object Window", NULL },
+	{ 0, "bg0", "Background 0", NULL },
+	{ 1, "bg1", "Background 1", NULL },
+	{ 2, "bg2", "Background 2", NULL },
+	{ 3, "bg3", "Background 3", NULL },
+	{ 4, "obj", "Objects", NULL },
 };
 
 static const struct mCoreChannelInfo _GBAAudioChannels[] = {
@@ -59,147 +51,86 @@ static const struct mCoreChannelInfo _GBAAudioChannels[] = {
 
 static const struct mCoreMemoryBlock _GBAMemoryBlocks[] = {
 	{ -1, "mem", "All", "All", 0, 0x10000000, 0x10000000, mCORE_MEMORY_VIRTUAL },
-	{ GBA_REGION_BIOS, "bios", "BIOS", "BIOS (16kiB)", GBA_BASE_BIOS, GBA_SIZE_BIOS, GBA_SIZE_BIOS, mCORE_MEMORY_READ | mCORE_MEMORY_MAPPED },
-	{ GBA_REGION_EWRAM, "wram", "EWRAM", "Working RAM (256kiB)", GBA_BASE_EWRAM, GBA_BASE_EWRAM + GBA_SIZE_EWRAM, GBA_SIZE_EWRAM, mCORE_MEMORY_RW | mCORE_MEMORY_MAPPED },
-	{ GBA_REGION_IWRAM, "iwram", "IWRAM", "Internal Working RAM (32kiB)", GBA_BASE_IWRAM, GBA_BASE_IWRAM + GBA_SIZE_IWRAM, GBA_SIZE_IWRAM, mCORE_MEMORY_RW | mCORE_MEMORY_MAPPED },
-	{ GBA_REGION_IO, "io", "MMIO", "Memory-Mapped I/O", GBA_BASE_IO, GBA_BASE_IO + GBA_SIZE_IO, GBA_SIZE_IO, mCORE_MEMORY_RW | mCORE_MEMORY_MAPPED },
-	{ GBA_REGION_PALETTE_RAM, "palette", "Palette", "Palette RAM (1kiB)", GBA_BASE_PALETTE_RAM, GBA_BASE_PALETTE_RAM + GBA_SIZE_PALETTE_RAM, GBA_SIZE_PALETTE_RAM, mCORE_MEMORY_RW | mCORE_MEMORY_MAPPED },
-	{ GBA_REGION_VRAM, "vram", "VRAM", "Video RAM (96kiB)", GBA_BASE_VRAM, GBA_BASE_VRAM + GBA_SIZE_VRAM, GBA_SIZE_VRAM, mCORE_MEMORY_RW | mCORE_MEMORY_MAPPED },
-	{ GBA_REGION_OAM, "oam", "OAM", "OBJ Attribute Memory (1kiB)", GBA_BASE_OAM, GBA_BASE_OAM + GBA_SIZE_OAM, GBA_SIZE_OAM, mCORE_MEMORY_RW | mCORE_MEMORY_MAPPED },
-	{ GBA_REGION_ROM0, "cart0", "ROM", "Game Pak (32MiB)", GBA_BASE_ROM0, GBA_BASE_ROM0 + GBA_SIZE_ROM0, GBA_SIZE_ROM0, mCORE_MEMORY_READ | mCORE_MEMORY_WORM | mCORE_MEMORY_MAPPED },
-	{ GBA_REGION_ROM1, "cart1", "ROM WS1", "Game Pak (Waitstate 1)", GBA_BASE_ROM1, GBA_BASE_ROM1 + GBA_SIZE_ROM1, GBA_SIZE_ROM1, mCORE_MEMORY_READ | mCORE_MEMORY_WORM | mCORE_MEMORY_MAPPED },
-	{ GBA_REGION_ROM2, "cart2", "ROM WS2", "Game Pak (Waitstate 2)", GBA_BASE_ROM2, GBA_BASE_ROM2 + GBA_SIZE_ROM2, GBA_SIZE_ROM2, mCORE_MEMORY_READ | mCORE_MEMORY_WORM | mCORE_MEMORY_MAPPED },
+	{ REGION_BIOS, "bios", "BIOS", "BIOS (16kiB)", BASE_BIOS, SIZE_BIOS, SIZE_BIOS, mCORE_MEMORY_READ | mCORE_MEMORY_MAPPED },
+	{ REGION_WORKING_RAM, "wram", "EWRAM", "Working RAM (256kiB)", BASE_WORKING_RAM, BASE_WORKING_RAM + SIZE_WORKING_RAM, SIZE_WORKING_RAM, mCORE_MEMORY_RW | mCORE_MEMORY_MAPPED },
+	{ REGION_WORKING_IRAM, "iwram", "IWRAM", "Internal Working RAM (32kiB)", BASE_WORKING_IRAM, BASE_WORKING_IRAM + SIZE_WORKING_IRAM, SIZE_WORKING_IRAM, mCORE_MEMORY_RW | mCORE_MEMORY_MAPPED },
+	{ REGION_IO, "io", "MMIO", "Memory-Mapped I/O", BASE_IO, BASE_IO + SIZE_IO, SIZE_IO, mCORE_MEMORY_RW | mCORE_MEMORY_MAPPED },
+	{ REGION_PALETTE_RAM, "palette", "Palette", "Palette RAM (1kiB)", BASE_PALETTE_RAM, BASE_PALETTE_RAM + SIZE_PALETTE_RAM, SIZE_PALETTE_RAM, mCORE_MEMORY_RW | mCORE_MEMORY_MAPPED },
+	{ REGION_VRAM, "vram", "VRAM", "Video RAM (96kiB)", BASE_VRAM, BASE_VRAM + SIZE_VRAM, SIZE_VRAM, mCORE_MEMORY_RW | mCORE_MEMORY_MAPPED },
+	{ REGION_OAM, "oam", "OAM", "OBJ Attribute Memory (1kiB)", BASE_OAM, BASE_OAM + SIZE_OAM, SIZE_OAM, mCORE_MEMORY_RW | mCORE_MEMORY_MAPPED },
+	{ REGION_CART0, "cart0", "ROM", "Game Pak (32MiB)", BASE_CART0, BASE_CART0 + SIZE_CART0, SIZE_CART0, mCORE_MEMORY_READ | mCORE_MEMORY_MAPPED },
+	{ REGION_CART1, "cart1", "ROM WS1", "Game Pak (Waitstate 1)", BASE_CART1, BASE_CART1 + SIZE_CART1, SIZE_CART1, mCORE_MEMORY_READ | mCORE_MEMORY_MAPPED },
+	{ REGION_CART2, "cart2", "ROM WS2", "Game Pak (Waitstate 2)", BASE_CART2, BASE_CART2 + SIZE_CART2, SIZE_CART2, mCORE_MEMORY_READ | mCORE_MEMORY_MAPPED },
 };
 
 static const struct mCoreMemoryBlock _GBAMemoryBlocksSRAM[] = {
 	{ -1, "mem", "All", "All", 0, 0x10000000, 0x10000000, mCORE_MEMORY_VIRTUAL },
-	{ GBA_REGION_BIOS, "bios", "BIOS", "BIOS (16kiB)", GBA_BASE_BIOS, GBA_SIZE_BIOS, GBA_SIZE_BIOS, mCORE_MEMORY_READ | mCORE_MEMORY_MAPPED },
-	{ GBA_REGION_EWRAM, "wram", "EWRAM", "Working RAM (256kiB)", GBA_BASE_EWRAM, GBA_BASE_EWRAM + GBA_SIZE_EWRAM, GBA_SIZE_EWRAM, mCORE_MEMORY_RW | mCORE_MEMORY_MAPPED },
-	{ GBA_REGION_IWRAM, "iwram", "IWRAM", "Internal Working RAM (32kiB)", GBA_BASE_IWRAM, GBA_BASE_IWRAM + GBA_SIZE_IWRAM, GBA_SIZE_IWRAM, mCORE_MEMORY_RW | mCORE_MEMORY_MAPPED },
-	{ GBA_REGION_IO, "io", "MMIO", "Memory-Mapped I/O", GBA_BASE_IO, GBA_BASE_IO + GBA_SIZE_IO, GBA_SIZE_IO, mCORE_MEMORY_RW | mCORE_MEMORY_MAPPED },
-	{ GBA_REGION_PALETTE_RAM, "palette", "Palette", "Palette RAM (1kiB)", GBA_BASE_PALETTE_RAM, GBA_BASE_PALETTE_RAM + GBA_SIZE_PALETTE_RAM, GBA_SIZE_PALETTE_RAM, mCORE_MEMORY_RW | mCORE_MEMORY_MAPPED },
-	{ GBA_REGION_VRAM, "vram", "VRAM", "Video RAM (96kiB)", GBA_BASE_VRAM, GBA_BASE_VRAM + GBA_SIZE_VRAM, GBA_SIZE_VRAM, mCORE_MEMORY_RW | mCORE_MEMORY_MAPPED },
-	{ GBA_REGION_OAM, "oam", "OAM", "OBJ Attribute Memory (1kiB)", GBA_BASE_OAM, GBA_BASE_OAM + GBA_SIZE_OAM, GBA_SIZE_OAM, mCORE_MEMORY_RW | mCORE_MEMORY_MAPPED },
-	{ GBA_REGION_ROM0, "cart0", "ROM", "Game Pak (32MiB)", GBA_BASE_ROM0, GBA_BASE_ROM0 + GBA_SIZE_ROM0, GBA_SIZE_ROM0, mCORE_MEMORY_READ | mCORE_MEMORY_WORM | mCORE_MEMORY_MAPPED },
-	{ GBA_REGION_ROM1, "cart1", "ROM WS1", "Game Pak (Waitstate 1)", GBA_BASE_ROM1, GBA_BASE_ROM1 + GBA_SIZE_ROM1, GBA_SIZE_ROM1, mCORE_MEMORY_READ | mCORE_MEMORY_WORM | mCORE_MEMORY_MAPPED },
-	{ GBA_REGION_ROM2, "cart2", "ROM WS2", "Game Pak (Waitstate 2)", GBA_BASE_ROM2, GBA_BASE_ROM2 + GBA_SIZE_ROM2, GBA_SIZE_ROM2, mCORE_MEMORY_READ | mCORE_MEMORY_WORM | mCORE_MEMORY_MAPPED },
-	{ GBA_REGION_SRAM, "sram", "SRAM", "Static RAM (32kiB)", GBA_BASE_SRAM, GBA_BASE_SRAM + GBA_SIZE_SRAM, GBA_SIZE_SRAM, true },
-};
-
-static const struct mCoreMemoryBlock _GBAMemoryBlocksSRAM512[] = {
-	{ -1, "mem", "All", "All", 0, 0x10000000, 0x10000000, mCORE_MEMORY_VIRTUAL },
-	{ GBA_REGION_BIOS, "bios", "BIOS", "BIOS (16kiB)", GBA_BASE_BIOS, GBA_SIZE_BIOS, GBA_SIZE_BIOS, mCORE_MEMORY_READ | mCORE_MEMORY_MAPPED },
-	{ GBA_REGION_EWRAM, "wram", "EWRAM", "Working RAM (256kiB)", GBA_BASE_EWRAM, GBA_BASE_EWRAM + GBA_SIZE_EWRAM, GBA_SIZE_EWRAM, mCORE_MEMORY_RW | mCORE_MEMORY_MAPPED },
-	{ GBA_REGION_IWRAM, "iwram", "IWRAM", "Internal Working RAM (32kiB)", GBA_BASE_IWRAM, GBA_BASE_IWRAM + GBA_SIZE_IWRAM, GBA_SIZE_IWRAM, mCORE_MEMORY_RW | mCORE_MEMORY_MAPPED },
-	{ GBA_REGION_IO, "io", "MMIO", "Memory-Mapped I/O", GBA_BASE_IO, GBA_BASE_IO + GBA_SIZE_IO, GBA_SIZE_IO, mCORE_MEMORY_RW | mCORE_MEMORY_MAPPED },
-	{ GBA_REGION_PALETTE_RAM, "palette", "Palette", "Palette RAM (1kiB)", GBA_BASE_PALETTE_RAM, GBA_BASE_PALETTE_RAM + GBA_SIZE_PALETTE_RAM, GBA_SIZE_PALETTE_RAM, mCORE_MEMORY_RW | mCORE_MEMORY_MAPPED },
-	{ GBA_REGION_VRAM, "vram", "VRAM", "Video RAM (96kiB)", GBA_BASE_VRAM, GBA_BASE_VRAM + GBA_SIZE_VRAM, GBA_SIZE_VRAM, mCORE_MEMORY_RW | mCORE_MEMORY_MAPPED },
-	{ GBA_REGION_OAM, "oam", "OAM", "OBJ Attribute Memory (1kiB)", GBA_BASE_OAM, GBA_BASE_OAM + GBA_SIZE_OAM, GBA_SIZE_OAM, mCORE_MEMORY_RW | mCORE_MEMORY_MAPPED },
-	{ GBA_REGION_ROM0, "cart0", "ROM", "Game Pak (32MiB)", GBA_BASE_ROM0, GBA_BASE_ROM0 + GBA_SIZE_ROM0, GBA_SIZE_ROM0, mCORE_MEMORY_READ | mCORE_MEMORY_WORM | mCORE_MEMORY_MAPPED },
-	{ GBA_REGION_ROM1, "cart1", "ROM WS1", "Game Pak (Waitstate 1)", GBA_BASE_ROM1, GBA_BASE_ROM1 + GBA_SIZE_ROM1, GBA_SIZE_ROM1, mCORE_MEMORY_READ | mCORE_MEMORY_WORM | mCORE_MEMORY_MAPPED },
-	{ GBA_REGION_ROM2, "cart2", "ROM WS2", "Game Pak (Waitstate 2)", GBA_BASE_ROM2, GBA_BASE_ROM2 + GBA_SIZE_ROM2, GBA_SIZE_ROM2, mCORE_MEMORY_READ | mCORE_MEMORY_WORM | mCORE_MEMORY_MAPPED },
-	{ GBA_REGION_SRAM, "sram", "SRAM", "Static RAM (64kiB)", GBA_BASE_SRAM, GBA_BASE_SRAM + GBA_SIZE_SRAM512, GBA_SIZE_SRAM512, true },
+	{ REGION_BIOS, "bios", "BIOS", "BIOS (16kiB)", BASE_BIOS, SIZE_BIOS, SIZE_BIOS, mCORE_MEMORY_READ | mCORE_MEMORY_MAPPED },
+	{ REGION_WORKING_RAM, "wram", "EWRAM", "Working RAM (256kiB)", BASE_WORKING_RAM, BASE_WORKING_RAM + SIZE_WORKING_RAM, SIZE_WORKING_RAM, mCORE_MEMORY_RW | mCORE_MEMORY_MAPPED },
+	{ REGION_WORKING_IRAM, "iwram", "IWRAM", "Internal Working RAM (32kiB)", BASE_WORKING_IRAM, BASE_WORKING_IRAM + SIZE_WORKING_IRAM, SIZE_WORKING_IRAM, mCORE_MEMORY_RW | mCORE_MEMORY_MAPPED },
+	{ REGION_IO, "io", "MMIO", "Memory-Mapped I/O", BASE_IO, BASE_IO + SIZE_IO, SIZE_IO, mCORE_MEMORY_RW | mCORE_MEMORY_MAPPED },
+	{ REGION_PALETTE_RAM, "palette", "Palette", "Palette RAM (1kiB)", BASE_PALETTE_RAM, BASE_PALETTE_RAM + SIZE_PALETTE_RAM, SIZE_PALETTE_RAM, mCORE_MEMORY_RW | mCORE_MEMORY_MAPPED },
+	{ REGION_VRAM, "vram", "VRAM", "Video RAM (96kiB)", BASE_VRAM, BASE_VRAM + SIZE_VRAM, SIZE_VRAM, mCORE_MEMORY_RW | mCORE_MEMORY_MAPPED },
+	{ REGION_OAM, "oam", "OAM", "OBJ Attribute Memory (1kiB)", BASE_OAM, BASE_OAM + SIZE_OAM, SIZE_OAM, mCORE_MEMORY_RW | mCORE_MEMORY_MAPPED },
+	{ REGION_CART0, "cart0", "ROM", "Game Pak (32MiB)", BASE_CART0, BASE_CART0 + SIZE_CART0, SIZE_CART0, mCORE_MEMORY_READ | mCORE_MEMORY_MAPPED },
+	{ REGION_CART1, "cart1", "ROM WS1", "Game Pak (Waitstate 1)", BASE_CART1, BASE_CART1 + SIZE_CART1, SIZE_CART1, mCORE_MEMORY_READ | mCORE_MEMORY_MAPPED },
+	{ REGION_CART2, "cart2", "ROM WS2", "Game Pak (Waitstate 2)", BASE_CART2, BASE_CART2 + SIZE_CART2, SIZE_CART2, mCORE_MEMORY_READ | mCORE_MEMORY_MAPPED },
+	{ REGION_CART_SRAM, "sram", "SRAM", "Static RAM (64kiB)", BASE_CART_SRAM, BASE_CART_SRAM + SIZE_CART_SRAM, SIZE_CART_SRAM, true },
 };
 
 static const struct mCoreMemoryBlock _GBAMemoryBlocksFlash512[] = {
 	{ -1, "mem", "All", "All", 0, 0x10000000, 0x10000000, mCORE_MEMORY_VIRTUAL },
-	{ GBA_REGION_BIOS, "bios", "BIOS", "BIOS (16kiB)", GBA_BASE_BIOS, GBA_SIZE_BIOS, GBA_SIZE_BIOS, mCORE_MEMORY_READ | mCORE_MEMORY_MAPPED },
-	{ GBA_REGION_EWRAM, "wram", "EWRAM", "Working RAM (256kiB)", GBA_BASE_EWRAM, GBA_BASE_EWRAM + GBA_SIZE_EWRAM, GBA_SIZE_EWRAM, mCORE_MEMORY_RW | mCORE_MEMORY_MAPPED },
-	{ GBA_REGION_IWRAM, "iwram", "IWRAM", "Internal Working RAM (32kiB)", GBA_BASE_IWRAM, GBA_BASE_IWRAM + GBA_SIZE_IWRAM, GBA_SIZE_IWRAM, mCORE_MEMORY_RW | mCORE_MEMORY_MAPPED },
-	{ GBA_REGION_IO, "io", "MMIO", "Memory-Mapped I/O", GBA_BASE_IO, GBA_BASE_IO + GBA_SIZE_IO, GBA_SIZE_IO, mCORE_MEMORY_RW | mCORE_MEMORY_MAPPED },
-	{ GBA_REGION_PALETTE_RAM, "palette", "Palette", "Palette RAM (1kiB)", GBA_BASE_PALETTE_RAM, GBA_BASE_PALETTE_RAM + GBA_SIZE_PALETTE_RAM, GBA_SIZE_PALETTE_RAM, mCORE_MEMORY_RW | mCORE_MEMORY_MAPPED },
-	{ GBA_REGION_VRAM, "vram", "VRAM", "Video RAM (96kiB)", GBA_BASE_VRAM, GBA_BASE_VRAM + GBA_SIZE_VRAM, GBA_SIZE_VRAM, mCORE_MEMORY_RW | mCORE_MEMORY_MAPPED },
-	{ GBA_REGION_OAM, "oam", "OAM", "OBJ Attribute Memory (1kiB)", GBA_BASE_OAM, GBA_BASE_OAM + GBA_SIZE_OAM, GBA_SIZE_OAM, mCORE_MEMORY_RW | mCORE_MEMORY_MAPPED },
-	{ GBA_REGION_ROM0, "cart0", "ROM", "Game Pak (32MiB)", GBA_BASE_ROM0, GBA_BASE_ROM0 + GBA_SIZE_ROM0, GBA_SIZE_ROM0, mCORE_MEMORY_READ | mCORE_MEMORY_WORM | mCORE_MEMORY_MAPPED },
-	{ GBA_REGION_ROM1, "cart1", "ROM WS1", "Game Pak (Waitstate 1)", GBA_BASE_ROM1, GBA_BASE_ROM1 + GBA_SIZE_ROM1, GBA_SIZE_ROM1, mCORE_MEMORY_READ | mCORE_MEMORY_WORM | mCORE_MEMORY_MAPPED },
-	{ GBA_REGION_ROM2, "cart2", "ROM WS2", "Game Pak (Waitstate 2)", GBA_BASE_ROM2, GBA_BASE_ROM2 + GBA_SIZE_ROM2, GBA_SIZE_ROM2, mCORE_MEMORY_READ | mCORE_MEMORY_WORM | mCORE_MEMORY_MAPPED },
-	{ GBA_REGION_SRAM, "sram", "Flash", "Flash Memory (64kiB)", GBA_BASE_SRAM, GBA_BASE_SRAM + GBA_SIZE_FLASH512, GBA_SIZE_FLASH512, mCORE_MEMORY_RW | mCORE_MEMORY_MAPPED },
+	{ REGION_BIOS, "bios", "BIOS", "BIOS (16kiB)", BASE_BIOS, SIZE_BIOS, SIZE_BIOS, mCORE_MEMORY_READ | mCORE_MEMORY_MAPPED },
+	{ REGION_WORKING_RAM, "wram", "EWRAM", "Working RAM (256kiB)", BASE_WORKING_RAM, BASE_WORKING_RAM + SIZE_WORKING_RAM, SIZE_WORKING_RAM, mCORE_MEMORY_RW | mCORE_MEMORY_MAPPED },
+	{ REGION_WORKING_IRAM, "iwram", "IWRAM", "Internal Working RAM (32kiB)", BASE_WORKING_IRAM, BASE_WORKING_IRAM + SIZE_WORKING_IRAM, SIZE_WORKING_IRAM, mCORE_MEMORY_RW | mCORE_MEMORY_MAPPED },
+	{ REGION_IO, "io", "MMIO", "Memory-Mapped I/O", BASE_IO, BASE_IO + SIZE_IO, SIZE_IO, mCORE_MEMORY_RW | mCORE_MEMORY_MAPPED },
+	{ REGION_PALETTE_RAM, "palette", "Palette", "Palette RAM (1kiB)", BASE_PALETTE_RAM, BASE_PALETTE_RAM + SIZE_PALETTE_RAM, SIZE_PALETTE_RAM, mCORE_MEMORY_RW | mCORE_MEMORY_MAPPED },
+	{ REGION_VRAM, "vram", "VRAM", "Video RAM (96kiB)", BASE_VRAM, BASE_VRAM + SIZE_VRAM, SIZE_VRAM, mCORE_MEMORY_RW | mCORE_MEMORY_MAPPED },
+	{ REGION_OAM, "oam", "OAM", "OBJ Attribute Memory (1kiB)", BASE_OAM, BASE_OAM + SIZE_OAM, SIZE_OAM, mCORE_MEMORY_RW | mCORE_MEMORY_MAPPED },
+	{ REGION_CART0, "cart0", "ROM", "Game Pak (32MiB)", BASE_CART0, BASE_CART0 + SIZE_CART0, SIZE_CART0, mCORE_MEMORY_READ | mCORE_MEMORY_MAPPED },
+	{ REGION_CART1, "cart1", "ROM WS1", "Game Pak (Waitstate 1)", BASE_CART1, BASE_CART1 + SIZE_CART1, SIZE_CART1, mCORE_MEMORY_READ | mCORE_MEMORY_MAPPED },
+	{ REGION_CART2, "cart2", "ROM WS2", "Game Pak (Waitstate 2)", BASE_CART2, BASE_CART2 + SIZE_CART2, SIZE_CART2, mCORE_MEMORY_READ | mCORE_MEMORY_MAPPED },
+	{ REGION_CART_SRAM, "sram", "Flash", "Flash Memory (64kiB)", BASE_CART_SRAM, BASE_CART_SRAM + SIZE_CART_FLASH512, SIZE_CART_FLASH512, mCORE_MEMORY_RW | mCORE_MEMORY_MAPPED },
 };
 
 static const struct mCoreMemoryBlock _GBAMemoryBlocksFlash1M[] = {
 	{ -1, "mem", "All", "All", 0, 0x10000000, 0x10000000, mCORE_MEMORY_VIRTUAL },
-	{ GBA_REGION_BIOS, "bios", "BIOS", "BIOS (16kiB)", GBA_BASE_BIOS, GBA_SIZE_BIOS, GBA_SIZE_BIOS, mCORE_MEMORY_READ | mCORE_MEMORY_MAPPED },
-	{ GBA_REGION_EWRAM, "wram", "EWRAM", "Working RAM (256kiB)", GBA_BASE_EWRAM, GBA_BASE_EWRAM + GBA_SIZE_EWRAM, GBA_SIZE_EWRAM, mCORE_MEMORY_RW | mCORE_MEMORY_MAPPED },
-	{ GBA_REGION_IWRAM, "iwram", "IWRAM", "Internal Working RAM (32kiB)", GBA_BASE_IWRAM, GBA_BASE_IWRAM + GBA_SIZE_IWRAM, GBA_SIZE_IWRAM, mCORE_MEMORY_RW | mCORE_MEMORY_MAPPED },
-	{ GBA_REGION_IO, "io", "MMIO", "Memory-Mapped I/O", GBA_BASE_IO, GBA_BASE_IO + GBA_SIZE_IO, GBA_SIZE_IO, mCORE_MEMORY_RW | mCORE_MEMORY_MAPPED },
-	{ GBA_REGION_PALETTE_RAM, "palette", "Palette", "Palette RAM (1kiB)", GBA_BASE_PALETTE_RAM, GBA_BASE_PALETTE_RAM + GBA_SIZE_PALETTE_RAM, GBA_SIZE_PALETTE_RAM, mCORE_MEMORY_RW | mCORE_MEMORY_MAPPED },
-	{ GBA_REGION_VRAM, "vram", "VRAM", "Video RAM (96kiB)", GBA_BASE_VRAM, GBA_BASE_VRAM + GBA_SIZE_VRAM, GBA_SIZE_VRAM, mCORE_MEMORY_RW | mCORE_MEMORY_MAPPED },
-	{ GBA_REGION_OAM, "oam", "OAM", "OBJ Attribute Memory (1kiB)", GBA_BASE_OAM, GBA_BASE_OAM + GBA_SIZE_OAM, GBA_SIZE_OAM, mCORE_MEMORY_RW | mCORE_MEMORY_MAPPED },
-	{ GBA_REGION_ROM0, "cart0", "ROM", "Game Pak (32MiB)", GBA_BASE_ROM0, GBA_BASE_ROM0 + GBA_SIZE_ROM0, GBA_SIZE_ROM0, mCORE_MEMORY_READ | mCORE_MEMORY_WORM | mCORE_MEMORY_MAPPED },
-	{ GBA_REGION_ROM1, "cart1", "ROM WS1", "Game Pak (Waitstate 1)", GBA_BASE_ROM1, GBA_BASE_ROM1 + GBA_SIZE_ROM1, GBA_SIZE_ROM1, mCORE_MEMORY_READ | mCORE_MEMORY_WORM | mCORE_MEMORY_MAPPED },
-	{ GBA_REGION_ROM2, "cart2", "ROM WS2", "Game Pak (Waitstate 2)", GBA_BASE_ROM2, GBA_BASE_ROM2 + GBA_SIZE_ROM2, GBA_SIZE_ROM2, mCORE_MEMORY_READ | mCORE_MEMORY_WORM | mCORE_MEMORY_MAPPED },
-	{ GBA_REGION_SRAM, "sram", "Flash", "Flash Memory (128kiB)", GBA_BASE_SRAM, GBA_BASE_SRAM + GBA_SIZE_FLASH512, GBA_SIZE_FLASH1M, mCORE_MEMORY_RW | mCORE_MEMORY_MAPPED, 1, GBA_BASE_SRAM },
+	{ REGION_BIOS, "bios", "BIOS", "BIOS (16kiB)", BASE_BIOS, SIZE_BIOS, SIZE_BIOS, mCORE_MEMORY_READ | mCORE_MEMORY_MAPPED },
+	{ REGION_WORKING_RAM, "wram", "EWRAM", "Working RAM (256kiB)", BASE_WORKING_RAM, BASE_WORKING_RAM + SIZE_WORKING_RAM, SIZE_WORKING_RAM, mCORE_MEMORY_RW | mCORE_MEMORY_MAPPED },
+	{ REGION_WORKING_IRAM, "iwram", "IWRAM", "Internal Working RAM (32kiB)", BASE_WORKING_IRAM, BASE_WORKING_IRAM + SIZE_WORKING_IRAM, SIZE_WORKING_IRAM, mCORE_MEMORY_RW | mCORE_MEMORY_MAPPED },
+	{ REGION_IO, "io", "MMIO", "Memory-Mapped I/O", BASE_IO, BASE_IO + SIZE_IO, SIZE_IO, mCORE_MEMORY_RW | mCORE_MEMORY_MAPPED },
+	{ REGION_PALETTE_RAM, "palette", "Palette", "Palette RAM (1kiB)", BASE_PALETTE_RAM, BASE_PALETTE_RAM + SIZE_PALETTE_RAM, SIZE_PALETTE_RAM, mCORE_MEMORY_RW | mCORE_MEMORY_MAPPED },
+	{ REGION_VRAM, "vram", "VRAM", "Video RAM (96kiB)", BASE_VRAM, BASE_VRAM + SIZE_VRAM, SIZE_VRAM, mCORE_MEMORY_RW | mCORE_MEMORY_MAPPED },
+	{ REGION_OAM, "oam", "OAM", "OBJ Attribute Memory (1kiB)", BASE_OAM, BASE_OAM + SIZE_OAM, SIZE_OAM, mCORE_MEMORY_RW | mCORE_MEMORY_MAPPED },
+	{ REGION_CART0, "cart0", "ROM", "Game Pak (32MiB)", BASE_CART0, BASE_CART0 + SIZE_CART0, SIZE_CART0, mCORE_MEMORY_READ | mCORE_MEMORY_MAPPED },
+	{ REGION_CART1, "cart1", "ROM WS1", "Game Pak (Waitstate 1)", BASE_CART1, BASE_CART1 + SIZE_CART1, SIZE_CART1, mCORE_MEMORY_READ | mCORE_MEMORY_MAPPED },
+	{ REGION_CART2, "cart2", "ROM WS2", "Game Pak (Waitstate 2)", BASE_CART2, BASE_CART2 + SIZE_CART2, SIZE_CART2, mCORE_MEMORY_READ | mCORE_MEMORY_MAPPED },
+	{ REGION_CART_SRAM, "sram", "Flash", "Flash Memory (64kiB)", BASE_CART_SRAM, BASE_CART_SRAM + SIZE_CART_FLASH512, SIZE_CART_FLASH1M, mCORE_MEMORY_RW | mCORE_MEMORY_MAPPED, 1 },
 };
 
 static const struct mCoreMemoryBlock _GBAMemoryBlocksEEPROM[] = {
 	{ -1, "mem", "All", "All", 0, 0x10000000, 0x10000000, mCORE_MEMORY_VIRTUAL },
-	{ GBA_REGION_BIOS, "bios", "BIOS", "BIOS (16kiB)", GBA_BASE_BIOS, GBA_SIZE_BIOS, GBA_SIZE_BIOS, mCORE_MEMORY_READ | mCORE_MEMORY_MAPPED },
-	{ GBA_REGION_EWRAM, "wram", "EWRAM", "Working RAM (256kiB)", GBA_BASE_EWRAM, GBA_BASE_EWRAM + GBA_SIZE_EWRAM, GBA_SIZE_EWRAM, mCORE_MEMORY_RW | mCORE_MEMORY_MAPPED },
-	{ GBA_REGION_IWRAM, "iwram", "IWRAM", "Internal Working RAM (32kiB)", GBA_BASE_IWRAM, GBA_BASE_IWRAM + GBA_SIZE_IWRAM, GBA_SIZE_IWRAM, mCORE_MEMORY_RW | mCORE_MEMORY_MAPPED },
-	{ GBA_REGION_IO, "io", "MMIO", "Memory-Mapped I/O", GBA_BASE_IO, GBA_BASE_IO + GBA_SIZE_IO, GBA_SIZE_IO, mCORE_MEMORY_RW | mCORE_MEMORY_MAPPED },
-	{ GBA_REGION_PALETTE_RAM, "palette", "Palette", "Palette RAM (1kiB)", GBA_BASE_PALETTE_RAM, GBA_BASE_PALETTE_RAM + GBA_SIZE_PALETTE_RAM, GBA_SIZE_PALETTE_RAM, mCORE_MEMORY_RW | mCORE_MEMORY_MAPPED },
-	{ GBA_REGION_VRAM, "vram", "VRAM", "Video RAM (96kiB)", GBA_BASE_VRAM, GBA_BASE_VRAM + GBA_SIZE_VRAM, GBA_SIZE_VRAM, mCORE_MEMORY_RW | mCORE_MEMORY_MAPPED },
-	{ GBA_REGION_OAM, "oam", "OAM", "OBJ Attribute Memory (1kiB)", GBA_BASE_OAM, GBA_BASE_OAM + GBA_SIZE_OAM, GBA_SIZE_OAM, mCORE_MEMORY_RW | mCORE_MEMORY_MAPPED },
-	{ GBA_REGION_ROM0, "cart0", "ROM", "Game Pak (32MiB)", GBA_BASE_ROM0, GBA_BASE_ROM0 + GBA_SIZE_ROM0, GBA_SIZE_ROM0, mCORE_MEMORY_READ | mCORE_MEMORY_WORM | mCORE_MEMORY_MAPPED },
-	{ GBA_REGION_ROM1, "cart1", "ROM WS1", "Game Pak (Waitstate 1)", GBA_BASE_ROM1, GBA_BASE_ROM1 + GBA_SIZE_ROM1, GBA_SIZE_ROM1, mCORE_MEMORY_READ | mCORE_MEMORY_WORM | mCORE_MEMORY_MAPPED },
-	{ GBA_REGION_ROM2, "cart2", "ROM WS2", "Game Pak (Waitstate 2)", GBA_BASE_ROM2, GBA_BASE_ROM2 + GBA_SIZE_ROM2, GBA_SIZE_ROM2, mCORE_MEMORY_READ | mCORE_MEMORY_WORM | mCORE_MEMORY_MAPPED },
-	{ GBA_REGION_SRAM_MIRROR, "eeprom", "EEPROM", "EEPROM (8kiB)", 0, GBA_SIZE_EEPROM, GBA_SIZE_EEPROM, mCORE_MEMORY_RW },
-};
-
-static const struct mCoreMemoryBlock _GBAMemoryBlocksEEPROM512[] = {
-	{ -1, "mem", "All", "All", 0, 0x10000000, 0x10000000, mCORE_MEMORY_VIRTUAL },
-	{ GBA_REGION_BIOS, "bios", "BIOS", "BIOS (16kiB)", GBA_BASE_BIOS, GBA_SIZE_BIOS, GBA_SIZE_BIOS, mCORE_MEMORY_READ | mCORE_MEMORY_MAPPED },
-	{ GBA_REGION_EWRAM, "wram", "EWRAM", "Working RAM (256kiB)", GBA_BASE_EWRAM, GBA_BASE_EWRAM + GBA_SIZE_EWRAM, GBA_SIZE_EWRAM, mCORE_MEMORY_RW | mCORE_MEMORY_MAPPED },
-	{ GBA_REGION_IWRAM, "iwram", "IWRAM", "Internal Working RAM (32kiB)", GBA_BASE_IWRAM, GBA_BASE_IWRAM + GBA_SIZE_IWRAM, GBA_SIZE_IWRAM, mCORE_MEMORY_RW | mCORE_MEMORY_MAPPED },
-	{ GBA_REGION_IO, "io", "MMIO", "Memory-Mapped I/O", GBA_BASE_IO, GBA_BASE_IO + GBA_SIZE_IO, GBA_SIZE_IO, mCORE_MEMORY_RW | mCORE_MEMORY_MAPPED },
-	{ GBA_REGION_PALETTE_RAM, "palette", "Palette", "Palette RAM (1kiB)", GBA_BASE_PALETTE_RAM, GBA_BASE_PALETTE_RAM + GBA_SIZE_PALETTE_RAM, GBA_SIZE_PALETTE_RAM, mCORE_MEMORY_RW | mCORE_MEMORY_MAPPED },
-	{ GBA_REGION_VRAM, "vram", "VRAM", "Video RAM (96kiB)", GBA_BASE_VRAM, GBA_BASE_VRAM + GBA_SIZE_VRAM, GBA_SIZE_VRAM, mCORE_MEMORY_RW | mCORE_MEMORY_MAPPED },
-	{ GBA_REGION_OAM, "oam", "OAM", "OBJ Attribute Memory (1kiB)", GBA_BASE_OAM, GBA_BASE_OAM + GBA_SIZE_OAM, GBA_SIZE_OAM, mCORE_MEMORY_RW | mCORE_MEMORY_MAPPED },
-	{ GBA_REGION_ROM0, "cart0", "ROM", "Game Pak (32MiB)", GBA_BASE_ROM0, GBA_BASE_ROM0 + GBA_SIZE_ROM0, GBA_SIZE_ROM0, mCORE_MEMORY_READ | mCORE_MEMORY_WORM | mCORE_MEMORY_MAPPED },
-	{ GBA_REGION_ROM1, "cart1", "ROM WS1", "Game Pak (Waitstate 1)", GBA_BASE_ROM1, GBA_BASE_ROM1 + GBA_SIZE_ROM1, GBA_SIZE_ROM1, mCORE_MEMORY_READ | mCORE_MEMORY_WORM | mCORE_MEMORY_MAPPED },
-	{ GBA_REGION_ROM2, "cart2", "ROM WS2", "Game Pak (Waitstate 2)", GBA_BASE_ROM2, GBA_BASE_ROM2 + GBA_SIZE_ROM2, GBA_SIZE_ROM2, mCORE_MEMORY_READ | mCORE_MEMORY_WORM | mCORE_MEMORY_MAPPED },
-	{ GBA_REGION_SRAM_MIRROR, "eeprom", "EEPROM", "EEPROM (512B)", 0, GBA_SIZE_EEPROM, GBA_SIZE_EEPROM512, mCORE_MEMORY_RW },
-};
-
-static const struct mCoreScreenRegion _GBAScreenRegions[] = {
-	{ 0, "Screen", 0, 0, GBA_VIDEO_HORIZONTAL_PIXELS, GBA_VIDEO_VERTICAL_PIXELS }
-};
-
-static const struct mCoreRegisterInfo _GBARegisters[] = {
-	{ "r0", NULL, 4, 0xFFFFFFFF, mCORE_REGISTER_GPR },
-	{ "r1", NULL, 4, 0xFFFFFFFF, mCORE_REGISTER_GPR },
-	{ "r2", NULL, 4, 0xFFFFFFFF, mCORE_REGISTER_GPR },
-	{ "r3", NULL, 4, 0xFFFFFFFF, mCORE_REGISTER_GPR },
-	{ "r4", NULL, 4, 0xFFFFFFFF, mCORE_REGISTER_GPR },
-	{ "r5", NULL, 4, 0xFFFFFFFF, mCORE_REGISTER_GPR },
-	{ "r6", NULL, 4, 0xFFFFFFFF, mCORE_REGISTER_GPR },
-	{ "r7", NULL, 4, 0xFFFFFFFF, mCORE_REGISTER_GPR },
-	{ "r8", NULL, 4, 0xFFFFFFFF, mCORE_REGISTER_GPR },
-	{ "r9", NULL, 4, 0xFFFFFFFF, mCORE_REGISTER_GPR },
-	{ "r10", NULL, 4, 0xFFFFFFFF, mCORE_REGISTER_GPR },
-	{ "r11", NULL, 4, 0xFFFFFFFF, mCORE_REGISTER_GPR },
-	{ "r12", (const char*[]) { "ip", NULL }, 4, 0xFFFFFFFF, mCORE_REGISTER_GPR },
-	{ "sp", (const char*[]) { "r13", NULL }, 4, 0xFFFFFFFF, mCORE_REGISTER_GPR },
-	{ "lr", (const char*[]) { "r14", NULL }, 4, 0xFFFFFFFF, mCORE_REGISTER_GPR },
-	{ "pc", (const char*[]) { "r15", NULL }, 4, 0xFFFFFFFF, mCORE_REGISTER_GPR },
-	{ "cpsr", NULL, 4, 0xF00000FF, mCORE_REGISTER_FLAGS },
-	{ "spsr", NULL, 4, 0xF00000FF, mCORE_REGISTER_FLAGS },
-	{ "spsr_irq", NULL, 4, 0xF00000FF, mCORE_REGISTER_FLAGS },
-	{ "spsr_fiq", NULL, 4, 0xF00000FF, mCORE_REGISTER_FLAGS },
-	{ "spsr_svc", NULL, 4, 0xF00000FF, mCORE_REGISTER_FLAGS },
-	{ "spsr_abt", NULL, 4, 0xF00000FF, mCORE_REGISTER_FLAGS },
-	{ "spsr_und", NULL, 4, 0xF00000FF, mCORE_REGISTER_FLAGS },
+	{ REGION_BIOS, "bios", "BIOS", "BIOS (16kiB)", BASE_BIOS, SIZE_BIOS, SIZE_BIOS, mCORE_MEMORY_READ | mCORE_MEMORY_MAPPED },
+	{ REGION_WORKING_RAM, "wram", "EWRAM", "Working RAM (256kiB)", BASE_WORKING_RAM, BASE_WORKING_RAM + SIZE_WORKING_RAM, SIZE_WORKING_RAM, mCORE_MEMORY_RW | mCORE_MEMORY_MAPPED },
+	{ REGION_WORKING_IRAM, "iwram", "IWRAM", "Internal Working RAM (32kiB)", BASE_WORKING_IRAM, BASE_WORKING_IRAM + SIZE_WORKING_IRAM, SIZE_WORKING_IRAM, mCORE_MEMORY_RW | mCORE_MEMORY_MAPPED },
+	{ REGION_IO, "io", "MMIO", "Memory-Mapped I/O", BASE_IO, BASE_IO + SIZE_IO, SIZE_IO, mCORE_MEMORY_RW | mCORE_MEMORY_MAPPED },
+	{ REGION_PALETTE_RAM, "palette", "Palette", "Palette RAM (1kiB)", BASE_PALETTE_RAM, BASE_PALETTE_RAM + SIZE_PALETTE_RAM, SIZE_PALETTE_RAM, mCORE_MEMORY_RW | mCORE_MEMORY_MAPPED },
+	{ REGION_VRAM, "vram", "VRAM", "Video RAM (96kiB)", BASE_VRAM, BASE_VRAM + SIZE_VRAM, SIZE_VRAM, mCORE_MEMORY_RW | mCORE_MEMORY_MAPPED },
+	{ REGION_OAM, "oam", "OAM", "OBJ Attribute Memory (1kiB)", BASE_OAM, BASE_OAM + SIZE_OAM, SIZE_OAM, mCORE_MEMORY_RW | mCORE_MEMORY_MAPPED },
+	{ REGION_CART0, "cart0", "ROM", "Game Pak (32MiB)", BASE_CART0, BASE_CART0 + SIZE_CART0, SIZE_CART0, mCORE_MEMORY_READ | mCORE_MEMORY_MAPPED },
+	{ REGION_CART1, "cart1", "ROM WS1", "Game Pak (Waitstate 1)", BASE_CART1, BASE_CART1 + SIZE_CART1, SIZE_CART1, mCORE_MEMORY_READ | mCORE_MEMORY_MAPPED },
+	{ REGION_CART2, "cart2", "ROM WS2", "Game Pak (Waitstate 2)", BASE_CART2, BASE_CART2 + SIZE_CART2, SIZE_CART2, mCORE_MEMORY_READ | mCORE_MEMORY_MAPPED },
+	{ REGION_CART_SRAM_MIRROR, "eeprom", "EEPROM", "EEPROM (8kiB)", 0, SIZE_CART_EEPROM, SIZE_CART_EEPROM, mCORE_MEMORY_RW },
 };
 
 struct mVideoLogContext;
 
-#define LOGO_CRC32 0xD0BEB55E
+#define CPU_COMPONENT_AUDIO_MIXER CPU_COMPONENT_MISC_1
 
 struct GBACore {
 	struct mCore d;
-	struct GBAVideoRenderer dummyRenderer;
 	struct GBAVideoSoftwareRenderer renderer;
-#ifdef BUILD_GLES3
+#if defined(BUILD_GLES2) || defined(BUILD_GLES3)
 	struct GBAVideoGLRenderer glRenderer;
 #endif
 #ifndef MINIMAL_CORE
@@ -211,40 +142,13 @@ struct GBACore {
 #ifndef DISABLE_THREADING
 	struct mVideoThreadProxy threadProxy;
 #endif
+	int keys;
 	struct mCPUComponent* components[CPU_COMPONENT_MAX];
 	const struct Configuration* overrides;
-	struct GBACartridgeOverride override;
-	bool hasOverride;
 	struct mDebuggerPlatform* debuggerPlatform;
 	struct mCheatDevice* cheatDevice;
-	struct mCoreMemoryBlock memoryBlocks[12];
-	size_t nMemoryBlocks;
-	int memoryBlockType;
+	struct GBAAudioMixer* audioMixer;
 };
-
-#define _MAX(A, B) ((A > B) ? (A) : (B))
-static_assert(sizeof(((struct GBACore*) 0)->memoryBlocks) >=
-	_MAX(
-		_MAX(
-			_MAX(
-				sizeof(_GBAMemoryBlocksSRAM),
-				sizeof(_GBAMemoryBlocksSRAM512)
-			),
-			_MAX(
-				sizeof(_GBAMemoryBlocksFlash512),
-				sizeof(_GBAMemoryBlocksFlash1M)
-			)
-		),
-		_MAX(
-			_MAX(
-				sizeof(_GBAMemoryBlocksEEPROM),
-				sizeof(_GBAMemoryBlocksEEPROM512)
-			),
-			sizeof(_GBAMemoryBlocks)
-		)
-	),
-	"GBACore memoryBlocks sized too small");
-#undef _MAX
 
 static bool _GBACoreInit(struct mCore* core) {
 	struct GBACore* gbacore = (struct GBACore*) core;
@@ -262,15 +166,13 @@ static bool _GBACoreInit(struct mCore* core) {
 	core->debugger = NULL;
 	core->symbolTable = NULL;
 	core->videoLogger = NULL;
-	gbacore->hasOverride = false;
 	gbacore->overrides = NULL;
 	gbacore->debuggerPlatform = NULL;
 	gbacore->cheatDevice = NULL;
 #ifndef MINIMAL_CORE
 	gbacore->logContext = NULL;
 #endif
-	gbacore->nMemoryBlocks = 0;
-	gbacore->memoryBlockType = -2;
+	gbacore->audioMixer = NULL;
 
 	GBACreate(gba);
 	// TODO: Restore cheats
@@ -280,13 +182,10 @@ static bool _GBACoreInit(struct mCore* core) {
 	mRTCGenericSourceInit(&core->rtc, core);
 	gba->rtcSource = &core->rtc.d;
 
-	GBAVideoDummyRendererCreate(&gbacore->dummyRenderer);
-	GBAVideoAssociateRenderer(&gba->video, &gbacore->dummyRenderer);
-
 	GBAVideoSoftwareRendererCreate(&gbacore->renderer);
 	gbacore->renderer.outputBuffer = NULL;
 
-#ifdef BUILD_GLES3
+#if defined(BUILD_GLES2) || defined(BUILD_GLES3)
 	GBAVideoGLRendererCreate(&gbacore->glRenderer);
 	gbacore->glRenderer.outputTex = -1;
 #endif
@@ -299,10 +198,13 @@ static bool _GBACoreInit(struct mCore* core) {
 	gbacore->proxyRenderer.logger = NULL;
 #endif
 
-#if defined(ENABLE_VFS) && defined(ENABLE_DIRECTORIES)
+	gbacore->keys = 0;
+	gba->keySource = &gbacore->keys;
+
+#if !defined(MINIMAL_CORE) || MINIMAL_CORE < 2
 	mDirectorySetInit(&core->dirs);
 #endif
-
+	
 	return true;
 }
 
@@ -311,10 +213,10 @@ static void _GBACoreDeinit(struct mCore* core) {
 	GBADestroy(core->board);
 	mappedMemoryFree(core->cpu, sizeof(struct ARMCore));
 	mappedMemoryFree(core->board, sizeof(struct GBA));
-#if defined(ENABLE_VFS) && defined(ENABLE_DIRECTORIES)
+#if !defined(MINIMAL_CORE) || MINIMAL_CORE < 2
 	mDirectorySetDeinit(&core->dirs);
 #endif
-#ifdef ENABLE_DEBUGGERS
+#ifdef USE_DEBUGGERS
 	if (core->symbolTable) {
 		mDebuggerSymbolTableDestroy(core->symbolTable);
 	}
@@ -325,20 +227,22 @@ static void _GBACoreDeinit(struct mCore* core) {
 	if (gbacore->cheatDevice) {
 		mCheatDeviceDestroy(gbacore->cheatDevice);
 	}
+	free(gbacore->cheatDevice);
+	free(gbacore->audioMixer);
 	mCoreConfigFreeOpts(&core->opts);
 	free(core);
 }
 
 static enum mPlatform _GBACorePlatform(const struct mCore* core) {
 	UNUSED(core);
-	return mPLATFORM_GBA;
+	return PLATFORM_GBA;
 }
 
 static bool _GBACoreSupportsFeature(const struct mCore* core, enum mCoreFeature feature) {
 	UNUSED(core);
 	switch (feature) {
 	case mCORE_FEATURE_OPENGL:
-#ifdef BUILD_GLES3
+#if defined(BUILD_GLES2) || defined(BUILD_GLES3)
 		return true;
 #else
 		return false;
@@ -374,7 +278,7 @@ static void _GBACoreLoadConfig(struct mCore* core, const struct mCoreConfig* con
 		} else if (strcasecmp(idleOptimization, "remove") == 0) {
 			gba->idleOptimization = IDLE_LOOP_REMOVE;
 		} else if (strcasecmp(idleOptimization, "detect") == 0) {
-			if (gba->idleLoop == GBA_IDLE_LOOP_NONE) {
+			if (gba->idleLoop == IDLE_LOOP_NONE) {
 				gba->idleOptimization = IDLE_LOOP_DETECT;
 			} else {
 				gba->idleOptimization = IDLE_LOOP_REMOVE;
@@ -382,12 +286,14 @@ static void _GBACoreLoadConfig(struct mCore* core, const struct mCoreConfig* con
 		}
 	}
 
-	mCoreConfigGetBoolValue(config, "allowOpposingDirections", &gba->allowOpposingDirections);
+	int fakeBool = 0;
+	mCoreConfigGetIntValue(config, "allowOpposingDirections", &fakeBool);
+	gba->allowOpposingDirections = fakeBool;
 
 	mCoreConfigCopyValue(&core->config, config, "allowOpposingDirections");
 	mCoreConfigCopyValue(&core->config, config, "gba.bios");
 	mCoreConfigCopyValue(&core->config, config, "gba.forceGbp");
-	mCoreConfigCopyValue(&core->config, config, "vbaBugCompat");
+	mCoreConfigCopyValue(&core->config, config, "gba.audioHle");
 
 #ifndef DISABLE_THREADING
 	mCoreConfigCopyValue(&core->config, config, "threadedVideo");
@@ -413,8 +319,11 @@ static void _GBACoreReloadConfigOption(struct mCore* core, const char* option, c
 		return;
 	}
 
+	int fakeBool;
 	if (strcmp("mute", option) == 0) {
-		if (mCoreConfigGetBoolValue(config, "mute", &core->opts.mute)) {
+		if (mCoreConfigGetIntValue(config, "mute", &fakeBool)) {
+			core->opts.mute = fakeBool;
+
 			if (core->opts.mute) {
 				gba->audio.masterVolume = 0;
 			} else {
@@ -439,18 +348,18 @@ static void _GBACoreReloadConfigOption(struct mCore* core, const char* option, c
 		if (config != &core->config) {
 			mCoreConfigCopyValue(&core->config, config, "allowOpposingDirections");
 		}
-		mCoreConfigGetBoolValue(config, "allowOpposingDirections", &gba->allowOpposingDirections);
+		if (mCoreConfigGetIntValue(config, "allowOpposingDirections", &fakeBool)) {
+			gba->allowOpposingDirections = fakeBool;
+		}
 		return;
 	}
-
+#if defined(BUILD_GLES2) || defined(BUILD_GLES3)
 	struct GBACore* gbacore = (struct GBACore*) core;
-#ifdef BUILD_GLES3
 	if (strcmp("videoScale", option) == 0) {
 		if (config != &core->config) {
 			mCoreConfigCopyValue(&core->config, config, "videoScale");
 		}
-		bool value;
-		if (gbacore->glRenderer.outputTex != (unsigned) -1 && mCoreConfigGetBoolValue(&core->config, "hwaccelVideo", &value) && value) {
+		if (gbacore->glRenderer.outputTex != (unsigned) -1 && mCoreConfigGetIntValue(&core->config, "hwaccelVideo", &fakeBool) && fakeBool) {
 			int scale;
 			mCoreConfigGetIntValue(config, "videoScale", &scale);
 			GBAVideoGLRendererSetScale(&gbacore->glRenderer, scale);
@@ -458,86 +367,22 @@ static void _GBACoreReloadConfigOption(struct mCore* core, const char* option, c
 		return;
 	}
 #endif
-	if (strcmp("hwaccelVideo", option) == 0) {
-		struct GBAVideoRenderer* renderer = NULL;
-		if (gbacore->renderer.outputBuffer) {
-			renderer = &gbacore->renderer.d;
-		}
-#ifdef BUILD_GLES3
-		bool value;
-		if (gbacore->glRenderer.outputTex != (unsigned) -1 && mCoreConfigGetBoolValue(&core->config, "hwaccelVideo", &value) && value) {
-			mCoreConfigGetIntValue(&core->config, "videoScale", &gbacore->glRenderer.scale);
-			renderer = &gbacore->glRenderer.d;
-		} else {
-			gbacore->glRenderer.scale = 1;
-		}
-#endif
-#ifndef MINIMAL_CORE
-		if (renderer && core->videoLogger) {
-			GBAVideoProxyRendererCreate(&gbacore->proxyRenderer, renderer, core->videoLogger);
-			renderer = &gbacore->proxyRenderer.d;
-		}
-#endif
-		if (renderer) {
-			GBAVideoAssociateRenderer(&gba->video, renderer);
-		}
-	}
-
-#ifndef MINIMAL_CORE
-	if (strcmp("threadedVideo.flushScanline", option) == 0) {
-		int flushScanline = -1;
-		mCoreConfigGetIntValue(config, "threadedVideo.flushScanline", &flushScanline);
-		gbacore->proxyRenderer.flushScanline = flushScanline;
-	}
-#endif
 }
 
-static void _GBACoreSetOverride(struct mCore* core, const void* override) {
+static void _GBACoreDesiredVideoDimensions(struct mCore* core, unsigned* width, unsigned* height) {
+#if defined(BUILD_GLES2) || defined(BUILD_GLES3)
 	struct GBACore* gbacore = (struct GBACore*) core;
-	memcpy(&gbacore->override, override, sizeof(gbacore->override));
-	gbacore->hasOverride = true;
-}
-
-static void _GBACoreBaseVideoSize(const struct mCore* core, unsigned* width, unsigned* height) {
-	UNUSED(core);
-	*width = GBA_VIDEO_HORIZONTAL_PIXELS;
-	*height = GBA_VIDEO_VERTICAL_PIXELS;
-}
-
-static void _GBACoreCurrentVideoSize(const struct mCore* core, unsigned* width, unsigned* height) {
-	int scale = 1;
-#ifdef BUILD_GLES3
-	const struct GBACore* gbacore = (const struct GBACore*) core;
-	if (gbacore->glRenderer.outputTex != (unsigned) -1) {
-		scale = gbacore->glRenderer.scale;
-	}
+	int scale = gbacore->glRenderer.scale;
 #else
 	UNUSED(core);
+	int scale = 1;
 #endif
 
 	*width = GBA_VIDEO_HORIZONTAL_PIXELS * scale;
 	*height = GBA_VIDEO_VERTICAL_PIXELS * scale;
 }
 
-static unsigned _GBACoreVideoScale(const struct mCore* core) {
-#ifdef BUILD_GLES3
-	const struct GBACore* gbacore = (const struct GBACore*) core;
-	if (gbacore->glRenderer.outputTex != (unsigned) -1) {
-		return gbacore->glRenderer.scale;
-	}
-#else
-	UNUSED(core);
-#endif
-	return 1;
-}
-
-static size_t _GBACoreScreenRegions(const struct mCore* core, const struct mCoreScreenRegion** regions) {
-	UNUSED(core);
-	*regions = _GBAScreenRegions;
-	return 1;
-}
-
-static void _GBACoreSetVideoBuffer(struct mCore* core, mColor* buffer, size_t stride) {
+static void _GBACoreSetVideoBuffer(struct mCore* core, color_t* buffer, size_t stride) {
 	struct GBACore* gbacore = (struct GBACore*) core;
 	gbacore->renderer.outputBuffer = buffer;
 	gbacore->renderer.outputBufferStride = stride;
@@ -545,10 +390,9 @@ static void _GBACoreSetVideoBuffer(struct mCore* core, mColor* buffer, size_t st
 }
 
 static void _GBACoreSetVideoGLTex(struct mCore* core, unsigned texid) {
-#ifdef BUILD_GLES3
+#if defined(BUILD_GLES2) || defined(BUILD_GLES3)
 	struct GBACore* gbacore = (struct GBACore*) core;
 	gbacore->glRenderer.outputTex = texid;
-	gbacore->glRenderer.outputTexDirty = true;
 #else
 	UNUSED(core);
 	UNUSED(texid);
@@ -565,14 +409,16 @@ static void _GBACorePutPixels(struct mCore* core, const void* buffer, size_t str
 	gba->video.renderer->putPixels(gba->video.renderer, stride, buffer);
 }
 
-static unsigned _GBACoreAudioSampleRate(const struct mCore* core) {
+static struct blip_t* _GBACoreGetAudioChannel(struct mCore* core, int ch) {
 	struct GBA* gba = core->board;
-	return GBA_ARM7TDMI_FREQUENCY / gba->audio.sampleInterval;
-}
-
-static struct mAudioBuffer* _GBACoreGetAudioBuffer(struct mCore* core) {
-	struct GBA* gba = core->board;
-	return &gba->audio.psg.buffer;
+	switch (ch) {
+	case 0:
+		return gba->audio.psg.left;
+	case 1:
+		return gba->audio.psg.right;
+	default:
+		return NULL;
+	}
 }
 
 static void _GBACoreSetAudioBufferSize(struct mCore* core, size_t samples) {
@@ -585,21 +431,9 @@ static size_t _GBACoreGetAudioBufferSize(struct mCore* core) {
 	return gba->audio.samples;
 }
 
-static void _GBACoreAddCoreCallbacks(struct mCore* core, const struct mCoreCallbacks* coreCallbacks) {
+static void _GBACoreAddCoreCallbacks(struct mCore* core, struct mCoreCallbacks* coreCallbacks) {
 	struct GBA* gba = core->board;
 	*mCoreCallbacksListAppend(&gba->coreCallbacks) = *coreCallbacks;
-}
-
-static void _GBACoreRemoveCoreCallbacks(struct mCore* core, const struct mCoreCallbacks* coreCallbacks) {
-	struct GBA* gba = core->board;
-	size_t i;
-
-	for (i = 0; i < mCoreCallbacksListSize(&gba->coreCallbacks); ++i) {
-		if (memcmp(mCoreCallbacksListGetConstPointer(&gba->coreCallbacks, i), coreCallbacks, sizeof(*coreCallbacks)) == 0) {
-			mCoreCallbacksListShift(&gba->coreCallbacks, i, 1);
-			break;
-		}
-	}
 }
 
 static void _GBACoreClearCoreCallbacks(struct mCore* core) {
@@ -612,34 +446,24 @@ static void _GBACoreSetAVStream(struct mCore* core, struct mAVStream* stream) {
 	gba->stream = stream;
 	if (stream && stream->videoDimensionsChanged) {
 		unsigned width, height;
-		core->currentVideoSize(core, &width, &height);
+		core->desiredVideoDimensions(core, &width, &height);
 		stream->videoDimensionsChanged(stream, width, height);
-	}
-	if (stream && stream->audioRateChanged) {
-		stream->audioRateChanged(stream, GBA_ARM7TDMI_FREQUENCY / gba->audio.sampleInterval);
 	}
 }
 
 static bool _GBACoreLoadROM(struct mCore* core, struct VFile* vf) {
-	struct GBACore* gbacore = (struct GBACore*) core;
 #ifdef USE_ELF
 	struct ELF* elf = ELFOpen(vf);
 	if (elf) {
-		if (GBAVerifyELFEntry(elf, GBA_BASE_ROM0)) {
-			GBALoadNull(core->board);
-		}
+		GBALoadNull(core->board);
 		bool success = mCoreLoadELF(core, elf);
 		ELFClose(elf);
-		if (success) {
-			vf->close(vf);
-		}
 		return success;
 	}
 #endif
 	if (GBAIsMB(vf)) {
 		return GBALoadMB(core->board, vf);
 	}
-	gbacore->memoryBlockType = -2;
 	return GBALoadROM(core->board, vf);
 }
 
@@ -683,51 +507,14 @@ static void _GBACoreUnloadROM(struct mCore* core) {
 		mCheatDeviceDestroy(gbacore->cheatDevice);
 		gbacore->cheatDevice = NULL;
 	}
-	GBAUnloadROM(core->board);
-}
-
-static size_t _GBACoreROMSize(const struct mCore* core) {
-	const struct GBA* gba = (const struct GBA*) core->board;
-	if (gba->romVf) {
-		return gba->romVf->size(gba->romVf);
-	}
-	if (gba->mbVf) {
-		return gba->mbVf->size(gba->mbVf);
-	}
-	return gba->pristineRomSize;
+	return GBAUnloadROM(core->board);
 }
 
 static void _GBACoreChecksum(const struct mCore* core, void* data, enum mCoreChecksumType type) {
-	const struct GBA* gba = (const struct GBA*) core->board;
+	struct GBA* gba = (struct GBA*) core->board;
 	switch (type) {
-	case mCHECKSUM_CRC32:
+	case CHECKSUM_CRC32:
 		memcpy(data, &gba->romCrc32, sizeof(gba->romCrc32));
-		break;
-	case mCHECKSUM_MD5:
-		if (gba->romVf) {
-			md5File(gba->romVf, data);
-		} else if (gba->mbVf) {
-			md5File(gba->mbVf, data);
-		} else if (gba->memory.rom && gba->isPristine) {
-			md5Buffer(gba->memory.rom, gba->pristineRomSize, data);
-		} else if (gba->memory.rom) {
-			md5Buffer(gba->memory.rom, gba->memory.romSize, data);
-		} else {
-			md5Buffer("", 0, data);
-		}
-		break;
-	case mCHECKSUM_SHA1:
-		if (gba->romVf) {
-			sha1File(gba->romVf, data);
-		} else if (gba->mbVf) {
-			sha1File(gba->mbVf, data);
-		} else if (gba->memory.rom && gba->isPristine) {
-			sha1Buffer(gba->memory.rom, gba->pristineRomSize, data);
-		} else if (gba->memory.rom) {
-			sha1Buffer(gba->memory.rom, gba->memory.romSize, data);
-		} else {
-			sha1Buffer("", 0, data);
-		}
 		break;
 	}
 	return;
@@ -736,10 +523,9 @@ static void _GBACoreChecksum(const struct mCore* core, void* data, enum mCoreChe
 static void _GBACoreReset(struct mCore* core) {
 	struct GBACore* gbacore = (struct GBACore*) core;
 	struct GBA* gba = (struct GBA*) core->board;
-	bool value;
-	UNUSED(value);
+	int fakeBool;
 	if (gbacore->renderer.outputBuffer
-#ifdef BUILD_GLES3
+#if defined(BUILD_GLES2) || defined(BUILD_GLES3)
 	    || gbacore->glRenderer.outputTex != (unsigned) -1
 #endif
 	) {
@@ -747,16 +533,14 @@ static void _GBACoreReset(struct mCore* core) {
 		if (gbacore->renderer.outputBuffer) {
 			renderer = &gbacore->renderer.d;
 		}
-#ifdef BUILD_GLES3
-		if (gbacore->glRenderer.outputTex != (unsigned) -1 && mCoreConfigGetBoolValue(&core->config, "hwaccelVideo", &value) && value) {
-			mCoreConfigGetIntValue(&core->config, "videoScale", &gbacore->glRenderer.scale);
+#if defined(BUILD_GLES2) || defined(BUILD_GLES3)
+		if (gbacore->glRenderer.outputTex != (unsigned) -1 && mCoreConfigGetIntValue(&core->config, "hwaccelVideo", &fakeBool) && fakeBool) {
 			renderer = &gbacore->glRenderer.d;
-		} else {
-			gbacore->glRenderer.scale = 1;
+			mCoreConfigGetIntValue(&core->config, "videoScale", &gbacore->glRenderer.scale);
 		}
 #endif
 #ifndef DISABLE_THREADING
-		if (mCoreConfigGetBoolValue(&core->config, "threadedVideo", &value) && value) {
+		if (mCoreConfigGetIntValue(&core->config, "threadedVideo", &fakeBool) && fakeBool) {
 			if (!core->videoLogger) {
 				core->videoLogger = &gbacore->threadProxy.d;
 			}
@@ -764,12 +548,9 @@ static void _GBACoreReset(struct mCore* core) {
 #endif
 #ifndef MINIMAL_CORE
 		if (renderer && core->videoLogger) {
-			GBAVideoProxyRendererCreate(&gbacore->proxyRenderer, renderer, core->videoLogger);
+			gbacore->proxyRenderer.logger = core->videoLogger;
+			GBAVideoProxyRendererCreate(&gbacore->proxyRenderer, renderer);
 			renderer = &gbacore->proxyRenderer.d;
-
-			int flushScanline = -1;
-			mCoreConfigGetIntValue(&core->config, "threadedVideo.flushScanline", &flushScanline);
-			gbacore->proxyRenderer.flushScanline = flushScanline;
 		}
 #endif
 		if (renderer) {
@@ -777,27 +558,29 @@ static void _GBACoreReset(struct mCore* core) {
 		}
 	}
 
+#ifndef MINIMAL_CORE
+	int useAudioMixer;
+	if (!gbacore->audioMixer && mCoreConfigGetIntValue(&core->config, "gba.audioHle", &useAudioMixer) && useAudioMixer) {
+		gbacore->audioMixer = malloc(sizeof(*gbacore->audioMixer));
+		GBAAudioMixerCreate(gbacore->audioMixer);
+		((struct ARMCore*) core->cpu)->components[CPU_COMPONENT_AUDIO_MIXER] = &gbacore->audioMixer->d;
+		ARMHotplugAttach(core->cpu, CPU_COMPONENT_AUDIO_MIXER);
+	}
+#endif
+
 	bool forceGbp = false;
-	bool vbaBugCompat = true;
-	mCoreConfigGetBoolValue(&core->config, "gba.forceGbp", &forceGbp);
-	mCoreConfigGetBoolValue(&core->config, "vbaBugCompat", &vbaBugCompat);
+	if (mCoreConfigGetIntValue(&core->config, "gba.forceGbp", &fakeBool)) {
+		forceGbp = fakeBool;
+	}
 	if (!forceGbp) {
 		gba->memory.hw.devices &= ~HW_GB_PLAYER_DETECTION;
 	}
-	if (gbacore->hasOverride) {
-		GBAOverrideApply(gba, &gbacore->override);
-	} else {
-		GBAOverrideApplyDefaults(gba, gbacore->overrides);
-	}
+	GBAOverrideApplyDefaults(gba, gbacore->overrides);
 	if (forceGbp) {
 		gba->memory.hw.devices |= HW_GB_PLAYER_DETECTION;
 	}
-	if (!vbaBugCompat) {
-		gba->vbaBugCompat = false;
-	}
-	gbacore->memoryBlockType = -2;
 
-#ifdef ENABLE_VFS
+#if !defined(MINIMAL_CORE) || MINIMAL_CORE < 2
 	if (!gba->biosVf && core->opts.useBios) {
 		struct VFile* bios = NULL;
 		bool found = false;
@@ -825,7 +608,7 @@ static void _GBACoreReset(struct mCore* core) {
 		if (!found) {
 			char path[PATH_MAX];
 			mCoreConfigDirectory(path, PATH_MAX);
-			strncat(path, PATH_SEP "gba_bios.bin", PATH_MAX - strlen(path) - 1);
+			strncat(path, PATH_SEP "gba_bios.bin", PATH_MAX - strlen(path));
 			bios = VFileOpen(path, O_RDONLY);
 			if (bios && GBAIsBIOS(bios)) {
 				found = true;
@@ -841,25 +624,14 @@ static void _GBACoreReset(struct mCore* core) {
 #endif
 
 	ARMReset(core->cpu);
-	bool forceSkip = gba->mbVf || (core->opts.skipBios && (gba->romVf || gba->memory.rom));
-	if (!forceSkip && (gba->romVf || gba->memory.rom) && gba->pristineRomSize >= 0xA0 && gba->biosVf) {
-		uint32_t crc = doCrc32(&gba->memory.rom[1], 0x9C);
-		if (crc != LOGO_CRC32) {
-			mLOG(STATUS, WARN, "Invalid logo, skipping BIOS");
-			forceSkip = true;
-		}
-	}
-
-	if (forceSkip) {
+	if ((core->opts.skipBios && (gba->romVf || gba->memory.rom)) || (gba->romVf && GBAIsMB(gba->romVf))) {
 		GBASkipBIOS(core->board);
 	}
-
-	mTimingInterrupt(&gba->timing);
 }
 
 static void _GBACoreRunFrame(struct mCore* core) {
 	struct GBA* gba = core->board;
-	uint32_t frameCounter = gba->video.frameCounter;
+	int32_t frameCounter = gba->video.frameCounter;
 	uint32_t startCycle = mTimingCurrentTime(&gba->timing);
 	while (gba->video.frameCounter == frameCounter && mTimingCurrentTime(&gba->timing) - startCycle < VIDEO_TOTAL_LENGTH + VIDEO_HORIZONTAL_LENGTH) {
 		ARMRunLoop(core->cpu);
@@ -888,107 +660,24 @@ static bool _GBACoreSaveState(struct mCore* core, void* state) {
 	return true;
 }
 
-static bool _GBACoreLoadExtraState(struct mCore* core, const struct mStateExtdata* extdata) {
-	struct GBA* gba = core->board;
-	struct mStateExtdataItem item;
-	bool ok = true;
-	if (mStateExtdataGet(extdata, EXTDATA_SUBSYSTEM_START + GBA_SUBSYSTEM_VIDEO_RENDERER, &item)) {
-		if ((uint32_t) item.size > sizeof(uint32_t)) {
-			uint32_t type;
-			LOAD_32(type, 0, item.data);
-			if (type == gba->video.renderer->rendererId(gba->video.renderer)) {
-				ok = gba->video.renderer->loadState(gba->video.renderer,
-				                                    (void*) ((uintptr_t) item.data + sizeof(uint32_t)),
-				                                    item.size - sizeof(type)) && ok;
-			}
-		} else if (item.data) {
-			ok = false;
-		}
-	}
-	if (gba->sio.driver && gba->sio.driver->driverId && gba->sio.driver->loadState &&
-	    mStateExtdataGet(extdata, EXTDATA_SUBSYSTEM_START + GBA_SUBSYSTEM_SIO_DRIVER, &item)) {
-		if ((uint32_t) item.size > sizeof(uint32_t)) {
-			uint32_t type;
-			LOAD_32(type, 0, item.data);
-			if (type == gba->sio.driver->driverId(gba->sio.driver)) {
-				ok = gba->sio.driver->loadState(gba->sio.driver,
-				                                (void*) ((uintptr_t) item.data + sizeof(uint32_t)),
-				                                item.size - sizeof(type)) && ok;
-			}
-		} else if (item.data) {
-			ok = false;
-		}
-	}
-	return ok;
-}
-
-static bool _GBACoreSaveExtraState(struct mCore* core, struct mStateExtdata* extdata) {
-	struct GBA* gba = core->board;
-	void* buffer = NULL;
-	size_t size = 0;
-	gba->video.renderer->saveState(gba->video.renderer, &buffer, &size);
-	if (size > 0 && buffer) {
-		struct mStateExtdataItem item;
-		item.size = size + sizeof(uint32_t);
-		item.data = malloc(item.size);
-		item.clean = free;
-		uint32_t type = gba->video.renderer->rendererId(gba->video.renderer);
-		STORE_32(type, 0, item.data);
-		memcpy((void*) ((uintptr_t) item.data + sizeof(uint32_t)), buffer, size);
-		mStateExtdataPut(extdata, EXTDATA_SUBSYSTEM_START + GBA_SUBSYSTEM_VIDEO_RENDERER, &item);
-	}
-	if (buffer) {
-		free(buffer);
-		buffer = NULL;
-	}
-	size = 0;
-
-	if (gba->sio.driver && gba->sio.driver->driverId && gba->sio.driver->saveState) {
-		gba->sio.driver->saveState(gba->sio.driver, &buffer, &size);
-		if (size > 0 && buffer) {
-			struct mStateExtdataItem item;
-			item.size = size + sizeof(uint32_t);
-			item.data = malloc(item.size);
-			item.clean = free;
-			uint32_t type = gba->sio.driver->driverId(gba->sio.driver);
-			STORE_32(type, 0, item.data);
-			memcpy((void*) ((uintptr_t) item.data + sizeof(uint32_t)), buffer, size);
-			mStateExtdataPut(extdata, EXTDATA_SUBSYSTEM_START + GBA_SUBSYSTEM_SIO_DRIVER, &item);
-		}
-		if (buffer) {
-			free(buffer);
-			buffer = NULL;
-		}
-		size = 0;
-	}
-
-	return true;
-}
-
 static void _GBACoreSetKeys(struct mCore* core, uint32_t keys) {
-	struct GBA* gba = core->board;
-	gba->keysActive = keys;
-	GBATestKeypadIRQ(gba);
+	struct GBACore* gbacore = (struct GBACore*) core;
+	gbacore->keys = keys;
+	GBATestKeypadIRQ(core->board);
 }
 
 static void _GBACoreAddKeys(struct mCore* core, uint32_t keys) {
-	struct GBA* gba = core->board;
-	gba->keysActive |= keys;
-	GBATestKeypadIRQ(gba);
+	struct GBACore* gbacore = (struct GBACore*) core;
+	gbacore->keys |= keys;
+	GBATestKeypadIRQ(core->board);
 }
 
 static void _GBACoreClearKeys(struct mCore* core, uint32_t keys) {
-	struct GBA* gba = core->board;
-	gba->keysActive &= ~keys;
-	GBATestKeypadIRQ(gba);
+	struct GBACore* gbacore = (struct GBACore*) core;
+	gbacore->keys &= ~keys;
 }
 
-static uint32_t _GBACoreGetKeys(struct mCore* core) {
-	struct GBA* gba = core->board;
-	return gba->keysActive;
-}
-
-static uint32_t _GBACoreFrameCounter(const struct mCore* core) {
+static int32_t _GBACoreFrameCounter(const struct mCore* core) {
 	const struct GBA* gba = core->board;
 	return gba->video.frameCounter;
 }
@@ -1003,8 +692,12 @@ static int32_t _GBACoreFrequency(const struct mCore* core) {
 	return GBA_ARM7TDMI_FREQUENCY;
 }
 
-static void _GBACoreGetGameInfo(const struct mCore* core, struct mGameInfo* info) {
-	GBAGetGameInfo(core->board, info);
+static void _GBACoreGetGameTitle(const struct mCore* core, char* title) {
+	GBAGetGameTitle(core->board, title);
+}
+
+static void _GBACoreGetGameCode(const struct mCore* core, char* title) {
+	GBAGetGameCode(core->board, title);
 }
 
 static void _GBACoreSetPeripheral(struct mCore* core, int type, void* periph) {
@@ -1019,25 +712,12 @@ static void _GBACoreSetPeripheral(struct mCore* core, int type, void* periph) {
 	case mPERIPH_GBA_LUMINANCE:
 		gba->luminanceSource = periph;
 		break;
-	case mPERIPH_GBA_LINK_PORT:
-		GBASIOSetDriver(&gba->sio, periph);
+	case mPERIPH_GBA_BATTLECHIP_GATE:
+		GBASIOSetDriver(&gba->sio, periph, SIO_MULTI);
+		GBASIOSetDriver(&gba->sio, periph, SIO_NORMAL_32);
 		break;
 	default:
 		return;
-	}
-}
-
-static void* _GBACoreGetPeripheral(struct mCore* core, int type) {
-	struct GBA* gba = core->board;
-	switch (type) {
-	case mPERIPH_ROTATION:
-		return gba->rotationSource;
-	case mPERIPH_RUMBLE:
-		return gba->rumble;
-	case mPERIPH_GBA_LUMINANCE:
-		return gba->luminanceSource;
-	default:
-		return NULL;
 	}
 }
 
@@ -1108,240 +788,68 @@ static void _GBACoreRawWrite32(struct mCore* core, uint32_t address, int segment
 	GBAPatch32(cpu, address, value, NULL);
 }
 
-size_t _GBACoreListMemoryBlocks(const struct mCore* core, const struct mCoreMemoryBlock** blocks) {
+size_t _GBAListMemoryBlocks(const struct mCore* core, const struct mCoreMemoryBlock** blocks) {
 	const struct GBA* gba = core->board;
-	struct GBACore* gbacore = (struct GBACore*) core;
-
-	if (gbacore->memoryBlockType != gba->memory.savedata.type) {
-		switch (gba->memory.savedata.type) {
-		case GBA_SAVEDATA_SRAM:
-			memcpy(gbacore->memoryBlocks, _GBAMemoryBlocksSRAM, sizeof(_GBAMemoryBlocksSRAM));
-			gbacore->nMemoryBlocks = sizeof(_GBAMemoryBlocksSRAM) / sizeof(*_GBAMemoryBlocksSRAM);
-			break;
-		case GBA_SAVEDATA_SRAM512:
-			memcpy(gbacore->memoryBlocks, _GBAMemoryBlocksSRAM512, sizeof(_GBAMemoryBlocksSRAM512));
-			gbacore->nMemoryBlocks = sizeof(_GBAMemoryBlocksSRAM512) / sizeof(*_GBAMemoryBlocksSRAM512);
-			break;
-		case GBA_SAVEDATA_FLASH512:
-			memcpy(gbacore->memoryBlocks, _GBAMemoryBlocksFlash512, sizeof(_GBAMemoryBlocksFlash512));
-			gbacore->nMemoryBlocks = sizeof(_GBAMemoryBlocksFlash512) / sizeof(*_GBAMemoryBlocksFlash512);
-			break;
-		case GBA_SAVEDATA_FLASH1M:
-			memcpy(gbacore->memoryBlocks, _GBAMemoryBlocksFlash1M, sizeof(_GBAMemoryBlocksFlash1M));
-			gbacore->nMemoryBlocks = sizeof(_GBAMemoryBlocksFlash1M) / sizeof(*_GBAMemoryBlocksFlash1M);
-			break;
-		case GBA_SAVEDATA_EEPROM:
-			memcpy(gbacore->memoryBlocks, _GBAMemoryBlocksEEPROM, sizeof(_GBAMemoryBlocksEEPROM));
-			gbacore->nMemoryBlocks = sizeof(_GBAMemoryBlocksEEPROM) / sizeof(*_GBAMemoryBlocksEEPROM);
-			break;
-		case GBA_SAVEDATA_EEPROM512:
-			memcpy(gbacore->memoryBlocks, _GBAMemoryBlocksEEPROM512, sizeof(_GBAMemoryBlocksEEPROM512));
-			gbacore->nMemoryBlocks = sizeof(_GBAMemoryBlocksEEPROM512) / sizeof(*_GBAMemoryBlocksEEPROM512);
-			break;
-		default:
-			memcpy(gbacore->memoryBlocks, _GBAMemoryBlocks, sizeof(_GBAMemoryBlocks));
-			gbacore->nMemoryBlocks = sizeof(_GBAMemoryBlocks) / sizeof(*_GBAMemoryBlocks);
-			break;
-		}
-
-		size_t i;
-		for (i = 0; i < gbacore->nMemoryBlocks; ++i) {
-			if (gbacore->memoryBlocks[i].id == GBA_REGION_ROM0 || gbacore->memoryBlocks[i].id == GBA_REGION_ROM1 || gbacore->memoryBlocks[i].id == GBA_REGION_ROM2) {
-				gbacore->memoryBlocks[i].size = gba->memory.romSize;
-			}
-		}
-		gbacore->memoryBlockType = gba->memory.savedata.type;
-
-		mCALLBACKS_INVOKE(gba, memoryBlocksChanged);
+	switch (gba->memory.savedata.type) {
+	case SAVEDATA_SRAM:
+		*blocks = _GBAMemoryBlocksSRAM;
+		return sizeof(_GBAMemoryBlocksSRAM) / sizeof(*_GBAMemoryBlocksSRAM);
+	case SAVEDATA_FLASH512:
+		*blocks = _GBAMemoryBlocksFlash512;
+		return sizeof(_GBAMemoryBlocksFlash512) / sizeof(*_GBAMemoryBlocksFlash512);
+	case SAVEDATA_FLASH1M:
+		*blocks = _GBAMemoryBlocksFlash1M;
+		return sizeof(_GBAMemoryBlocksFlash1M) / sizeof(*_GBAMemoryBlocksFlash1M);
+	case SAVEDATA_EEPROM:
+		*blocks = _GBAMemoryBlocksEEPROM;
+		return sizeof(_GBAMemoryBlocksEEPROM) / sizeof(*_GBAMemoryBlocksEEPROM);
+	default:
+		*blocks = _GBAMemoryBlocks;
+		return sizeof(_GBAMemoryBlocks) / sizeof(*_GBAMemoryBlocks);
 	}
-
-	*blocks = gbacore->memoryBlocks;
-	return gbacore->nMemoryBlocks;
 }
 
-void* _GBACoreGetMemoryBlock(struct mCore* core, size_t id, size_t* sizeOut) {
+void* _GBAGetMemoryBlock(struct mCore* core, size_t id, size_t* sizeOut) {
 	struct GBA* gba = core->board;
 	switch (id) {
 	default:
 		return NULL;
-	case GBA_REGION_BIOS:
-		*sizeOut = GBA_SIZE_BIOS;
+	case REGION_BIOS:
+		*sizeOut = SIZE_BIOS;
 		return gba->memory.bios;
-	case GBA_REGION_EWRAM:
-		*sizeOut = GBA_SIZE_EWRAM;
+	case REGION_WORKING_RAM:
+		*sizeOut = SIZE_WORKING_RAM;
 		return gba->memory.wram;
-	case GBA_REGION_IWRAM:
-		*sizeOut = GBA_SIZE_IWRAM;
+	case REGION_WORKING_IRAM:
+		*sizeOut = SIZE_WORKING_IRAM;
 		return gba->memory.iwram;
-	case GBA_REGION_PALETTE_RAM:
-		*sizeOut = GBA_SIZE_PALETTE_RAM;
+	case REGION_PALETTE_RAM:
+		*sizeOut = SIZE_PALETTE_RAM;
 		return gba->video.palette;
-	case GBA_REGION_VRAM:
-		*sizeOut = GBA_SIZE_VRAM;
+	case REGION_VRAM:
+		*sizeOut = SIZE_VRAM;
 		return gba->video.vram;
-	case GBA_REGION_OAM:
-		*sizeOut = GBA_SIZE_OAM;
+	case REGION_OAM:
+		*sizeOut = SIZE_OAM;
 		return gba->video.oam.raw;
-	case GBA_REGION_ROM0:
-	case GBA_REGION_ROM1:
-	case GBA_REGION_ROM2:
+	case REGION_CART0:
+	case REGION_CART1:
+	case REGION_CART2:
 		*sizeOut = gba->memory.romSize;
 		return gba->memory.rom;
-	case GBA_REGION_SRAM:
-		if (gba->memory.savedata.type == GBA_SAVEDATA_FLASH1M) {
-			*sizeOut = GBA_SIZE_FLASH1M;
+	case REGION_CART_SRAM:
+		if (gba->memory.savedata.type == SAVEDATA_FLASH1M) {
+			*sizeOut = SIZE_CART_FLASH1M;
 			return gba->memory.savedata.currentBank;
 		}
 		// Fall through
-	case GBA_REGION_SRAM_MIRROR:
+	case REGION_CART_SRAM_MIRROR:
 		*sizeOut = GBASavedataSize(&gba->memory.savedata);
 		return gba->memory.savedata.data;
 	}
 }
 
-static size_t _GBACoreListRegisters(const struct mCore* core, const struct mCoreRegisterInfo** list) {
-	UNUSED(core);
-	*list = _GBARegisters;
-	return sizeof(_GBARegisters) / sizeof(*_GBARegisters);
-}
-
-static bool _GBACoreReadRegister(const struct mCore* core, const char* name, int32_t* out) {
-	struct ARMCore* cpu = core->cpu;
-	switch (name[0]) {
-	case 'r':
-	case 'R':
-		++name;
-		break;
-	case 'c':
-	case 'C':
-		if (strcmp(name, "cpsr") == 0 || strcmp(name, "CPSR") == 0) {
-			*out = cpu->cpsr.packed;
-			_ARMReadCPSR(cpu);
-			return true;
-		}
-		return false;
-	case 'i':
-	case 'I':
-		if (strcmp(name, "ip") == 0 || strcmp(name, "IP") == 0) {
-			*out = cpu->gprs[12];
-			return true;
-		}
-		return false;
-	case 's':
-	case 'S':
-		if (strcmp(name, "sp") == 0 || strcmp(name, "SP") == 0) {
-			*out = cpu->gprs[ARM_SP];
-			return true;
-		}
-		// TODO: SPSR
-		return false;
-	case 'l':
-	case 'L':
-		if (strcmp(name, "lr") == 0 || strcmp(name, "LR") == 0) {
-			*out = cpu->gprs[ARM_LR];
-			return true;
-		}
-		return false;
-	case 'p':
-	case 'P':
-		if (strcmp(name, "pc") == 0 || strcmp(name, "PC") == 0) {
-			*out = cpu->gprs[ARM_PC];
-			return true;
-		}
-		return false;
-	default:
-		return false;
-	}
-
-	char* parseEnd;
-	errno = 0;
-	unsigned long regId = strtoul(name, &parseEnd, 10);
-	if (errno || regId > 15 || *parseEnd) {
-		return false;
-	}
-	*out = cpu->gprs[regId];
-	return true;
-}
-
-static bool _GBACoreWriteRegister(struct mCore* core, const char* name, int32_t in) {
-	struct ARMCore* cpu = core->cpu;
-	switch (name[0]) {
-	case 'r':
-	case 'R':
-		++name;
-		break;
-	case 'c':
-	case 'C':
-		if (strcmp(name, "cpsr") == 0) {
-			uint32_t pc = cpu->gprs[ARM_PC] & -WORD_SIZE_THUMB;
-			enum ExecutionMode mode = cpu->cpsr.t;
-			cpu->cpsr.packed = in & 0xF00000FF;
-			_ARMReadCPSR(cpu);
-			if (mode != cpu->cpsr.t) {
-				// Mode changed, flush the prefetch
-				if (cpu->cpsr.t == MODE_ARM) {
-					pc &= -WORD_SIZE_ARM;
-					LOAD_32(cpu->prefetch[0], (pc - WORD_SIZE_ARM) & cpu->memory.activeMask, cpu->memory.activeRegion);
-					LOAD_32(cpu->prefetch[1], pc & cpu->memory.activeMask, cpu->memory.activeRegion);
-				} else {
-					LOAD_16(cpu->prefetch[0], (pc - WORD_SIZE_THUMB) & cpu->memory.activeMask, cpu->memory.activeRegion);
-					LOAD_16(cpu->prefetch[1], pc & cpu->memory.activeMask, cpu->memory.activeRegion);
-				}
-			}
-			return true;
-		}
-		return false;
-	case 'i':
-	case 'I':
-		if (strcmp(name, "ip") == 0 || strcmp(name, "IP") == 0) {
-			cpu->gprs[12] = in;
-			return true;
-		}
-		return false;
-	case 's':
-	case 'S':
-		if (strcmp(name, "sp") == 0 || strcmp(name, "SP") == 0) {
-			cpu->gprs[ARM_SP] = in;
-			return true;
-		}
-		// TODO: SPSR
-		return false;
-	case 'l':
-	case 'L':
-		if (strcmp(name, "lr") == 0 || strcmp(name, "LR") == 0) {
-			cpu->gprs[ARM_LR] = in;
-			return true;
-		}
-		return false;
-	case 'p':
-	case 'P':
-		if (strcmp(name, "pc") == 0 || strcmp(name, "PC") == 0) {
-			name = "15";
-			break;
-		}
-		return false;
-	default:
-		return false;
-	}
-
-	char* parseEnd;
-	errno = 0;
-	unsigned long regId = strtoul(name, &parseEnd, 10);
-	if (errno || regId > 15 || *parseEnd) {
-		return false;
-	}
-	cpu->gprs[regId] = in;
-	if (regId == ARM_PC) {
-		if (cpu->cpsr.t) {
-			ThumbWritePC(cpu);
-		} else {
-			ARMWritePC(cpu);
-		}
-	}
-	return true;
-}
-
-#ifdef ENABLE_DEBUGGERS
+#ifdef USE_DEBUGGERS
 static bool _GBACoreSupportsDebuggerType(struct mCore* core, enum mDebuggerType type) {
 	UNUSED(core);
 	switch (type) {
@@ -1367,9 +875,6 @@ static struct CLIDebuggerSystem* _GBACoreCliDebuggerSystem(struct mCore* core) {
 }
 
 static void _GBACoreAttachDebugger(struct mCore* core, struct mDebugger* debugger) {
-	if (core->debugger == debugger) {
-		return;
-	}
 	if (core->debugger) {
 		GBADetachDebugger(core->board);
 	}
@@ -1383,60 +888,37 @@ static void _GBACoreDetachDebugger(struct mCore* core) {
 }
 
 static void _GBACoreLoadSymbols(struct mCore* core, struct VFile* vf) {
-	struct GBA* gba = core->board;
 	bool closeAfter = false;
-	if (!core->symbolTable) {
-		core->symbolTable = mDebuggerSymbolTableCreate();
-	}
-	off_t seek;
-	if (vf) {
-		seek = vf->seek(vf, 0, SEEK_CUR);
-		vf->seek(vf, 0, SEEK_SET);
-	}
-#if defined(ENABLE_VFS) && defined(ENABLE_DIRECTORIES)
+	core->symbolTable = mDebuggerSymbolTableCreate();
+#if !defined(MINIMAL_CORE) || MINIMAL_CORE < 2
 #ifdef USE_ELF
-	if (!vf && core->dirs.base) {
+	if (!vf) {
 		closeAfter = true;
 		vf = mDirectorySetOpenSuffix(&core->dirs, core->dirs.base, ".elf", O_RDONLY);
 	}
 #endif
-	if (!vf && core->dirs.base) {
+	if (!vf) {
+		closeAfter = true;
 		vf = mDirectorySetOpenSuffix(&core->dirs, core->dirs.base, ".sym", O_RDONLY);
-		if (vf) {
-			mDebuggerLoadARMIPSSymbols(core->symbolTable, vf);
-			vf->close(vf);
-			return;
-		}
 	}
 #endif
-	if (!vf && gba->mbVf) {
-		closeAfter = false;
-		vf = gba->mbVf;
-		seek = vf->seek(vf, 0, SEEK_CUR);
-		vf->seek(vf, 0, SEEK_SET);
-	}
-	if (!vf && gba->romVf) {
-		closeAfter = false;
-		vf = gba->romVf;
-		seek = vf->seek(vf, 0, SEEK_CUR);
-		vf->seek(vf, 0, SEEK_SET);
-	}
 	if (!vf) {
 		return;
 	}
 #ifdef USE_ELF
 	struct ELF* elf = ELFOpen(vf);
 	if (elf) {
-#ifdef ENABLE_DEBUGGERS
+#ifdef USE_DEBUGGERS
 		mCoreLoadELFSymbols(core->symbolTable, elf);
 #endif
 		ELFClose(elf);
-	}
+	} else
 #endif
+	{
+		mDebuggerLoadARMIPSSymbols(core->symbolTable, vf);
+	}
 	if (closeAfter) {
 		vf->close(vf);
-	} else {
-		vf->seek(vf, seek, SEEK_SET);
 	}
 }
 
@@ -1444,10 +926,10 @@ static bool _GBACoreLookupIdentifier(struct mCore* core, const char* name, int32
 	UNUSED(core);
 	*segment = -1;
 	int i;
-	for (i = 0; i < GBA_REG_MAX; i += 2) {
+	for (i = 0; i < REG_MAX; i += 2) {
 		const char* reg = GBAIORegisterNames[i >> 1];
 		if (reg && strcasecmp(reg, name) == 0) {
-			*value = GBA_BASE_IO | i;
+			*value = BASE_IO | i;
 			return true;
 		}
 	}
@@ -1525,23 +1007,14 @@ static size_t _GBACoreListAudioChannels(const struct mCore* core, const struct m
 static void _GBACoreEnableVideoLayer(struct mCore* core, size_t id, bool enable) {
 	struct GBA* gba = core->board;
 	switch (id) {
-	case GBA_LAYER_BG0:
-	case GBA_LAYER_BG1:
-	case GBA_LAYER_BG2:
-	case GBA_LAYER_BG3:
+	case 0:
+	case 1:
+	case 2:
+	case 3:
 		gba->video.renderer->disableBG[id] = !enable;
 		break;
-	case GBA_LAYER_OBJ:
+	case 4:
 		gba->video.renderer->disableOBJ = !enable;
-		break;
-	case GBA_LAYER_WIN0:
-		gba->video.renderer->disableWIN[0] = !enable;
-		break;
-	case GBA_LAYER_WIN1:
-		gba->video.renderer->disableWIN[1] = !enable;
-		break;
-	case GBA_LAYER_OBJWIN:
-		gba->video.renderer->disableOBJWIN = !enable;
 		break;
 	default:
 		break;
@@ -1571,35 +1044,17 @@ static void _GBACoreEnableAudioChannel(struct mCore* core, size_t id, bool enabl
 static void _GBACoreAdjustVideoLayer(struct mCore* core, size_t id, int32_t x, int32_t y) {
 	struct GBACore* gbacore = (struct GBACore*) core;
 	switch (id) {
-	case GBA_LAYER_BG0:
-	case GBA_LAYER_BG1:
-	case GBA_LAYER_BG2:
-	case GBA_LAYER_BG3:
+	case 0:
+	case 1:
+	case 2:
+	case 3:
 		gbacore->renderer.bg[id].offsetX = x;
 		gbacore->renderer.bg[id].offsetY = y;
-#ifdef BUILD_GLES3
-		gbacore->glRenderer.bg[id].offsetX = x;
-		gbacore->glRenderer.bg[id].offsetY = y;
-#endif
 		break;
-	case GBA_LAYER_OBJ:
+	case 4:
 		gbacore->renderer.objOffsetX = x;
 		gbacore->renderer.objOffsetY = y;
 		gbacore->renderer.oamDirty = 1;
-#ifdef BUILD_GLES3
-		gbacore->glRenderer.objOffsetX = x;
-		gbacore->glRenderer.objOffsetY = y;
-		gbacore->glRenderer.oamDirty = 1;
-#endif
-		break;
-	case GBA_LAYER_WIN0:
-	case GBA_LAYER_WIN1:
-		gbacore->renderer.winN[id - GBA_LAYER_WIN0].offsetX = x;
-		gbacore->renderer.winN[id - GBA_LAYER_WIN0].offsetY = y;
-#ifdef BUILD_GLES3
-		gbacore->glRenderer.winN[id - GBA_LAYER_WIN0].offsetX = x;
-		gbacore->glRenderer.winN[id - GBA_LAYER_WIN0].offsetY = y;
-#endif
 		break;
 	default:
 		return;
@@ -1615,15 +1070,15 @@ static void _GBACoreStartVideoLog(struct mCore* core, struct mVideoLogContext* c
 
 	struct GBASerializedState* state = mVideoLogContextInitialState(context, NULL);
 	state->id = 0;
-	state->cpu.gprs[ARM_PC] = GBA_BASE_EWRAM;
+	state->cpu.gprs[ARM_PC] = BASE_WORKING_RAM;
 
 	int channelId = mVideoLoggerAddChannel(context);
-	struct mVideoLogger* logger = malloc(sizeof(*logger));
-	mVideoLoggerRendererCreate(logger, false);
-	mVideoLoggerAttachChannel(logger, context, channelId);
-	logger->block = false;
+	gbacore->vlProxy.logger = malloc(sizeof(struct mVideoLogger));
+	mVideoLoggerRendererCreate(gbacore->vlProxy.logger, false);
+	mVideoLoggerAttachChannel(gbacore->vlProxy.logger, context, channelId);
+	gbacore->vlProxy.logger->block = false;
 
-	GBAVideoProxyRendererCreate(&gbacore->vlProxy, gba->video.renderer, logger);
+	GBAVideoProxyRendererCreate(&gbacore->vlProxy, gba->video.renderer);
 	GBAVideoProxyRendererShim(&gba->video, &gbacore->vlProxy);
 }
 
@@ -1652,21 +1107,15 @@ struct mCore* GBACoreCreate(void) {
 	core->setSync = _GBACoreSetSync;
 	core->loadConfig = _GBACoreLoadConfig;
 	core->reloadConfigOption = _GBACoreReloadConfigOption;
-	core->setOverride = _GBACoreSetOverride;
-	core->baseVideoSize = _GBACoreBaseVideoSize;
-	core->currentVideoSize = _GBACoreCurrentVideoSize;
-	core->videoScale = _GBACoreVideoScale;
-	core->screenRegions = _GBACoreScreenRegions;
+	core->desiredVideoDimensions = _GBACoreDesiredVideoDimensions;
 	core->setVideoBuffer = _GBACoreSetVideoBuffer;
 	core->setVideoGLTex = _GBACoreSetVideoGLTex;
 	core->getPixels = _GBACoreGetPixels;
 	core->putPixels = _GBACorePutPixels;
-	core->audioSampleRate = _GBACoreAudioSampleRate;
-	core->getAudioBuffer = _GBACoreGetAudioBuffer;
+	core->getAudioChannel = _GBACoreGetAudioChannel;
 	core->setAudioBufferSize = _GBACoreSetAudioBufferSize;
 	core->getAudioBufferSize = _GBACoreGetAudioBufferSize;
 	core->addCoreCallbacks = _GBACoreAddCoreCallbacks;
-	core->removeCoreCallbacks = _GBACoreRemoveCoreCallbacks;
 	core->clearCoreCallbacks = _GBACoreClearCoreCallbacks;
 	core->setAVStream = _GBACoreSetAVStream;
 	core->isROM = GBAIsROM;
@@ -1676,7 +1125,6 @@ struct mCore* GBACoreCreate(void) {
 	core->loadTemporarySave = _GBACoreLoadTemporarySave;
 	core->loadPatch = _GBACoreLoadPatch;
 	core->unloadROM = _GBACoreUnloadROM;
-	core->romSize = _GBACoreROMSize;
 	core->checksum = _GBACoreChecksum;
 	core->reset = _GBACoreReset;
 	core->runFrame = _GBACoreRunFrame;
@@ -1685,19 +1133,15 @@ struct mCore* GBACoreCreate(void) {
 	core->stateSize = _GBACoreStateSize;
 	core->loadState = _GBACoreLoadState;
 	core->saveState = _GBACoreSaveState;
-	core->loadExtraState = _GBACoreLoadExtraState;
-	core->saveExtraState = _GBACoreSaveExtraState;
 	core->setKeys = _GBACoreSetKeys;
 	core->addKeys = _GBACoreAddKeys;
 	core->clearKeys = _GBACoreClearKeys;
-	core->getKeys = _GBACoreGetKeys;
 	core->frameCounter = _GBACoreFrameCounter;
 	core->frameCycles = _GBACoreFrameCycles;
 	core->frequency = _GBACoreFrequency;
-	core->timingFrequency = _GBACoreFrequency;
-	core->getGameInfo = _GBACoreGetGameInfo;
+	core->getGameTitle = _GBACoreGetGameTitle;
+	core->getGameCode = _GBACoreGetGameCode;
 	core->setPeripheral = _GBACoreSetPeripheral;
-	core->getPeripheral = _GBACoreGetPeripheral;
 	core->busRead8 = _GBACoreBusRead8;
 	core->busRead16 = _GBACoreBusRead16;
 	core->busRead32 = _GBACoreBusRead32;
@@ -1710,12 +1154,9 @@ struct mCore* GBACoreCreate(void) {
 	core->rawWrite8 = _GBACoreRawWrite8;
 	core->rawWrite16 = _GBACoreRawWrite16;
 	core->rawWrite32 = _GBACoreRawWrite32;
-	core->listMemoryBlocks = _GBACoreListMemoryBlocks;
-	core->getMemoryBlock = _GBACoreGetMemoryBlock;
-	core->listRegisters = _GBACoreListRegisters;
-	core->readRegister = _GBACoreReadRegister;
-	core->writeRegister = _GBACoreWriteRegister;
-#ifdef ENABLE_DEBUGGERS
+	core->listMemoryBlocks = _GBAListMemoryBlocks;
+	core->getMemoryBlock = _GBAGetMemoryBlock;
+#ifdef USE_DEBUGGERS
 	core->supportsDebuggerType = _GBACoreSupportsDebuggerType;
 	core->debuggerPlatform = _GBACoreDebuggerPlatform;
 	core->cliDebuggerSystem = _GBACoreCliDebuggerSystem;
@@ -1749,7 +1190,7 @@ static void _GBAVLPStartFrameCallback(void *context) {
 		GBAVideoProxyRendererUnshim(&gba->video, &gbacore->vlProxy);
 		mVideoLogContextRewind(gbacore->logContext, core);
 		GBAVideoProxyRendererShim(&gba->video, &gbacore->vlProxy);
-		GBAInterrupt(gba);
+		gba->earlyExit = true;
 	}
 }
 
@@ -1758,9 +1199,9 @@ static bool _GBAVLPInit(struct mCore* core) {
 	if (!_GBACoreInit(core)) {
 		return false;
 	}
-	struct mVideoLogger* logger = malloc(sizeof(*logger));
-	mVideoLoggerRendererCreate(logger, true);
-	GBAVideoProxyRendererCreate(&gbacore->vlProxy, NULL, logger);
+	gbacore->vlProxy.logger = malloc(sizeof(struct mVideoLogger));
+	mVideoLoggerRendererCreate(gbacore->vlProxy.logger, true);
+	GBAVideoProxyRendererCreate(&gbacore->vlProxy, NULL);
 	memset(&gbacore->logCallbacks, 0, sizeof(gbacore->logCallbacks));
 	gbacore->logCallbacks.videoFrameStarted = _GBAVLPStartFrameCallback;
 	gbacore->logCallbacks.context = core;
@@ -1772,7 +1213,7 @@ static bool _GBAVLPInit(struct mCore* core) {
 static void _GBAVLPDeinit(struct mCore* core) {
 	struct GBACore* gbacore = (struct GBACore*) core;
 	if (gbacore->logContext) {
-		mVideoLogContextDestroy(core, gbacore->logContext, true);
+		mVideoLogContextDestroy(core, gbacore->logContext);
 	}
 	_GBACoreDeinit(core);
 }
@@ -1793,15 +1234,15 @@ static void _GBAVLPReset(struct mCore* core) {
 
 	// Make sure CPU loop never spins
 	GBAHalt(gba);
-	gba->cpu->memory.store16(gba->cpu, GBA_BASE_IO | GBA_REG_IME, 0, NULL);
-	gba->cpu->memory.store16(gba->cpu, GBA_BASE_IO | GBA_REG_IE, 0, NULL);
+	gba->cpu->memory.store16(gba->cpu, BASE_IO | REG_IME, 0, NULL);
+	gba->cpu->memory.store16(gba->cpu, BASE_IO | REG_IE, 0, NULL);
 }
 
 static bool _GBAVLPLoadROM(struct mCore* core, struct VFile* vf) {
 	struct GBACore* gbacore = (struct GBACore*) core;
 	gbacore->logContext = mVideoLogContextCreate(NULL);
 	if (!mVideoLogContextLoad(gbacore->logContext, vf)) {
-		mVideoLogContextDestroy(core, gbacore->logContext, false);
+		mVideoLogContextDestroy(core, gbacore->logContext);
 		gbacore->logContext = NULL;
 		return false;
 	}
@@ -1813,13 +1254,13 @@ static bool _GBAVLPLoadState(struct mCore* core, const void* state) {
 	struct GBA* gba = (struct GBA*) core->board;
 
 	gba->timing.root = NULL;
-	gba->cpu->gprs[ARM_PC] = GBA_BASE_EWRAM;
+	gba->cpu->gprs[ARM_PC] = BASE_WORKING_RAM;
 	gba->cpu->memory.setActiveRegion(gba->cpu, gba->cpu->gprs[ARM_PC]);
 
 	// Make sure CPU loop never spins
 	GBAHalt(gba);
-	gba->cpu->memory.store16(gba->cpu, GBA_BASE_IO | GBA_REG_IME, 0, NULL);
-	gba->cpu->memory.store16(gba->cpu, GBA_BASE_IO | GBA_REG_IE, 0, NULL);
+	gba->cpu->memory.store16(gba->cpu, BASE_IO | REG_IME, 0, NULL);
+	gba->cpu->memory.store16(gba->cpu, BASE_IO | REG_IE, 0, NULL);
 	GBAVideoDeserialize(&gba->video, state);
 	GBAIODeserialize(gba, state);
 	GBAAudioReset(&gba->audio);

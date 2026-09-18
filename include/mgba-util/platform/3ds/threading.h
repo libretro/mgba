@@ -12,11 +12,14 @@
 #include <malloc.h>
 
 #define THREAD_ENTRY void
-#define THREAD_EXIT(RES) return
 typedef ThreadFunc ThreadEntry;
 
 typedef LightLock Mutex;
-typedef CondVar Condition;
+typedef struct {
+	Mutex mutex;
+	Handle semaphore;
+	u32 waiting;
+} Condition;
 
 static inline int MutexInit(Mutex* mutex) {
 	LightLock_Init(mutex);
@@ -43,26 +46,47 @@ static inline int MutexUnlock(Mutex* mutex) {
 }
 
 static inline int ConditionInit(Condition* cond) {
-	CondVar_Init(cond);
-	return 0;
+	Result res = MutexInit(&cond->mutex);
+	if (res) {
+		return res;
+	}
+	res = svcCreateSemaphore(&cond->semaphore, 0, 1);
+	cond->waiting = 0;
+	return res;
 }
 
 static inline int ConditionDeinit(Condition* cond) {
-	UNUSED(cond);
-	return 0;
+	return svcCloseHandle(cond->semaphore);
 }
 
 static inline int ConditionWait(Condition* cond, Mutex* mutex) {
-	CondVar_Wait(cond, mutex);
+	MutexLock(&cond->mutex);
+	++cond->waiting;
+	MutexUnlock(mutex);
+	MutexUnlock(&cond->mutex);
+	svcWaitSynchronization(cond->semaphore, U64_MAX);
+	MutexLock(mutex);
 	return 0;
 }
 
 static inline int ConditionWaitTimed(Condition* cond, Mutex* mutex, int32_t timeoutMs) {
-	return CondVar_WaitTimeout(cond, mutex, timeoutMs * 10000000LL);
+	MutexLock(&cond->mutex);
+	++cond->waiting;
+	MutexUnlock(mutex);
+	MutexUnlock(&cond->mutex);
+	svcWaitSynchronization(cond->semaphore, timeoutMs * 10000000LL);
+	MutexLock(mutex);
+	return 0;
 }
 
 static inline int ConditionWake(Condition* cond) {
-	CondVar_Signal(cond);
+	MutexLock(&cond->mutex);
+	if (cond->waiting) {
+		--cond->waiting;
+		s32 count = 0;
+		svcReleaseSemaphore(&count, cond->semaphore, 1);
+	}
+	MutexUnlock(&cond->mutex);
 	return 0;
 }
 
@@ -70,14 +94,12 @@ static inline int ThreadCreate(Thread* thread, ThreadEntry entry, void* context)
 	if (!entry || !thread) {
 		return 1;
 	}
-	*thread = threadCreate(entry, context, 0x8000, 0x18, 2, false);
+	*thread = threadCreate(entry, context, 0x8000, 0x18, 2, true);
 	return !*thread;
 }
 
 static inline int ThreadJoin(Thread* thread) {
-	Result res = threadJoin(*thread, U64_MAX);
-	threadFree(*thread);
-	return res;
+	return threadJoin(*thread, U64_MAX);
 }
 
 static inline void ThreadSetName(const char* name) {

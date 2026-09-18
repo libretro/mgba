@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <ui version="4.0">
- <class>QGBA::BattleChipView</class>
- <widget class="QDialog" name="QGBA::BattleChipView">
+ <class>BattleChipView</class>
+ <widget class="QDialog" name="BattleChipView">
   <property name="geometry">
    <rect>
     <x>0</x>
@@ -142,7 +142,7 @@
         <item row="1" column="1">
          <widget class="QRadioButton" name="gateBattleChip">
           <property name="text">
-           <string notr="true">Ba&amp;ttleChip Gate</string>
+           <string>Ba&amp;ttleChip Gate</string>
           </property>
           <property name="checked">
            <bool>true</bool>
@@ -152,14 +152,14 @@
         <item row="2" column="1">
          <widget class="QRadioButton" name="gateProgress">
           <property name="text">
-           <string notr="true">Progress &amp;Gate</string>
+           <string>Progress &amp;Gate</string>
           </property>
          </widget>
         </item>
         <item row="3" column="1">
          <widget class="QRadioButton" name="gateBeastLink">
           <property name="text">
-           <string notr="true">Beast &amp;Link Gate</string>
+           <string>Beast &amp;Link Gate</string>
           </property>
          </widget>
         </item>
@@ -238,7 +238,7 @@
   <connection>
    <sender>buttonBox</sender>
    <signal>rejected()</signal>
-   <receiver>QGBA::BattleChipView</receiver>
+   <receiver>BattleChipView</receiver>
    <slot>reject()</slot>
    <hints>
     <hint type="sourcelabel">

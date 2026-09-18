@@ -19,22 +19,12 @@
 #include <strsafe.h>
 #endif
 
-#ifdef __APPLE__
-#include <CoreFoundation/CFBundle.h>
-#include <CoreFoundation/CFString.h>
-#include <CoreFoundation/CFURL.h>
-#endif
-
 #ifdef PSP2
 #include <psp2/io/stat.h>
 #endif
 
-#ifdef __3DS__
+#ifdef _3DS
 #include <mgba-util/platform/3ds/3ds-vfs.h>
-#endif
-
-#ifdef __HAIKU__
-#include <FindDirectory.h>
 #endif
 
 #define SECTION_NAME_MAX 128
@@ -79,27 +69,13 @@ static const char* _lookupValue(const struct mCoreConfig* config, const char* ke
 
 static bool _lookupCharValue(const struct mCoreConfig* config, const char* key, char** out) {
 	const char* value = _lookupValue(config, key);
-	if (!value || !value[0]) {
+	if (!value) {
 		return false;
 	}
 	if (*out) {
 		free(*out);
 	}
 	*out = strdup(value);
-	return true;
-}
-
-static bool _lookupBoolValue(const struct mCoreConfig* config, const char* key, bool* out) {
-	const char* charValue = _lookupValue(config, key);
-	if (!charValue) {
-		return false;
-	}
-	char* end;
-	long value = strtol(charValue, &end, 10);
-	if (*end) {
-		return false;
-	}
-	*out = value;
 	return true;
 }
 
@@ -156,7 +132,7 @@ void mCoreConfigInit(struct mCoreConfig* config, const char* port) {
 		config->port = malloc(strlen("ports.") + strlen(port) + 1);
 		snprintf(config->port, strlen("ports.") + strlen(port) + 1, "ports.%s", port);
 	} else {
-		config->port = NULL;
+		config->port = 0;
 	}
 }
 
@@ -167,16 +143,16 @@ void mCoreConfigDeinit(struct mCoreConfig* config) {
 	free(config->port);
 }
 
-#ifdef ENABLE_VFS
+#if !defined(MINIMAL_CORE) || MINIMAL_CORE < 2
 bool mCoreConfigLoad(struct mCoreConfig* config) {
-	char path[PATH_MAX + 1];
+	char path[PATH_MAX];
 	mCoreConfigDirectory(path, PATH_MAX);
 	strncat(path, PATH_SEP "config.ini", PATH_MAX - strlen(path));
 	return mCoreConfigLoadPath(config, path);
 }
 
 bool mCoreConfigSave(const struct mCoreConfig* config) {
-	char path[PATH_MAX + 1];
+	char path[PATH_MAX];
 	mCoreConfigDirectory(path, PATH_MAX);
 	strncat(path, PATH_SEP "config.ini", PATH_MAX - strlen(path));
 	return mCoreConfigSavePath(config, path);
@@ -190,86 +166,77 @@ bool mCoreConfigSavePath(const struct mCoreConfig* config, const char* path) {
 	return ConfigurationWrite(&config->configTable, path);
 }
 
-bool mCoreConfigLoadVFile(struct mCoreConfig* config, struct VFile* vf) {
-	return ConfigurationReadVFile(&config->configTable, vf);
-}
-
-bool mCoreConfigSaveVFile(const struct mCoreConfig* config, struct VFile* vf) {
-	return ConfigurationWriteVFile(&config->configTable, vf);
-}
-
-void mCoreConfigMakePortable(const struct mCoreConfig* config, const char* path) {
-	struct VFile* portable = NULL;
-	struct Configuration portableConfig;
+void mCoreConfigMakePortable(const struct mCoreConfig* config) {
+	struct VFile* portable = 0;
+#ifdef _WIN32
+	char out[MAX_PATH];
+	wchar_t wpath[MAX_PATH];
+	wchar_t wprojectName[MAX_PATH];
+	MultiByteToWideChar(CP_UTF8, 0, projectName, -1, wprojectName, MAX_PATH);
+	HMODULE hModule = GetModuleHandleW(NULL);
+	GetModuleFileNameW(hModule, wpath, MAX_PATH);
+	PathRemoveFileSpecW(wpath);
+	WideCharToMultiByte(CP_UTF8, 0, wpath, -1, out, MAX_PATH, 0, 0);
+	StringCchCatA(out, MAX_PATH, "\\portable.ini");
+	portable = VFileOpen(out, O_WRONLY | O_CREAT);
+#elif defined(PSP2) || defined(_3DS) || defined(__SWITCH__) || defined(GEKKO)
+	// Already portable
+#else
 	char out[PATH_MAX];
-	mCoreConfigPortableIniPath(out, sizeof(out));
-	if (!out[0]) {
-		// Cannot be made portable
-		return;
-	}
-
-	ConfigurationInit(&portableConfig);
-
-	portable = VFileOpen(out, O_RDONLY);
+	getcwd(out, PATH_MAX);
+	strncat(out, PATH_SEP "portable.ini", PATH_MAX - strlen(out));
+	portable = VFileOpen(out, O_WRONLY | O_CREAT);
+#endif
 	if (portable) {
-		ConfigurationReadVFile(&portableConfig, portable);
 		portable->close(portable);
+		mCoreConfigSave(config);
 	}
-
-	if (path && path[0]) {
-		ConfigurationSetValue(&portableConfig, "portable", "path", path);
-	} else {
-		ConfigurationClearValue(&portableConfig, "portable", "path");
-	}
-
-	portable = VFileOpen(out, O_WRONLY | O_CREAT | O_TRUNC);
-	if (portable) {
-		ConfigurationWriteVFile(&portableConfig, portable);
-		portable->close(portable);
-	}
-
-	ConfigurationDeinit(&portableConfig);
-	mCoreConfigSave(config);
 }
 
 void mCoreConfigDirectory(char* out, size_t outLength) {
-	char portableDir[PATH_MAX];
-	mCoreConfigPortablePath(portableDir, sizeof(portableDir));
-	if (portableDir[0]) {
-		strlcpy(out, portableDir, outLength);
-		return;
-	}
+	struct VFile* portable;
 #ifdef _WIN32
-	WCHAR wpath[MAX_PATH];
-	WCHAR wprojectName[MAX_PATH];
-	WCHAR* home;
+	wchar_t wpath[MAX_PATH];
+	wchar_t wprojectName[MAX_PATH];
 	MultiByteToWideChar(CP_UTF8, 0, projectName, -1, wprojectName, MAX_PATH);
-	SHGetKnownFolderPath(&FOLDERID_RoamingAppData, 0, NULL, &home);
-	StringCchPrintfW(wpath, MAX_PATH, L"%ws\\%ws", home, wprojectName);
-	CoTaskMemFree(home);
-	CreateDirectoryW(wpath, NULL);
-	if (PATH_SEP[0] != '\\') {
-		WCHAR* pathSep;
-		for (pathSep = wpath; (pathSep = wcschr(pathSep, L'\\'));) {
-			pathSep[0] = PATH_SEP[0];
-		}
+	HMODULE hModule = GetModuleHandleW(NULL);
+	GetModuleFileNameW(hModule, wpath, MAX_PATH);
+	PathRemoveFileSpecW(wpath);
+	WideCharToMultiByte(CP_UTF8, 0, wpath, -1, out, outLength, 0, 0);
+	StringCchCatA(out, outLength, "\\portable.ini");
+	portable = VFileOpen(out, O_RDONLY);
+	if (portable) {
+		portable->close(portable);
+	} else {
+		wchar_t* home;
+		SHGetKnownFolderPath(&FOLDERID_RoamingAppData, 0, NULL, &home);
+		StringCchPrintfW(wpath, MAX_PATH, L"%ws\\%ws", home, wprojectName);
+		CoTaskMemFree(home);
+		CreateDirectoryW(wpath, NULL);
 	}
 	WideCharToMultiByte(CP_UTF8, 0, wpath, -1, out, outLength, 0, 0);
 #elif defined(PSP2)
+	UNUSED(portable);
 	snprintf(out, outLength, "ux0:data/%s", projectName);
 	sceIoMkdir(out, 0777);
 #elif defined(GEKKO) || defined(__SWITCH__)
+	UNUSED(portable);
 	snprintf(out, outLength, "/%s", projectName);
 	mkdir(out, 0777);
-#elif defined(__3DS__)
+#elif defined(_3DS)
+	UNUSED(portable);
 	snprintf(out, outLength, "/%s", projectName);
 	FSUSER_CreateDirectory(sdmcArchive, fsMakePath(PATH_ASCII, out), 0);
-#elif defined(__HAIKU__)
-	char path[B_PATH_NAME_LENGTH];
-	find_directory(B_USER_SETTINGS_DIRECTORY, 0, false, path, B_PATH_NAME_LENGTH);
-	snprintf(out, outLength, "%s/%s", path, binaryName);
-	mkdir(out, 0755);
 #else
+	getcwd(out, outLength);
+	strncat(out, PATH_SEP "portable.ini", outLength - strlen(out));
+	portable = VFileOpen(out, O_RDONLY);
+	if (portable) {
+		getcwd(out, outLength);
+		portable->close(portable);
+		return;
+	}
+
 	char* xdgConfigHome = getenv("XDG_CONFIG_HOME");
 	if (xdgConfigHome && xdgConfigHome[0] == '/') {
 		snprintf(out, outLength, "%s/%s", xdgConfigHome, binaryName);
@@ -283,90 +250,10 @@ void mCoreConfigDirectory(char* out, size_t outLength) {
 	mkdir(out, 0755);
 #endif
 }
-
-void mCoreConfigPortableIniPath(char* out, size_t outLength) {
-#ifdef _WIN32
-	wchar_t wpath[MAX_PATH];
-	GetModuleFileNameW(NULL, wpath, MAX_PATH);
-	PathRemoveFileSpecW(wpath);
-	if (PATH_SEP[0] != '\\') {
-		WCHAR* pathSep;
-		for (pathSep = wpath; (pathSep = wcschr(pathSep, L'\\'));) {
-			pathSep[0] = PATH_SEP[0];
-		}
-	}
-	WideCharToMultiByte(CP_UTF8, 0, wpath, -1, out, outLength, 0, 0);
-	StringCchCatA(out, outLength, PATH_SEP "portable.ini");
-#elif defined(PSP2) || defined(GEKKO) || defined(__SWITCH__) || defined(__3DS__)
-	UNUSED(outLength);
-	out[0] = '\0';
-#else
-	getcwd(out, outLength);
-#ifdef __APPLE__
-	CFBundleRef mainBundle = CFBundleGetMainBundle();
-	if (strcmp(out, "/") == 0 && mainBundle) {
-		CFURLRef url = CFBundleCopyBundleURL(mainBundle);
-		CFURLRef suburl = CFURLCreateCopyDeletingLastPathComponent(kCFAllocatorDefault, url);
-		CFRelease(url);
-		CFURLGetFileSystemRepresentation(suburl, true, (UInt8*) out, outLength);
-		CFRelease(suburl);
-	}
-#endif
-	strncat(out, PATH_SEP "portable.ini", outLength - strlen(out) - 1);
-#endif
-}
-
-void mCoreConfigPortablePath(char* out, size_t outLength) {
-	struct VFile* portableIni;
-	char portableIniPath[PATH_MAX];
-	if (outLength <= 1) {
-		return;
-	}
-	mCoreConfigPortableIniPath(portableIniPath, sizeof(portableIniPath));
-	out[0] = '\0';
-	if (portableIniPath[0]) {
-		portableIni = VFileOpen(portableIniPath, O_RDONLY);
-		if (portableIni) {
-			// Start with the path that the portable.ini file exists in.
-			char iniDir[PATH_MAX];
-			separatePath(portableIniPath, iniDir, NULL, NULL);
-			strlcpy(out, iniDir, outLength);
-
-			struct Configuration portableConfig;
-			ConfigurationInit(&portableConfig);
-			if (ConfigurationReadVFile(&portableConfig, portableIni)) {
-				const char* path = ConfigurationGetValue(&portableConfig, "portable", "path");
-				if (path) {
-					if (path[0] == '/') {
-						// User specified an absolute path.
-						strlcpy(out, path, outLength);
-					} else {
-						// User specified a relative path, append to the portable.ini path.
-						snprintf(out, outLength - 1, "%s" PATH_SEP "%s", iniDir, path);
-					}
-				}
-			}
-			ConfigurationDeinit(&portableConfig);
-
-			portableIni->close(portableIni);
-		}
-	}
-}
-
-bool mCoreConfigIsPortable(void) {
-	char portableDir[PATH_MAX];
-	mCoreConfigPortablePath(portableDir, sizeof(portableDir));
-	return portableDir[0];
-}
-
 #endif
 
 const char* mCoreConfigGetValue(const struct mCoreConfig* config, const char* key) {
 	return _lookupValue(config, key);
-}
-
-bool mCoreConfigGetBoolValue(const struct mCoreConfig* config, const char* key, bool* value) {
-	return _lookupBoolValue(config, key, value);
 }
 
 bool mCoreConfigGetIntValue(const struct mCoreConfig* config, const char* key, int* value) {
@@ -444,7 +331,6 @@ void mCoreConfigMap(const struct mCoreConfig* config, struct mCoreOptions* opts)
 	_lookupIntValue(config, "frameskip", &opts->frameskip);
 	_lookupIntValue(config, "volume", &opts->volume);
 	_lookupIntValue(config, "rewindBufferCapacity", &opts->rewindBufferCapacity);
-	_lookupIntValue(config, "rewindBufferInterval", &opts->rewindBufferInterval);
 	_lookupFloatValue(config, "fpsTarget", &opts->fpsTarget);
 	unsigned audioBuffers;
 	if (_lookupUIntValue(config, "audioBuffers", &audioBuffers)) {
@@ -452,20 +338,40 @@ void mCoreConfigMap(const struct mCoreConfig* config, struct mCoreOptions* opts)
 	}
 	_lookupUIntValue(config, "sampleRate", &opts->sampleRate);
 
-	_lookupBoolValue(config, "audioSync", &opts->audioSync);
-	_lookupBoolValue(config, "videoSync", &opts->videoSync);
-
-	_lookupBoolValue(config, "lockAspectRatio", &opts->lockAspectRatio);
-	_lookupBoolValue(config, "lockIntegerScaling", &opts->lockIntegerScaling);
-	_lookupBoolValue(config, "interframeBlending", &opts->interframeBlending);
-	_lookupBoolValue(config, "resampleVideo", &opts->resampleVideo);
-
-	_lookupBoolValue(config, "useBios", &opts->useBios);
-	_lookupBoolValue(config, "skipBios", &opts->skipBios);
-
-	_lookupBoolValue(config, "suspendScreensaver", &opts->suspendScreensaver);
-	_lookupBoolValue(config, "mute", &opts->mute);
-	_lookupBoolValue(config, "rewindEnable", &opts->rewindEnable);
+	int fakeBool;
+	if (_lookupIntValue(config, "useBios", &fakeBool)) {
+		opts->useBios = fakeBool;
+	}
+	if (_lookupIntValue(config, "audioSync", &fakeBool)) {
+		opts->audioSync = fakeBool;
+	}
+	if (_lookupIntValue(config, "videoSync", &fakeBool)) {
+		opts->videoSync = fakeBool;
+	}
+	if (_lookupIntValue(config, "lockAspectRatio", &fakeBool)) {
+		opts->lockAspectRatio = fakeBool;
+	}
+	if (_lookupIntValue(config, "lockIntegerScaling", &fakeBool)) {
+		opts->lockIntegerScaling = fakeBool;
+	}
+	if (_lookupIntValue(config, "interframeBlending", &fakeBool)) {
+		opts->interframeBlending = fakeBool;
+	}
+	if (_lookupIntValue(config, "resampleVideo", &fakeBool)) {
+		opts->resampleVideo = fakeBool;
+	}
+	if (_lookupIntValue(config, "suspendScreensaver", &fakeBool)) {
+		opts->suspendScreensaver = fakeBool;
+	}
+	if (_lookupIntValue(config, "mute", &fakeBool)) {
+		opts->mute = fakeBool;
+	}
+	if (_lookupIntValue(config, "skipBios", &fakeBool)) {
+		opts->skipBios = fakeBool;
+	}
+	if (_lookupIntValue(config, "rewindEnable", &fakeBool)) {
+		opts->rewindEnable = fakeBool;
+	}
 
 	_lookupIntValue(config, "fullscreen", &opts->fullscreen);
 	_lookupIntValue(config, "width", &opts->width);
@@ -487,7 +393,6 @@ void mCoreConfigLoadDefaults(struct mCoreConfig* config, const struct mCoreOptio
 	ConfigurationSetIntValue(&config->defaultsTable, 0, "frameskip", opts->frameskip);
 	ConfigurationSetIntValue(&config->defaultsTable, 0, "rewindEnable", opts->rewindEnable);
 	ConfigurationSetIntValue(&config->defaultsTable, 0, "rewindBufferCapacity", opts->rewindBufferCapacity);
-	ConfigurationSetIntValue(&config->defaultsTable, 0, "rewindBufferInterval", opts->rewindBufferInterval);
 	ConfigurationSetFloatValue(&config->defaultsTable, 0, "fpsTarget", opts->fpsTarget);
 	ConfigurationSetUIntValue(&config->defaultsTable, 0, "audioBuffers", opts->audioBuffers);
 	ConfigurationSetUIntValue(&config->defaultsTable, 0, "sampleRate", opts->sampleRate);

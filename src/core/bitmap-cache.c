@@ -20,7 +20,7 @@ void mBitmapCacheInit(struct mBitmapCache* cache) {
 static void _freeCache(struct mBitmapCache* cache) {
 	size_t size = mBitmapCacheSystemInfoGetHeight(cache->sysConfig) * mBitmapCacheSystemInfoGetBuffers(cache->sysConfig);
 	if (cache->cache) {
-		mappedMemoryFree(cache->cache, mBitmapCacheSystemInfoGetWidth(cache->sysConfig) * size * sizeof(mColor));
+		mappedMemoryFree(cache->cache, mBitmapCacheSystemInfoGetWidth(cache->sysConfig) * size * sizeof(color_t));
 		cache->cache = NULL;
 	}
 	if (cache->status) {
@@ -39,10 +39,10 @@ static void _redoCacheSize(struct mBitmapCache* cache) {
 	}
 
 	size_t size = mBitmapCacheSystemInfoGetHeight(cache->sysConfig) * mBitmapCacheSystemInfoGetBuffers(cache->sysConfig);
-	cache->cache = anonymousMemoryMap(mBitmapCacheSystemInfoGetWidth(cache->sysConfig) * size * sizeof(mColor));
+	cache->cache = anonymousMemoryMap(mBitmapCacheSystemInfoGetWidth(cache->sysConfig) * size * sizeof(color_t));
 	cache->status = anonymousMemoryMap(size * sizeof(*cache->status));
 	if (mBitmapCacheSystemInfoIsUsesPalette(cache->sysConfig)) {
-		cache->palette = calloc((1 << (1 << mBitmapCacheSystemInfoGetEntryBPP(cache->sysConfig))), sizeof(mColor));
+		cache->palette = malloc((1 << (1 << mBitmapCacheSystemInfoGetEntryBPP(cache->sysConfig))) * sizeof(color_t));
 	} else {
 		cache->palette = NULL;
 	}
@@ -101,7 +101,7 @@ void mBitmapCacheWriteVRAM(struct mBitmapCache* cache, uint32_t address) {
 	}
 }
 
-void mBitmapCacheWritePalette(struct mBitmapCache* cache, uint32_t entry, mColor color) {
+void mBitmapCacheWritePalette(struct mBitmapCache* cache, uint32_t entry, color_t color) {
 	if (!mBitmapCacheSystemInfoIsUsesPalette(cache->sysConfig)) {
 		return;
 	}
@@ -122,7 +122,7 @@ uint32_t _lookupEntry15(void* vram, uint32_t offset) {
 }
 
 void mBitmapCacheCleanRow(struct mBitmapCache* cache, struct mBitmapCacheEntry* entry, unsigned y) {
-	mColor* row = &cache->cache[(cache->buffer * mBitmapCacheSystemInfoGetHeight(cache->sysConfig) + y) * mBitmapCacheSystemInfoGetWidth(cache->sysConfig)];
+	color_t* row = &cache->cache[(cache->buffer * mBitmapCacheSystemInfoGetHeight(cache->sysConfig) + y) * mBitmapCacheSystemInfoGetWidth(cache->sysConfig)];
 	size_t location = cache->buffer + mBitmapCacheSystemInfoGetBuffers(cache->sysConfig) * y;
 	struct mBitmapCacheEntry* status = &cache->status[location];
 	struct mBitmapCacheEntry desiredStatus = {
@@ -139,18 +139,18 @@ void mBitmapCacheCleanRow(struct mBitmapCache* cache, struct mBitmapCacheEntry* 
 		return;
 	}
 
-	size_t offset = y * mBitmapCacheSystemInfoGetWidth(cache->sysConfig);
+	size_t offset = cache->bitsStart[cache->buffer] + y * mBitmapCacheSystemInfoGetWidth(cache->sysConfig);
 	void* vram;
 	int bpe = mBitmapCacheSystemInfoGetEntryBPP(cache->sysConfig);
 	uint32_t (*lookupEntry)(void*, uint32_t);
 	switch (bpe) {
 	case 3:
 		lookupEntry = _lookupEntry8;
-		vram = &cache->vram[offset + cache->bitsStart[cache->buffer]];
+		vram = &cache->vram[offset];
 		break;
 	case 4:
 		lookupEntry = _lookupEntry15;
-		vram = &cache->vram[offset * 2 + cache->bitsStart[cache->buffer]];
+		vram = &cache->vram[offset << 1];
 		break;
 	default:
 		abort();
@@ -181,7 +181,7 @@ bool mBitmapCacheCheckRow(struct mBitmapCache* cache, const struct mBitmapCacheE
 	return memcmp(&entry[location], &desiredStatus, sizeof(*entry)) == 0;
 }
 
-const mColor* mBitmapCacheGetRow(struct mBitmapCache* cache, unsigned y) {
-	mColor* row = &cache->cache[(cache->buffer * mBitmapCacheSystemInfoGetHeight(cache->sysConfig) + y) * mBitmapCacheSystemInfoGetWidth(cache->sysConfig)];
+const color_t* mBitmapCacheGetRow(struct mBitmapCache* cache, unsigned y) {
+	color_t* row = &cache->cache[(cache->buffer * mBitmapCacheSystemInfoGetHeight(cache->sysConfig) + y) * mBitmapCacheSystemInfoGetWidth(cache->sysConfig)];
 	return row;
 }

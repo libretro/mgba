@@ -4,11 +4,11 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 #include "AssetTile.h"
-#include "moc_AssetTile.cpp"
 
 #include "CoreController.h"
 #include "GBAApp.h"
 
+#include <QFontDatabase>
 #include <QHBoxLayout>
 
 #include <mgba/core/interface.h>
@@ -32,7 +32,7 @@ AssetTile::AssetTile(QWidget* parent)
 
 	connect(m_ui.preview, &Swatch::indexPressed, this, &AssetTile::selectColor);
 
-	const QFont font = GBAApp::app()->monospaceFont();
+	const QFont font = QFontDatabase::systemFont(QFontDatabase::FixedFont);
 
 	m_ui.tileId->setFont(font);
 	m_ui.paletteId->setFont(font);
@@ -50,14 +50,14 @@ void AssetTile::setController(std::shared_ptr<CoreController> controller) {
 	m_cacheSet = controller->graphicCaches();
 	switch (controller->platform()) {
 #ifdef M_CORE_GBA
-	case mPLATFORM_GBA:
+	case PLATFORM_GBA:
 		m_addressWidth = 8;
-		m_addressBase = GBA_BASE_VRAM;
-		m_boundaryBase = GBA_BASE_VRAM | 0x10000;
+		m_addressBase = BASE_VRAM;
+		m_boundaryBase = BASE_VRAM | 0x10000;
 		break;
 #endif
 #ifdef M_CORE_GB
-	case mPLATFORM_GB:
+	case PLATFORM_GB:
 		m_addressWidth = 4;
 		m_addressBase = GB_BASE_VRAM;
 		m_boundaryBase = GB_BASE_VRAM;
@@ -83,11 +83,8 @@ void AssetTile::setBoundary(int boundary, int set0, int set1) {
 }
 
 void AssetTile::selectIndex(int index) {
-	if (index > m_maxTile) {
-		return;
-	}
 	m_index = index;
-	const mColor* data;
+	const color_t* data;
 	mTileCache* tileCache = m_tileCaches[index >= m_boundary];
 
 	unsigned bpp = 8 << tileCache->bpp;
@@ -104,7 +101,7 @@ void AssetTile::selectIndex(int index) {
 	data = mTileCacheGetTile(tileCache, index, paletteId);
 	m_ui.tileId->setText(QString::number(dispIndex));
 	m_ui.paletteId->setText(QString::number(paletteId));
-	m_ui.address->setText(QString("%0%1%2")
+	m_ui.address->setText(tr("%0%1%2")
 		.arg(m_addressWidth == 4 ? index >= m_boundary / 2 : 0)
 		.arg(m_addressWidth == 4 ? ":" : "x")
 		.arg(dispIndex * bpp | base, m_addressWidth, 16, QChar('0')));
@@ -131,10 +128,12 @@ void AssetTile::setFlip(bool h, bool v) {
 }
 
 void AssetTile::selectColor(int index) {
-	const mColor* data;
+	const color_t* data;
 	mTileCache* tileCache = m_tileCaches[m_index >= m_boundary];
+	unsigned bpp = 8 << tileCache->bpp;
+	int paletteId = m_paletteId;
 	data = mTileCacheGetTile(tileCache, m_index >= m_boundary ? m_index - m_boundary : m_index, m_paletteId);
-	mColor color = data[index];
+	color_t color = data[index];
 	m_ui.color->setColor(0, color);
 	m_ui.color->update();
 
@@ -144,8 +143,4 @@ void AssetTile::selectColor(int index) {
 	m_ui.r->setText(tr("0x%0 (%1)").arg(r, 2, 16, QChar('0')).arg(r, 2, 10, QChar('0')));
 	m_ui.g->setText(tr("0x%0 (%1)").arg(g, 2, 16, QChar('0')).arg(g, 2, 10, QChar('0')));
 	m_ui.b->setText(tr("0x%0 (%1)").arg(b, 2, 16, QChar('0')).arg(b, 2, 10, QChar('0')));
-}
-
-void AssetTile::setMaxTile(int tile) {
-	m_maxTile = tile;
 }

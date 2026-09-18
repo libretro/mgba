@@ -6,13 +6,9 @@
 #pragma once
 
 #include <QDialog>
-#include <QMap>
-#include <QPointer>
-#include <QTimer>
 
 #include "ColorPicker.h"
 #include "LogConfigModel.h"
-#include "ShaderSelector.h"
 
 #include <mgba/core/core.h>
 
@@ -27,30 +23,16 @@ namespace QGBA {
 class ConfigController;
 class InputController;
 class ShortcutController;
+class ShaderSelector;
 
 class SettingsView : public QDialog {
 Q_OBJECT
 
 public:
-	enum class Page {
-		AV,
-		INTERFACE,
-		GAMEPLAY,
-		UPDATE,
-		EMULATION,
-		ENHANCEMENTS,
-		BIOS,
-		PATHS,
-		LOGGING,
-		GB,
-		KEYBOARD,
-		CONTROLLERS,
-		SHORTCUTS,
-		SHADERS,
-	};
-
 	SettingsView(ConfigController* controller, InputController* inputController, ShortcutController* shortcutController, LogController* logController, QWidget* parent = nullptr);
 	~SettingsView();
+
+	void setShaderSelector(ShaderSelector* shaderSelector);
 
 signals:
 	void biosLoaded(int platform, const QString&);
@@ -62,41 +44,25 @@ signals:
 	void pathsChanged();
 	void languageChanged();
 	void libraryCleared();
-	void saveSettingsRequested();
-	void openAutorunScripts();
-
-public slots:
-	void selectPage(Page);
-	void setShaderSelector(ShaderSelector* shaderSelector);
 
 private slots:
 	void selectBios(QLineEdit*);
-	void selectPath(QLineEdit*, QCheckBox*);
-	void selectImage(QLineEdit*);
 	void updateConfig();
 	void reloadConfig();
-	void updateChecked();
 
 private:
 	Ui::SettingsView m_ui;
 
 	ConfigController* m_controller;
 	InputController* m_input;
-	QPointer<ShaderSelector> m_shader;
-	QLabel* m_dummyShader;
+	ShaderSelector* m_shader = nullptr;
 	LogConfigModel m_logModel;
-	QTimer m_checkTimer;
 
 #ifdef M_CORE_GB
 	uint32_t m_gbColors[12]{};
 	ColorPicker m_colorPickers[12];
+	static QList<enum GBModel> s_gbModelList;
 #endif
-
-	QMap<Page, int> m_pageIndex;
-
-	QString makePortablePath(const QString& path);
-
-	void addPage(const QString& name, QWidget* view, Page index);
 
 	void saveSetting(const char* key, const QAbstractButton*);
 	void saveSetting(const char* key, const QComboBox*);

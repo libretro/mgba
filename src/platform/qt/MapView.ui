@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <ui version="4.0">
- <class>QGBA::MapView</class>
- <widget class="QWidget" name="QGBA::MapView">
+ <class>MapView</class>
+ <widget class="QWidget" name="MapView">
   <property name="geometry">
    <rect>
     <x>0</x>
@@ -27,7 +27,7 @@
           </sizepolicy>
          </property>
          <property name="suffix">
-          <string notr="true">×</string>
+          <string>×</string>
          </property>
          <property name="minimum">
           <number>1</number>
@@ -144,15 +144,15 @@
  </widget>
  <customwidgets>
   <customwidget>
-   <class>QGBA::AssetInfo</class>
-   <extends>QGroupBox</extends>
-   <header>AssetInfo.h</header>
-   <container>1</container>
-  </customwidget>
-  <customwidget>
    <class>QGBA::AssetTile</class>
    <extends>QGroupBox</extends>
    <header>AssetTile.h</header>
+   <container>1</container>
+  </customwidget>
+  <customwidget>
+   <class>QGBA::AssetInfo</class>
+   <extends>QGroupBox</extends>
+   <header>AssetInfo.h</header>
    <container>1</container>
   </customwidget>
  </customwidgets>

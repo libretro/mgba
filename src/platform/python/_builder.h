@@ -8,7 +8,6 @@
 #define MGBA_EXPORT
 
 #define ATTRIBUTE_FORMAT(X, Y, Z)
-#define ATTRIBUTE_NONSTRING
 #define DECL_BITFIELD(newtype, oldtype) typedef oldtype newtype
 #define DECL_BIT(type, field, bit) DECL_BITS(type, field, bit, 1)
 #define DECL_BITS(TYPE, FIELD, START, SIZE) \
@@ -23,9 +22,10 @@
 #define CXX_GUARD_END
 
 #define PYCPARSE
-typedef ... va_list;
+
 typedef int... time_t;
 typedef int... off_t;
+typedef ... va_list;
 typedef ...* png_structp;
 typedef ...* png_infop;
 typedef ...* png_unknown_chunkp;
@@ -36,6 +36,7 @@ void free(void*);
 
 #include <mgba/flags.h>
 
+#include <mgba/core/blip_buf.h>
 #include <mgba/core/cache-set.h>
 #include <mgba/core/core.h>
 #include <mgba/core/map-cache.h>
@@ -46,11 +47,12 @@ void free(void*);
 #define PYEXPORT extern "Python+C"
 #include "platform/python/core.h"
 #include "platform/python/log.h"
+#include "platform/python/sio.h"
 #include "platform/python/vfs-py.h"
 #undef PYEXPORT
 
 #ifdef USE_PNG
-#include <mgba-util/image/png-io.h>
+#include <mgba-util/png-io.h>
 #endif
 #ifdef M_CORE_GBA
 #include <mgba/gba/interface.h>
@@ -65,7 +67,7 @@ void free(void*);
 #include <mgba/internal/gba/input.h>
 #include <mgba/internal/gb/renderers/cache-set.h>
 #endif
-#ifdef ENABLE_DEBUGGERS
+#ifdef USE_DEBUGGERS
 #include <mgba/debugger/debugger.h>
 #include <mgba/internal/debugger/cli-debugger.h>
 #endif

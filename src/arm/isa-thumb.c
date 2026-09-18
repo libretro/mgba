@@ -56,7 +56,7 @@
 	currentCycles += cpu->memory.activeNonseqCycles16 - cpu->memory.activeSeqCycles16;
 
 #define DEFINE_INSTRUCTION_THUMB(NAME, BODY) \
-	static void _ThumbInstruction ## NAME (struct ARMCore* cpu, unsigned opcode) {  \
+	static void _ThumbInstruction ## NAME (struct ARMCore* cpu, uint16_t opcode) {  \
 		int currentCycles = THUMB_PREFETCH_CYCLES; \
 		BODY; \
 		cpu->cycles += currentCycles; \
@@ -88,7 +88,7 @@ DEFINE_IMMEDIATE_5_INSTRUCTION_THUMB(LSR1,
 	}
 	THUMB_NEUTRAL_S( , , cpu->gprs[rd]);)
 
-DEFINE_IMMEDIATE_5_INSTRUCTION_THUMB(ASR1,
+DEFINE_IMMEDIATE_5_INSTRUCTION_THUMB(ASR1, 
 	if (!immediate) {
 		cpu->cpsr.c = ARM_SIGN(cpu->gprs[rm]);
 		if (cpu->cpsr.c) {
@@ -232,7 +232,7 @@ DEFINE_DATA_FORM_5_INSTRUCTION_THUMB(NEG, THUMB_SUBTRACTION(cpu->gprs[rd], 0, cp
 DEFINE_DATA_FORM_5_INSTRUCTION_THUMB(CMP2, int32_t aluOut = cpu->gprs[rd] - cpu->gprs[rn]; THUMB_SUBTRACTION_S(cpu->gprs[rd], cpu->gprs[rn], aluOut))
 DEFINE_DATA_FORM_5_INSTRUCTION_THUMB(CMN, int32_t aluOut = cpu->gprs[rd] + cpu->gprs[rn]; THUMB_ADDITION_S(cpu->gprs[rd], cpu->gprs[rn], aluOut))
 DEFINE_DATA_FORM_5_INSTRUCTION_THUMB(ORR, cpu->gprs[rd] = cpu->gprs[rd] | cpu->gprs[rn]; THUMB_NEUTRAL_S( , , cpu->gprs[rd]))
-DEFINE_DATA_FORM_5_INSTRUCTION_THUMB(MUL, ARM_WAIT_SMUL(cpu->gprs[rd], 0); cpu->gprs[rd] *= cpu->gprs[rn]; THUMB_NEUTRAL_S( , , cpu->gprs[rd]); currentCycles += cpu->memory.activeNonseqCycles16 - cpu->memory.activeSeqCycles16)
+DEFINE_DATA_FORM_5_INSTRUCTION_THUMB(MUL, ARM_WAIT_MUL(cpu->gprs[rd]); cpu->gprs[rd] *= cpu->gprs[rn]; THUMB_NEUTRAL_S( , , cpu->gprs[rd]); currentCycles += cpu->memory.activeNonseqCycles16 - cpu->memory.activeSeqCycles16)
 DEFINE_DATA_FORM_5_INSTRUCTION_THUMB(BIC, cpu->gprs[rd] = cpu->gprs[rd] & ~cpu->gprs[rn]; THUMB_NEUTRAL_S( , , cpu->gprs[rd]))
 DEFINE_DATA_FORM_5_INSTRUCTION_THUMB(MVN, cpu->gprs[rd] = ~cpu->gprs[rn]; THUMB_NEUTRAL_S( , , cpu->gprs[rd]))
 
@@ -381,9 +381,7 @@ DEFINE_LOAD_STORE_MULTIPLE_THUMB(PUSHR,
 	cpu->gprs[ARM_SP] = address)
 
 DEFINE_INSTRUCTION_THUMB(ILL, ARM_ILL)
-DEFINE_INSTRUCTION_THUMB(BKPT,
-	cpu->irqh.bkpt16(cpu, opcode & 0xFF);
-	currentCycles = 0;) // Not strictly in ARMv4T, but here for convenience
+DEFINE_INSTRUCTION_THUMB(BKPT, cpu->irqh.bkpt16(cpu, opcode & 0xFF);)
 DEFINE_INSTRUCTION_THUMB(B,
 	int16_t immediate = (opcode & 0x07FF) << 5;
 	cpu->gprs[ARM_PC] += (((int32_t) immediate) >> 4);
@@ -403,7 +401,11 @@ DEFINE_INSTRUCTION_THUMB(BL2,
 DEFINE_INSTRUCTION_THUMB(BX,
 	int rm = (opcode >> 3) & 0xF;
 	_ARMSetMode(cpu, cpu->gprs[rm] & 0x00000001);
-	cpu->gprs[ARM_PC] = cpu->gprs[rm] & 0xFFFFFFFE;
+	int misalign = 0;
+	if (rm == ARM_PC) {
+		misalign = cpu->gprs[rm] & 0x00000002;
+	}
+	cpu->gprs[ARM_PC] = (cpu->gprs[rm] & 0xFFFFFFFE) - misalign;
 	if (cpu->executionMode == MODE_THUMB) {
 		currentCycles += ThumbWritePC(cpu);
 	} else {

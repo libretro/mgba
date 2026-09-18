@@ -12,8 +12,8 @@ CXX_GUARD_START
 
 #include <mgba/internal/arm/arm.h>
 #include <mgba/core/cheats.h>
-#include <mgba-util/vector.h>
 
+#define MAX_ROM_PATCHES 10
 #define COMPLETE ((size_t) -1)
 
 enum GBACheatType {
@@ -30,7 +30,7 @@ enum GBACodeBreakerType {
 	CB_OR_2 = 0x2,
 	CB_ASSIGN_1 = 0x3,
 	CB_FILL = 0x4,
-	CB_FILL_LIST = 0x5,
+	CB_FILL_8 = 0x5,
 	CB_AND_2 = 0x6,
 	CB_IF_EQ = 0x7,
 	CB_ASSIGN_2 = 0x8,
@@ -50,16 +50,9 @@ enum GBAGameSharkType {
 	GSA_ASSIGN_LIST = 0x3,
 	GSA_PATCH = 0x6,
 	GSA_BUTTON = 0x8,
-	GSA_IF = 0xD,
-	GSA_IF_RANGE = 0xE,
+	GSA_IF_EQ = 0xD,
+	GSA_IF_EQ_RANGE = 0xE,
 	GSA_HOOK = 0xF
-};
-
-enum GBAGameSharkIfType {
-	GSA_IF_EQ = 0,
-	GSA_IF_NE = 1,
-	GSA_IF_LE = 2,
-	GSA_IF_GE = 3,
 };
 
 enum GBAActionReplay3Condition {
@@ -141,14 +134,20 @@ struct GBACheatHook {
 	size_t reentries;
 };
 
-DECLARE_VECTOR(GBACheatPatchList, struct GBACheatPatch);
-
 struct GBACheatSet {
 	struct mCheatSet d;
 	struct GBACheatHook* hook;
 
+	struct GBACheatPatch {
+		uint32_t address;
+		int16_t newValue;
+		int16_t oldValue;
+		bool applied;
+		bool exists;
+	} romPatches[MAX_ROM_PATCHES];
+
 	size_t incompleteCheat;
-	struct mCheatPatch* incompletePatch;
+	struct GBACheatPatch* incompletePatch;
 	size_t currentBlock;
 
 	int gsaVersion;

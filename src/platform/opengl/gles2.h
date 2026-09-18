@@ -12,19 +12,19 @@ CXX_GUARD_START
 
 #ifdef USE_EPOXY
 #include <epoxy/gl.h>
-#elif defined(__APPLE__)
-#include <OpenGL/gl3.h>
 #elif defined(BUILD_GL)
+#ifdef __APPLE__
+#include <OpenGL/gl3.h>
+#else
 #define GL_GLEXT_PROTOTYPES
 #include <GL/gl.h>
 #include <GL/glext.h>
-#elif defined(BUILD_GLES3)
-#include <GLES3/gl3.h>
+#endif
 #else
 #include <GLES2/gl2.h>
 #endif
 
-#include <mgba/feature/video-backend.h>
+#include "platform/video-backend.h"
 
 union mGLES2UniformValue {
 	GLfloat f;
@@ -70,7 +70,6 @@ struct mGLES2Shader {
 	GLuint texLocation;
 	GLuint texSizeLocation;
 	GLuint positionLocation;
-	GLuint outputSizeLocation;
 
 	struct mGLES2Uniform* uniforms;
 	size_t nUniforms;
@@ -79,37 +78,26 @@ struct mGLES2Shader {
 struct mGLES2Context {
 	struct VideoBackend d;
 
-	GLuint tex[VIDEO_LAYER_MAX];
+	GLuint tex;
 	GLuint vbo;
-
-	struct mRectangle layerDims[VIDEO_LAYER_MAX];
-	struct mSize imageSizes[VIDEO_LAYER_MAX];
-	int x;
-	int y;
-	int width;
-	int height;
 
 	struct mGLES2Shader initialShader;
 	struct mGLES2Shader finalShader;
 	struct mGLES2Shader interframeShader;
-	struct mGLES2Shader overlayShader;
 
 	struct mGLES2Shader* shaders;
 	size_t nShaders;
 };
 
 void mGLES2ContextCreate(struct mGLES2Context*);
-void mGLES2ContextUseFramebuffer(struct mGLES2Context*);
 
 void mGLES2ShaderInit(struct mGLES2Shader*, const char* vs, const char* fs, int width, int height, bool integerScaling, struct mGLES2Uniform* uniforms, size_t nUniforms);
 void mGLES2ShaderDeinit(struct mGLES2Shader*);
 void mGLES2ShaderAttach(struct mGLES2Context*, struct mGLES2Shader*, size_t nShaders);
 void mGLES2ShaderDetach(struct mGLES2Context*);
 
-#ifdef ENABLE_VFS
 struct VDir;
 bool mGLES2ShaderLoad(struct VideoShader*, struct VDir*);
-#endif
 void mGLES2ShaderFree(struct VideoShader*);
 
 CXX_GUARD_END

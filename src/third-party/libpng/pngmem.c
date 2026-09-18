@@ -1,9 +1,10 @@
+
 /* pngmem.c - stub functions for memory allocation
  *
- * Copyright (c) 2018-2025 Cosmin Truta
+ * Last changed in libpng 1.6.26 [October 20, 2016]
  * Copyright (c) 1998-2002,2004,2006-2014,2016 Glenn Randers-Pehrson
- * Copyright (c) 1996-1997 Andreas Dilger
- * Copyright (c) 1995-1996 Guy Eric Schalnat, Group 42, Inc.
+ * (Version 0.96 Copyright (c) 1996, 1997 Andreas Dilger)
+ * (Version 0.88 Copyright (c) 1995, 1996 Guy Eric Schalnat, Group 42, Inc.)
  *
  * This code is released under the libpng license.
  * For conditions of distribution and use, see the disclaimer
@@ -72,29 +73,30 @@ png_malloc_base,(png_const_structrp png_ptr, png_alloc_size_t size),
     * to implement a user memory handler.  This checks to be sure it isn't
     * called with big numbers.
     */
-#  ifdef PNG_MAX_MALLOC_64K
-      /* This is support for legacy systems which had segmented addressing
-       * limiting the maximum allocation size to 65536.  It takes precedence
-       * over PNG_SIZE_MAX which is set to 65535 on true 16-bit systems.
-       *
-       * TODO: libpng-1.8: finally remove both cases.
-       */
-      if (size > 65536U) return NULL;
-#  endif
+#ifndef PNG_USER_MEM_SUPPORTED
+   PNG_UNUSED(png_ptr)
+#endif
 
-   /* This is checked too because the system malloc call below takes a (size_t).
+   /* Some compilers complain that this is always true.  However, it
+    * can be false when integer overflow happens.
     */
-   if (size > PNG_SIZE_MAX) return NULL;
-
-#  ifdef PNG_USER_MEM_SUPPORTED
+   if (size > 0 && size <= PNG_SIZE_MAX
+#     ifdef PNG_MAX_MALLOC_64K
+         && size <= 65536U
+#     endif
+      )
+   {
+#ifdef PNG_USER_MEM_SUPPORTED
       if (png_ptr != NULL && png_ptr->malloc_fn != NULL)
          return png_ptr->malloc_fn(png_constcast(png_structrp,png_ptr), size);
-#  else
-      PNG_UNUSED(png_ptr)
-#  endif
 
-   /* Use the system malloc */
-   return malloc((size_t)/*SAFE*/size); /* checked for truncation above */
+      else
+#endif
+         return malloc((size_t)size); /* checked for truncation above */
+   }
+
+   else
+      return NULL;
 }
 
 #if defined(PNG_TEXT_SUPPORTED) || defined(PNG_sPLT_SUPPORTED) ||\

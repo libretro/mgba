@@ -8,9 +8,10 @@
 
 #include <mgba-util/common.h>
 
+#define _WIN32_WINNT 0x0600
+#include <windows.h>
 #define THREAD_ENTRY DWORD WINAPI
 typedef THREAD_ENTRY ThreadEntry(LPVOID);
-#define THREAD_EXIT(RES) return RES
 
 typedef HANDLE Thread;
 typedef CRITICAL_SECTION Mutex;
@@ -86,21 +87,5 @@ static inline int ThreadSetName(const char* name) {
 	UNUSED(name);
 	return -1;
 }
-
-#if (__STDC_VERSION__ < 201112L) || (__STDC_NO_THREADS__ == 1)
-typedef DWORD ThreadLocal;
-
-static inline void ThreadLocalInitKey(ThreadLocal* key) {
-	*key = TlsAlloc();
-}
-
-static inline void ThreadLocalSetKey(ThreadLocal key, void* value) {
-	TlsSetValue(key, value);
-}
-
-static inline void* ThreadLocalGetValue(ThreadLocal key) {
-	return TlsGetValue(key);
-}
-#endif
 
 #endif

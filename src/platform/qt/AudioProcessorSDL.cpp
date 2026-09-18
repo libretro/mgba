@@ -4,7 +4,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 #include "AudioProcessorSDL.h"
-#include "moc_AudioProcessorSDL.cpp"
 
 #include "LogController.h"
 
@@ -18,7 +17,7 @@ AudioProcessorSDL::AudioProcessorSDL(QObject* parent)
 }
 
 void AudioProcessorSDL::setInput(std::shared_ptr<CoreController> controller) {
-	AudioProcessor::setInput(std::move(controller));
+	AudioProcessor::setInput(controller);
 	if (m_audio.core && input()->core != m_audio.core) {
 		mSDLDeinitAudio(&m_audio);
 		mSDLInitAudio(&m_audio, input());
@@ -53,7 +52,7 @@ void AudioProcessorSDL::pause() {
 
 void AudioProcessorSDL::setBufferSamples(int samples) {
 	AudioProcessor::setBufferSamples(samples);
-	if (m_audio.samples != static_cast<size_t>(samples)) {
+	if (m_audio.samples != samples) {
 		m_audio.samples = samples;
 		if (m_audio.core) {
 			mSDLDeinitAudio(&m_audio);

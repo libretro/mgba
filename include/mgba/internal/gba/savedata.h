@@ -12,11 +12,20 @@ CXX_GUARD_START
 
 #include <mgba/core/log.h>
 #include <mgba/core/timing.h>
-#include <mgba/gba/interface.h>
 
 mLOG_DECLARE_CATEGORY(GBA_SAVE);
 
 struct VFile;
+
+enum SavedataType {
+	SAVEDATA_AUTODETECT = -1,
+	SAVEDATA_FORCE_NONE = 0,
+	SAVEDATA_SRAM = 1,
+	SAVEDATA_FLASH512 = 2,
+	SAVEDATA_FLASH1M = 3,
+	SAVEDATA_EEPROM = 4,
+	SAVEDATA_EEPROM512 = 5
+};
 
 enum SavedataCommand {
 	EEPROM_COMMAND_NULL = 0,
@@ -45,13 +54,14 @@ enum FlashStateMachine {
 	FLASH_STATE_CONTINUE = 2,
 };
 
-enum FlashId {
-	FLASH_ATMEL_AT29LV512 = 0x3D1F, // 512k
-	FLASH_MACRONIX_MX29L512 = 0x1CC2, // 512k, unused
-	FLASH_MACRONIX_MX29L010 = 0x09C2, // 1M
-	FLASH_PANASONIC_MN63F805MNP = 0x1B32, // 512k, unused
-	FLASH_SANYO_LE26FV10N1TS = 0x1362, // 1M
-	FLASH_SST_39LVF512 = 0xD4BF, // 512k
+enum FlashManufacturer {
+	FLASH_MFG_PANASONIC = 0x1B32,
+	FLASH_MFG_SANYO = 0x1362
+};
+
+enum SavedataDirty {
+	SAVEDATA_DIRT_NEW = 1,
+	SAVEDATA_DIRT_SEEN = 2
 };
 
 enum {
@@ -62,8 +72,7 @@ enum {
 };
 
 struct GBASavedata {
-	struct GBA* p;
-	enum GBASavedataType type;
+	enum SavedataType type;
 	uint8_t* data;
 	enum SavedataCommand command;
 	struct VFile* vf;
@@ -78,23 +87,17 @@ struct GBASavedata {
 
 	uint8_t* currentBank;
 
+	struct mTiming* timing;
 	unsigned settling;
 	struct mTimingEvent dust;
 
-	int dirty;
+	enum SavedataDirty dirty;
 	uint32_t dirtAge;
 
 	enum FlashStateMachine flashState;
 };
 
-struct GBASavedataRTCBuffer {
-	uint8_t time[7];
-	uint8_t control;
-	uint64_t lastLatch;
-};
-
 void GBASavedataInit(struct GBASavedata* savedata, struct VFile* vf);
-void GBASavedataReset(struct GBASavedata* savedata);
 void GBASavedataDeinit(struct GBASavedata* savedata);
 
 void GBASavedataMask(struct GBASavedata* savedata, struct VFile* vf, bool writeback);
@@ -102,12 +105,11 @@ void GBASavedataUnmask(struct GBASavedata* savedata);
 size_t GBASavedataSize(const struct GBASavedata* savedata);
 bool GBASavedataClone(struct GBASavedata* savedata, struct VFile* out);
 bool GBASavedataLoad(struct GBASavedata* savedata, struct VFile* in);
-void GBASavedataForceType(struct GBASavedata* savedata, enum GBASavedataType type);
+void GBASavedataForceType(struct GBASavedata* savedata, enum SavedataType type);
 
 void GBASavedataInitFlash(struct GBASavedata* savedata);
 void GBASavedataInitEEPROM(struct GBASavedata* savedata);
 void GBASavedataInitSRAM(struct GBASavedata* savedata);
-void GBASavedataInitSRAM512(struct GBASavedata* savedata);
 
 uint8_t GBASavedataReadFlash(struct GBASavedata* savedata, uint16_t address);
 void GBASavedataWriteFlash(struct GBASavedata* savedata, uint16_t address, uint8_t value);
@@ -116,9 +118,6 @@ uint16_t GBASavedataReadEEPROM(struct GBASavedata* savedata);
 void GBASavedataWriteEEPROM(struct GBASavedata* savedata, uint16_t value, uint32_t writeSize);
 
 void GBASavedataClean(struct GBASavedata* savedata, uint32_t frameCount);
-
-void GBASavedataRTCRead(struct GBASavedata* savedata);
-void GBASavedataRTCWrite(struct GBASavedata* savedata);
 
 struct GBASerializedState;
 void GBASavedataSerialize(const struct GBASavedata* savedata, struct GBASerializedState* state);

@@ -3,7 +3,7 @@
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
-#include <mgba/internal/gb/debugger/cli.h>
+#include <mgba/internal/gb/extra/cli.h>
 
 #include <mgba/core/core.h>
 #include <mgba/core/serialize.h>
@@ -16,14 +16,14 @@ static void _GBCLIDebuggerInit(struct CLIDebuggerSystem*);
 static bool _GBCLIDebuggerCustom(struct CLIDebuggerSystem*);
 
 static void _frame(struct CLIDebugger*, struct CLIDebugVector*);
-#ifdef ENABLE_VFS
+#if !defined(MINIMAL_CORE) || MINIMAL_CORE < 2
 static void _load(struct CLIDebugger*, struct CLIDebugVector*);
 static void _save(struct CLIDebugger*, struct CLIDebugVector*);
 #endif
 
 struct CLIDebuggerCommandSummary _GBCLIDebuggerCommands[] = {
 	{ "frame", _frame, "", "Frame advance" },
-#ifdef ENABLE_VFS
+#if !defined(MINIMAL_CORE) || MINIMAL_CORE < 2
 	{ "load", _load, "*", "Load a savestate" },
 	{ "save", _save, "*", "Save a savestate" },
 #endif
@@ -57,12 +57,12 @@ static bool _GBCLIDebuggerCustom(struct CLIDebuggerSystem* debugger) {
 	struct GBCLIDebugger* gbDebugger = (struct GBCLIDebugger*) debugger;
 
 	if (gbDebugger->frameAdvance) {
-		if (!gbDebugger->inVblank && GBRegisterSTATGetMode(((struct GB*) gbDebugger->core->board)->memory.io[GB_REG_STAT]) == 1) {
-			mDebuggerEnter(gbDebugger->d.p->d.p, DEBUGGER_ENTER_MANUAL, 0);
+		if (!gbDebugger->inVblank && GBRegisterSTATGetMode(((struct GB*) gbDebugger->core->board)->memory.io[REG_STAT]) == 1) {
+			mDebuggerEnter(&gbDebugger->d.p->d, DEBUGGER_ENTER_MANUAL, 0);
 			gbDebugger->frameAdvance = false;
 			return false;
 		}
-		gbDebugger->inVblank = GBRegisterSTATGetMode(((struct GB*) gbDebugger->core->board)->memory.io[GB_REG_STAT]) == 1;
+		gbDebugger->inVblank = GBRegisterSTATGetMode(((struct GB*) gbDebugger->core->board)->memory.io[REG_STAT]) == 1;
 		return true;
 	}
 	return true;
@@ -70,15 +70,14 @@ static bool _GBCLIDebuggerCustom(struct CLIDebuggerSystem* debugger) {
 
 static void _frame(struct CLIDebugger* debugger, struct CLIDebugVector* dv) {
 	UNUSED(dv);
-	debugger->d.needsCallback = true;
-	mDebuggerUpdatePaused(debugger->d.p);
+	debugger->d.state = DEBUGGER_CALLBACK;
 
 	struct GBCLIDebugger* gbDebugger = (struct GBCLIDebugger*) debugger->system;
 	gbDebugger->frameAdvance = true;
-	gbDebugger->inVblank = GBRegisterSTATGetMode(((struct GB*) gbDebugger->core->board)->memory.io[GB_REG_STAT]) == 1;
+	gbDebugger->inVblank = GBRegisterSTATGetMode(((struct GB*) gbDebugger->core->board)->memory.io[REG_STAT]) == 1;
 }
 
-#ifdef ENABLE_VFS
+#if !defined(MINIMAL_CORE) || MINIMAL_CORE < 2
 static void _load(struct CLIDebugger* debugger, struct CLIDebugVector* dv) {
 	struct CLIDebuggerBackend* be = debugger->backend;
 	if (!dv || dv->type != CLIDV_INT_TYPE) {

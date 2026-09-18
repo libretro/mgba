@@ -1,5 +1,5 @@
-set(ENABLE_VFS_3DS OFF CACHE BOOL "Use 3DS-specific file support")
-mark_as_advanced(ENABLE_VFS_3DS)
+set(USE_VFS_3DS ON CACHE BOOL "Use 3DS-specific file support")
+mark_as_advanced(USE_VFS_3DS)
 
 find_program(3DSLINK 3dslink)
 find_program(3DSXTOOL 3dsxtool)
@@ -7,11 +7,10 @@ find_program(BANNERTOOL bannertool)
 find_program(MAKEROM makerom)
 find_program(PICASSO picasso)
 find_program(RAW2C raw2c)
-find_program(TEX3DS tex3ds)
 set(STRIP "${cross_prefix_path}strip" CACHE INTERNAL "symbol stripper")
 
 set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wno-format" PARENT_SCOPE)
-set(OS_DEFINES _GNU_SOURCE COLOR_16_BIT COLOR_5_6_5 FIXED_ROM_BUFFER IOAPI_NO_64)
+set(OS_DEFINES COLOR_16_BIT COLOR_5_6_5 IOAPI_NO_64)
 
 include_directories(${CMAKE_CURRENT_BINARY_DIR})
 if(${CMAKE_BUILD_TYPE} STREQUAL Debug OR ${CMAKE_BUILD_TYPE} STREQUAL RelWithDebInfo)
@@ -19,22 +18,18 @@ if(${CMAKE_BUILD_TYPE} STREQUAL Debug OR ${CMAKE_BUILD_TYPE} STREQUAL RelWithDeb
 else()
 	list(APPEND OS_LIB citro3d ctru)
 endif()
-set(OS_SRC
-	${PROJECT_SOURCE_DIR}/src/util/memory.c
-	${CMAKE_CURRENT_SOURCE_DIR}/3ds-vfs.c
-	${CMAKE_CURRENT_SOURCE_DIR}/ctru-heap.c
-	${CMAKE_CURRENT_SOURCE_DIR}/socket.c
-	PARENT_SCOPE)
+file(GLOB OS_SRC ${CMAKE_CURRENT_SOURCE_DIR}/3ds-*.c ${CMAKE_CURRENT_SOURCE_DIR}/ctru-heap.c ${CMAKE_CURRENT_SOURCE_DIR}/socket.c)
+set(OS_SRC ${OS_SRC} PARENT_SCOPE)
 set(OS_LIB ${OS_LIB} PARENT_SCOPE)
 source_group("3DS-specific code" FILES ${OS_SRC})
 
-if(ENABLE_VFS_3DS)
-	list(APPEND OS_DEFINES ENABLE_VFS_3DS)
+if(USE_VFS_3DS)
+	list(APPEND OS_DEFINES USE_VFS_3DS)
 else()
-	list(APPEND OS_DEFINES ENABLE_VFS_FD)
-	list(APPEND VFS_SRC ${PROJECT_SOURCE_DIR}/src/util/vfs/vfs-fd.c ${PROJECT_SOURCE_DIR}/src/util/vfs/vfs-dirent.c)
+	list(APPEND OS_DEFINES USE_VFS_FILE)
+	list(APPEND CORE_VFS_SRC ${CMAKE_SOURCE_DIR}/src/util/vfs/vfs-file.c ${CMAKE_SOURCE_DIR}/src/util/vfs/vfs-dirent.c)
 endif()
-set(VFS_SRC ${VFS_SRC} PARENT_SCOPE)
+set(CORE_VFS_SRC ${CORE_VFS_SRC} PARENT_SCOPE)
 set(OS_DEFINES ${OS_DEFINES} PARENT_SCOPE)
 
 list(APPEND GUI_SRC
@@ -59,8 +54,8 @@ set_target_properties(${BINARY_NAME}.elf PROPERTIES COMPILE_DEFINITIONS "${OS_DE
 target_link_libraries(${BINARY_NAME}.elf ${BINARY_NAME} ${M_LIBRARY} ${OS_LIB})
 
 add_custom_command(OUTPUT ${BINARY_NAME}.smdh
-                   COMMAND ${BANNERTOOL} makesmdh -s "${PROJECT_NAME}" -l "${SUMMARY}" -p "endrift" -i ${PROJECT_SOURCE_DIR}/res/mgba-48.png -o ${BINARY_NAME}.smdh
-                   DEPENDS ${PROJECT_SOURCE_DIR}/res/mgba-48.png)
+                   COMMAND ${BANNERTOOL} makesmdh -s "${PROJECT_NAME}" -l "${SUMMARY}" -p "endrift" -i ${CMAKE_SOURCE_DIR}/res/mgba-48.png -o ${BINARY_NAME}.smdh
+                   DEPENDS ${CMAKE_SOURCE_DIR}/res/mgba-48.png)
 
 add_custom_command(OUTPUT ${BINARY_NAME}.xml
                    COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_CURRENT_SOURCE_DIR}/hbl.xml ${BINARY_NAME}.xml
@@ -70,15 +65,9 @@ add_custom_command(OUTPUT ${BINARY_NAME}.bnr
                    COMMAND ${BANNERTOOL} makebanner -ci ${CMAKE_CURRENT_SOURCE_DIR}/banner.cgfx -a ${CMAKE_CURRENT_SOURCE_DIR}/bios.wav -o ${BINARY_NAME}.bnr
                    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/banner.cgfx ${CMAKE_CURRENT_SOURCE_DIR}/bios.wav)
 
-# tex3ds binaries as of 2.0.1-3 crash if you try to do this
-#add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/icons.t3x
-#                   COMMAND ${TEX3DS} -f rgb5551 -o icons.t3x ${PROJECT_SOURCE_DIR}/res/icons.png
-#                   MAIN_DEPENDENCY ${PROJECT_SOURCE_DIR}/res/icons.png
-#                   WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
-
 add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/icons.c
-                   COMMAND ${RAW2C} ${CMAKE_CURRENT_SOURCE_DIR}/icons.t3x
-                   DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/icons.t3x)
+                   COMMAND ${RAW2C} ${CMAKE_SOURCE_DIR}/src/platform/3ds/icons.raw
+                   DEPENDS ${CMAKE_SOURCE_DIR}/src/platform/3ds/icons.raw)
 
 add_custom_command(
 	OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/uishader.shbin ${CMAKE_CURRENT_BINARY_DIR}/uishader.shbin.h

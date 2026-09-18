@@ -8,7 +8,7 @@
 #include <mgba/core/core.h>
 #include <mgba-util/vfs.h>
 
-#ifdef ENABLE_VFS
+#if !defined(MINIMAL_CORE) || MINIMAL_CORE < 2
 M_TEST_DEFINE(findNullPath) {
 	struct mCore* core = mCoreFind(NULL);
 	assert_null(core);
@@ -29,7 +29,7 @@ M_TEST_DEFINE(findEmpty) {
 }
 
 M_TEST_SUITE_DEFINE(mCore,
-#ifdef ENABLE_VFS
+#if !defined(MINIMAL_CORE) || MINIMAL_CORE < 2
 	cmocka_unit_test(findNullPath),
 #endif
 	cmocka_unit_test(findNullVF),

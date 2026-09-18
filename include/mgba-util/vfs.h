@@ -47,10 +47,9 @@ struct VFile {
 	void (*unmap)(struct VFile* vf, void* memory, size_t size);
 	void (*truncate)(struct VFile* vf, size_t size);
 	ssize_t (*size)(struct VFile* vf);
-	bool (*sync)(struct VFile* vf, void* buffer, size_t size);
+	bool (*sync)(struct VFile* vf, const void* buffer, size_t size);
 };
 
-#if defined(ENABLE_VFS) && defined(ENABLE_DIRECTORIES)
 struct VDirEntry {
 	const char* (*name)(struct VDirEntry* vde);
 	enum VFSType (*type)(struct VDirEntry* vde);
@@ -64,34 +63,23 @@ struct VDir {
 	struct VDir* (*openDir)(struct VDir* vd, const char* name);
 	bool (*deleteFile)(struct VDir* vd, const char* name);
 };
-#endif
 
-#ifdef ENABLE_VFS
 struct VFile* VFileOpen(const char* path, int flags);
-#endif
 
-#ifdef ENABLE_VFS_FD
 struct VFile* VFileOpenFD(const char* path, int flags);
 struct VFile* VFileFromFD(int fd);
-#endif
-
-#ifdef ENABLE_VFS_FILE
-struct VFile* VFileFOpen(const char* path, const char* mode);
-struct VFile* VFileFromFILE(FILE* file);
-#endif
 
 struct VFile* VFileFromMemory(void* mem, size_t size);
 struct VFile* VFileFromConstMemory(const void* mem, size_t size);
 struct VFile* VFileMemChunk(const void* mem, size_t size);
 
-struct mCircleBuffer;
-struct VFile* VFileFIFO(struct mCircleBuffer* backing);
+struct CircleBuffer;
+struct VFile* VFileFIFO(struct CircleBuffer* backing);
 
-#if defined(ENABLE_VFS) && defined(ENABLE_DIRECTORIES)
 struct VDir* VDirOpen(const char* path);
 struct VDir* VDirOpenArchive(const char* path);
 
-#if defined(USE_LIBZIP) || defined(USE_MINIZIP)
+#if defined(USE_LIBZIP) || defined(USE_ZLIB)
 struct VDir* VDirOpenZip(const char* path, int flags);
 #endif
 
@@ -99,20 +87,21 @@ struct VDir* VDirOpenZip(const char* path, int flags);
 struct VDir* VDirOpen7z(const char* path, int flags);
 #endif
 
-#if defined(__wii__) || defined(__3DS__) || defined(PSP2)
+#if defined(__wii__) || defined(_3DS) || defined(PSP2)
 struct VDir* VDeviceList(void);
 #endif
 
 bool VDirCreate(const char* path);
-struct VFile* VDirFindFirst(struct VDir* dir, bool (*filter)(struct VFile*));
-struct VFile* VDirFindNextAvailable(struct VDir*, const char* basename, const char* infix, const char* suffix, int mode);
+
+#ifdef USE_VFS_FILE
+struct VFile* VFileFOpen(const char* path, const char* mode);
+struct VFile* VFileFromFILE(FILE* file);
 #endif
 
 void separatePath(const char* path, char* dirname, char* basename, char* extension);
 
-bool isAbsolute(const char* path);
-void makeAbsolute(const char* path, const char* base, char* out);
-bool upDirectory(char* path);
+struct VFile* VDirFindFirst(struct VDir* dir, bool (*filter)(struct VFile*));
+struct VFile* VDirFindNextAvailable(struct VDir*, const char* basename, const char* infix, const char* suffix, int mode);
 
 ssize_t VFileReadline(struct VFile* vf, char* buffer, size_t size);
 

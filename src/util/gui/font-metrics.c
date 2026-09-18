@@ -102,7 +102,7 @@ const struct GUIFontGlyphMetric defaultFontMetrics[128] = {
 	{  6, 11, { 2, 5, 3, 5 }}, // 0x5D "]"
 	{  8,  7, { 2, 4, 7, 4 }}, // 0x5E "^"
 	{ 10,  3, { 10, 3, 3, 3 }}, // 0x5F "_"
-	{  6,  5, { 3, 4, 8, 6 }}, // 0x60 "`"
+	{  6,  5, { 8, 6, 3, 4 }}, // 0x60 "`"
 	{  8,  7, { 6, 4, 3, 4 }}, // 0x61 "a"
 	{  8, 11, { 2, 4, 3, 4 }}, // 0x62 "b"
 	{  8,  7, { 6, 4, 3, 4 }}, // 0x63 "c"
@@ -137,11 +137,11 @@ const struct GUIFontGlyphMetric defaultFontMetrics[128] = {
 };
 
 const struct GUIIconMetric defaultIconMetrics[] = {
-	[GUI_ICON_BATTERY_FULL] = { 0, 2, 32, 12 },
-	[GUI_ICON_BATTERY_HIGH] = { 32, 2, 32, 12 },
-	[GUI_ICON_BATTERY_HALF] = { 64, 2, 32, 12 },
-	[GUI_ICON_BATTERY_LOW] = { 96, 2, 32, 12 },
-	[GUI_ICON_BATTERY_EMPTY] = { 128, 2, 32, 12 },
+	[GUI_ICON_BATTERY_FULL] = { 0, 0, 32, 16 },
+	[GUI_ICON_BATTERY_HIGH] = { 32, 0, 32, 16 },
+	[GUI_ICON_BATTERY_HALF] = { 64, 0, 32, 16 },
+	[GUI_ICON_BATTERY_LOW] = { 96, 0, 32, 16 },
+	[GUI_ICON_BATTERY_EMPTY] = { 128, 0, 32, 16 },
 	[GUI_ICON_SCROLLBAR_BUTTON] = { 6, 16, 4, 5 },
 	[GUI_ICON_SCROLLBAR_TRACK] = { 23, 16, 2, 16 },
 	[GUI_ICON_SCROLLBAR_THUMB] = { 38, 16, 4, 16 },
@@ -152,48 +152,4 @@ const struct GUIIconMetric defaultIconMetrics[] = {
 	[GUI_ICON_BUTTON_TRIANGLE] = { 34, 34, 12, 11 },
 	[GUI_ICON_BUTTON_SQUARE] = { 50, 34, 12, 11 },
 	[GUI_ICON_BUTTON_HOME] = { 66, 34, 12, 11 },
-	[GUI_ICON_LEFT] = { 82, 34, 12, 12 },
-	[GUI_ICON_UP] = { 98, 34, 12, 12 },
-	[GUI_ICON_RIGHT] = { 114, 34, 12, 12 },
-	[GUI_ICON_DOWN] = { 130, 34, 12, 12 },
-	[GUI_ICON_STATUS_FAST_FORWARD] = { 2, 50, 12, 12 },
-	[GUI_ICON_STATUS_MUTE] = { 17, 50, 14, 12 },
-	[GUI_ICON_9SLICE_EMPTY_NW] = { 162, 1, 8, 8 },
-	[GUI_ICON_9SLICE_EMPTY_N] = { 170, 1, 12, 8 },
-	[GUI_ICON_9SLICE_EMPTY_NE] = { 182, 1, 8, 8 },
-	[GUI_ICON_9SLICE_EMPTY_W] = { 162, 9, 8, 12 },
-	[GUI_ICON_9SLICE_EMPTY_E] = { 182, 9, 8, 12 },
-	[GUI_ICON_9SLICE_EMPTY_SW] = { 162, 23, 8, 8 },
-	[GUI_ICON_9SLICE_EMPTY_S] = { 170, 23, 12, 8 },
-	[GUI_ICON_9SLICE_EMPTY_SE] = { 182, 23, 8, 8 },
-	[GUI_ICON_9SLICE_FILLED_NW] = { 194, 1, 8, 8 },
-	[GUI_ICON_9SLICE_FILLED_N] = { 202, 1, 12, 8 },
-	[GUI_ICON_9SLICE_FILLED_NE] = { 214, 1, 8, 8 },
-	[GUI_ICON_9SLICE_FILLED_W] = { 194, 9, 8, 12 },
-	[GUI_ICON_9SLICE_FILLED_C] = { 202, 9, 12, 12 },
-	[GUI_ICON_9SLICE_FILLED_E] = { 214, 9, 8, 12 },
-	[GUI_ICON_9SLICE_FILLED_SW] = { 194, 23, 8, 8 },
-	[GUI_ICON_9SLICE_FILLED_S] = { 202, 23, 12, 8 },
-	[GUI_ICON_9SLICE_FILLED_SE] = { 214, 23, 8, 8 },
-	[GUI_ICON_9SLICE_CAP_NNW] = { 240, 1, 8, 7 },
-	[GUI_ICON_9SLICE_CAP_NWW] = { 226, 16, 6, 8 },
-	[GUI_ICON_9SLICE_CAP_NNE] = { 232, 1, 8, 7 },
-	[GUI_ICON_9SLICE_CAP_NEE] = { 248, 16, 6, 8 },
-	[GUI_ICON_9SLICE_CAP_SSW] = { 240, 24, 8, 7 },
-	[GUI_ICON_9SLICE_CAP_SWW] = { 226, 8, 6, 8 },
-	[GUI_ICON_9SLICE_CAP_SSE] = { 232, 24, 8, 7 },
-	[GUI_ICON_9SLICE_CAP_SEE] = { 248, 8, 6, 8 },
-	[GUI_ICON_9SLICE_FILL_ONLY_NW] = { 194, 33, 8, 8 },
-	[GUI_ICON_9SLICE_FILL_ONLY_N] = { 202, 33, 12, 8 },
-	[GUI_ICON_9SLICE_FILL_ONLY_NE] = { 214, 33, 8, 8 },
-	[GUI_ICON_9SLICE_FILL_ONLY_W] = { 194, 41, 8, 12 },
-	[GUI_ICON_9SLICE_FILL_ONLY_C] = { 202, 41, 12, 12 },
-	[GUI_ICON_9SLICE_FILL_ONLY_E] = { 214, 41, 8, 12 },
-	[GUI_ICON_9SLICE_FILL_ONLY_SW] = { 194, 55, 8, 8 },
-	[GUI_ICON_9SLICE_FILL_ONLY_S] = { 202, 55, 12, 8 },
-	[GUI_ICON_9SLICE_FILL_ONLY_SE] = { 214, 55, 8, 8 },
-	[GUI_ICON_BACKSPACE] = { 82, 18, 12, 12 },
-	[GUI_ICON_KBD_SHIFT] = { 114, 18, 12, 12 },
-	[GUI_ICON_CAPSLOCK] = { 130, 18, 12, 12 },
-	[GUI_ICON_TEXT_CURSOR] = { 103, 16, 3, 16 },
 };

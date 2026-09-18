@@ -5,8 +5,11 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 #include <mgba-util/string.h>
 
-#include <mgba-util/math.h>
+#include <mgba-util/vector.h>
+
 #include <string.h>
+
+DEFINE_VECTOR(StringList, char*);
 
 #ifndef HAVE_STRNDUP
 char* strndup(const char* start, size_t len) {
@@ -25,23 +28,6 @@ char* strdup(const char* str) {
 	strncpy(out, str, len);
 	out[len] = '\0';
 	return out;
-}
-#endif
-
-#ifndef HAVE_STRLCPY
-size_t strlcpy(char* restrict dst, const char* restrict src, size_t dstsize) {
-	size_t i = 0;
-	for (; src[i] && dstsize > 1; ++i) {
-		dst[i] = src[i];
-		--dstsize;
-	}
-	if (dstsize) {
-		dst[i] = '\0';
-	}
-	while (src[i]) {
-		++i;
-	}
-	return i;
 }
 #endif
 
@@ -105,55 +91,38 @@ uint32_t utf16Char(const uint16_t** unicode, size_t* length) {
 	return (highSurrogate << 10) + lowSurrogate + 0x10000;
 }
 
-static const uint8_t _utf8len[0x40] = {
-	/* 0000 xxxx */ 1, 1, 1, 1,
-	/* 0001 xxxx */ 1, 1, 1, 1,
-	/* 0010 xxxx */ 1, 1, 1, 1,
-	/* 0011 xxxx */ 1, 1, 1, 1,
-	/* 0100 xxxx */ 1, 1, 1, 1,
-	/* 0101 xxxx */ 1, 1, 1, 1,
-	/* 0110 xxxx */ 1, 1, 1, 1,
-	/* 0111 xxxx */ 1, 1, 1, 1,
-	/* 1000 xxxx */ 0, 0, 0, 0,
-	/* 1001 xxxx */ 0, 0, 0, 0,
-	/* 1010 xxxx */ 0, 0, 0, 0,
-	/* 1011 xxxx */ 0, 0, 0, 0,
-	/* 1100 xxxx */ 2, 2, 2, 2,
-	/* 1101 xxxx */ 2, 2, 2, 2,
-	/* 1110 xxxx */ 3, 3, 3, 3,
-	/* 1111 xxxx */ 4, 4, 0, 0
-};
-
 uint32_t utf8Char(const char** unicode, size_t* length) {
-	if (length && *length == 0) {
+	if (*length == 0) {
 		return 0;
 	}
-	unsigned char byte = **unicode;
-	if (length) {
-		--*length;
-	}
+	char byte = **unicode;
+	--*length;
 	++*unicode;
 	if (!(byte & 0x80)) {
 		return byte;
 	}
 	uint32_t unichar;
 	static const int tops[4] = { 0xC0, 0xE0, 0xF0, 0xF8 };
-	size_t numBytes = _utf8len[byte >> 2];
-	unichar = byte & ~tops[numBytes - 1];
-	if (numBytes == 0) {
-		return 0xFFFD;
+	size_t numBytes;
+	for (numBytes = 0; numBytes < 3; ++numBytes) {
+		if ((byte & tops[numBytes + 1]) == tops[numBytes]) {
+			break;
+		}
 	}
-	if (length && *length + 1 < numBytes) {
+	unichar = byte & ~tops[numBytes];
+	if (numBytes == 3) {
+		return 0;
+	}
+	++numBytes;
+	if (*length < numBytes) {
 		*length = 0;
-		return 0xFFFD;
+		return 0;
 	}
 	size_t i;
-	for (i = 1; i < numBytes; ++i) {
+	for (i = 0; i < numBytes; ++i) {
 		unichar <<= 6;
 		byte = **unicode;
-		if (length) {
-			--*length;
-		}
+		--*length;
 		++*unicode;
 		if ((byte & 0xC0) != 0x80) {
 			return 0;
@@ -182,35 +151,15 @@ size_t toUtf8(uint32_t unichar, char* buffer) {
 		buffer[2] = (unichar & 0x3F) | 0x80;
 		return 3;
 	}
-
-	buffer[0] = (unichar >> 18) | 0xF0;
-	buffer[1] = ((unichar >> 12) & 0x3F) | 0x80;
-	buffer[2] = ((unichar >> 6) & 0x3F) | 0x80;
-	buffer[3] = (unichar & 0x3F) | 0x80;
-	return 4;
-}
-
-size_t toUtf16(uint32_t unichar, uint16_t* buffer) {
-	if (unichar < 0xD800) {
-		buffer[0] = unichar;
-		return 1;
-	}
-	if (unichar < 0xE000) {
-		// Orphan surrogate, invalid
-		return 0;
-	}
-	if (unichar < 0x10000) {
-		buffer[0] = unichar;
-		return 1;
-	}
-	if (unichar < 0x110000) {
-		unichar -= 0x10000;
-		buffer[0] = 0xD800 | (unichar >> 10);
-		buffer[1] = 0xDC00 | (unichar & 0x3FF);
-		return 2;
+	if (unichar < 0x200000) {
+		buffer[0] = (unichar >> 18) | 0xF0;
+		buffer[1] = ((unichar >> 12) & 0x3F) | 0x80;
+		buffer[2] = ((unichar >> 6) & 0x3F) | 0x80;
+		buffer[3] = (unichar & 0x3F) | 0x80;
+		return 4;
 	}
 
-	// Invalid code point
+	// This shouldn't be possible
 	return 0;
 }
 
@@ -252,17 +201,16 @@ char* utf16to8(const uint16_t* utf16, size_t length) {
 			memcpy(offset, buffer, bytes);
 			offset += bytes;
 		} else if (!utf8) {
-			utf8TotalBytes = toPow2(utf8Length);
-			utf8 = malloc(utf8TotalBytes);
+			utf8 = malloc(length);
 			if (!utf8) {
 				return 0;
 			}
+			utf8TotalBytes = length;
 			memcpy(utf8, buffer, bytes);
 			offset = utf8 + bytes;
 		} else if (utf8Length >= utf8TotalBytes) {
 			ptrdiff_t o = offset - utf8;
-			utf8TotalBytes *= 2;
-			char* newUTF8 = realloc(utf8, utf8TotalBytes);
+			char* newUTF8 = realloc(utf8, utf8TotalBytes * 2);
 			offset = o + newUTF8;
 			if (!newUTF8) {
 				free(utf8);
@@ -271,51 +219,6 @@ char* utf16to8(const uint16_t* utf16, size_t length) {
 			utf8 = newUTF8;
 			memcpy(offset, buffer, bytes);
 			offset += bytes;
-		}
-	}
-
-	char* newUTF8 = realloc(utf8, utf8Length + 1);
-	if (!newUTF8) {
-		free(utf8);
-		return 0;
-	}
-	newUTF8[utf8Length] = '\0';
-	return newUTF8;
-}
-
-char* latin1ToUtf8(const char* latin1, size_t length) {
-	char* utf8 = NULL;
-	char* utf8Offset = NULL;
-	size_t offset;
-	char buffer[4];
-	size_t utf8TotalBytes = 0;
-	size_t utf8Length = 0;
-	for (offset = 0; offset < length; ++offset) {
-		uint8_t unichar = latin1[offset];
-		size_t bytes = toUtf8(unichar, buffer);
-		utf8Length += bytes;
-		if (!utf8) {
-			utf8 = malloc(length);
-			if (!utf8) {
-				return NULL;
-			}
-			utf8TotalBytes = length;
-			memcpy(utf8, buffer, bytes);
-			utf8Offset = utf8 + bytes;
-		} else if (utf8Length < utf8TotalBytes) {
-			memcpy(utf8Offset, buffer, bytes);
-			utf8Offset += bytes;
-		} else if (utf8Length >= utf8TotalBytes) {
-			ptrdiff_t o = utf8Offset - utf8;
-			char* newUTF8 = realloc(utf8, utf8TotalBytes * 2);
-			utf8Offset = o + newUTF8;
-			if (!newUTF8) {
-				free(utf8);
-				return 0;
-			}
-			utf8 = newUTF8;
-			memcpy(utf8Offset, buffer, bytes);
-			utf8Offset += bytes;
 		}
 	}
 
@@ -395,29 +298,6 @@ char* gbkToUtf8(const char* gbk, size_t length) {
 	}
 	newUTF8[utf8Length] = '\0';
 	return newUTF8;
-}
-
-size_t utf8strlen(const char* string) {
-	size_t size = 0;
-	for (size = 0; *string; ++size) {
-		size_t numBytes = 1;
-		if (*string & 0x80) {
-			numBytes = _utf8len[((uint8_t) *string) >> 2];
-			if (!numBytes) {
-				numBytes = 1;
-			} else {
-				size_t i;
-				for (i = 1; i < numBytes; ++i) {
-					if ((string[i] & 0xC0) != 0x80) {
-						break;
-					}
-				}
-				numBytes = i;
-			}
-		}
-		string += numBytes;
-	}
-	return size;
 }
 
 int hexDigit(char digit) {
@@ -621,34 +501,4 @@ ssize_t parseQuotedString(const char* unparsed, ssize_t unparsedLen, char* parse
 		}
 	}
 	return -1;
-}
-
-bool wildcard(const char* search, const char* string) {
-	while (true) {
-		if (search[0] == '*') {
-			while (search[0] == '*') {
-				++search;
-			}
-			if (!search[0]) {
-				return true;
-			}
-			while (string[0]) {
-				if (string[0] == search[0] && wildcard(search, string)) {
-					return true;
-				}
-				++string;
-			}
-			return false;
-		} else if (!search[0]) {
-			return !string[0];
-		} else if (!string[0]) {
-			return false;
-		} else if (string[0] != search[0]) {
-			return false;
-		} else {
-			++search;
-			++string;
-		}
-	}
-	return false;
 }

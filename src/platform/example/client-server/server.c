@@ -16,14 +16,14 @@ int main(int argc, char** argv) {
 	// Arguments from the command line are parsed by the parseArguments function.
 	// The NULL here shows that we don't give it any arguments beyond the default ones.
 	struct mArguments args = {};
-	bool parsed = mArgumentsParse(&args, argc, argv, NULL, 0);
+	bool parsed = parseArguments(&args, argc, argv, NULL);
 	// Parsing can succeed without finding a filename, but we need one.
 	if (!args.fname) {
 		parsed = false;
 	}
 	if (!parsed || args.showHelp) {
 		// If parsing failed, or the user passed --help, show usage.
-		usage(argv[0], NULL, NULL, NULL, 0);
+		usage(argv[0], NULL);
 		didFail = !parsed;
 		goto cleanup;
 	}
@@ -53,7 +53,7 @@ int main(int argc, char** argv) {
 		SocketClose(sock);
 		SocketSubsystemDeinit();
 		didFail = true;
-		goto cleanup;
+		goto cleanup;		
 	}
 
 	// Run the server
@@ -65,7 +65,7 @@ int main(int argc, char** argv) {
 	SocketSubsystemDeinit();
 
 	cleanup:
-	mArgumentsDeinit(&args);
+	freeArguments(&args);
 
 	return didFail;
 }
@@ -83,7 +83,7 @@ bool _mExampleRun(const struct mArguments* args, Socket client) {
 
 	// Get the dimensions required for this core and send them to the client.
 	unsigned width, height;
-	core->baseVideoSize(core, &width, &height);
+	core->desiredVideoDimensions(core, &width, &height);
 	ssize_t bufferSize = width * height * BYTES_PER_PIXEL;
 	uint32_t sendNO;
 	sendNO = htonl(width);
@@ -114,7 +114,7 @@ bool _mExampleRun(const struct mArguments* args, Socket client) {
 	// loaded into the config system, as well as manually overriding the
 	// "idleOptimization" setting to ensure cores that can detect idle loops
 	// will attempt the detection.
-	mArgumentsApply(args, NULL, 0, &core->config);
+	applyArguments(args, NULL, &core->config);
 	mCoreConfigSetDefaultValue(&core->config, "idleOptimization", "detect");
 
 	// Tell the core to apply the configuration in the associated config object.

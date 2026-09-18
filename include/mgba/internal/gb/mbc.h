@@ -17,14 +17,11 @@ mLOG_DECLARE_CATEGORY(GB_MBC);
 struct GB;
 struct GBMemory;
 void GBMBCInit(struct GB* gb);
-void GBMBCReset(struct GB* gb);
 void GBMBCSwitchBank(struct GB* gb, int bank);
 void GBMBCSwitchBank0(struct GB* gb, int bank);
 void GBMBCSwitchHalfBank(struct GB* gb, int half, int bank);
 void GBMBCSwitchSramBank(struct GB* gb, int bank);
 void GBMBCSwitchSramHalfBank(struct GB* gb, int half, int bank);
-
-enum GBMemoryBankControllerType GBMBCFromGBX(const void* fourcc);
 
 enum GBCam {
 	GBCAM_WIDTH = 128,
@@ -44,28 +41,8 @@ struct GBMBCRTCSaveBuffer {
 	uint32_t latchedDaysHi;
 	uint64_t unixTime;
 };
-
-struct GBMBCHuC3SaveBuffer {
-	uint8_t regs[0x80];
-	uint64_t latchedUnix;
-};
-
-struct GBMBCTAMA5SaveBuffer {
-	uint8_t rtcTimerPage[0x8];
-	uint8_t rtcAlarmPage[0x8];
-	uint8_t rtcFreePage0[0x8];
-	uint8_t rtcFreePage1[0x8];
-	uint64_t latchedUnix;
-};
-
 void GBMBCRTCRead(struct GB* gb);
 void GBMBCRTCWrite(struct GB* gb);
-
-void GBMBCHuC3Read(struct GB* gb);
-void GBMBCHuC3Write(struct GB* gb);
-
-void GBMBCTAMA5Read(struct GB* gb);
-void GBMBCTAMA5Write(struct GB* gb);
 
 CXX_GUARD_END
 

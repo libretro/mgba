@@ -3,7 +3,7 @@ import itertools
 import os
 import os.path
 import pytest
-from configparser import ConfigParser
+import yaml
 
 def pytest_addoption(parser):
     parser.addoption("--rebaseline", action="store_true", help="output a new baseline instead of testing")
@@ -39,12 +39,11 @@ def pytest_exception_interact(node, call, report):
                     diffNorm.save(os.path.join(outdir, DIFF_NORM % i))
 
         if node.config.getoption("--mark-failing"):
-            settings = ConfigParser()
             try:
-                with open(os.path.join(vtest.path, 'config.ini'), 'r') as f:
-                    settings.read_file(f)
+                with open(os.path.join(vtest.path, 'manifest.yml'), 'r') as f:
+                    settings = yaml.safe_load(f)
             except IOError:
-                pass
-            settings.set('testinfo', 'fail', '1')
-            with open(os.path.join(vtest.path, 'config.ini'), 'w') as f:
-                settings.write(f)
+                settings = {}
+            settings['fail'] = True
+            with open(os.path.join(vtest.path, 'manifest.yml'), 'w') as f:
+                yaml.dump(settings, f, default_flow_style=False)

@@ -8,14 +8,15 @@
 #include <mgba/internal/arm/macros.h>
 #include <mgba/internal/gba/bios.h>
 #include <mgba/internal/gba/io.h>
+#include <mgba/internal/gba/rr/rr.h>
 
 #include <mgba-util/memory.h>
 #include <mgba-util/vfs.h>
 
 #include <fcntl.h>
 
-MGBA_EXPORT const uint32_t GBASavestateMagic = 0x01000000;
-MGBA_EXPORT const uint32_t GBASavestateVersion = 0x0000000B;
+const uint32_t GBA_SAVESTATE_MAGIC = 0x01000000;
+const uint32_t GBA_SAVESTATE_VERSION = 0x00000003;
 
 mLOG_DEFINE_CATEGORY(GBA_STATE, "GBA Savestate", "gba.serialize");
 
@@ -25,24 +26,14 @@ struct GBABundledState {
 };
 
 void GBASerialize(struct GBA* gba, struct GBASerializedState* state) {
-	STORE_32(GBASavestateMagic + GBASavestateVersion, 0, &state->versionMagic);
+	STORE_32(GBA_SAVESTATE_MAGIC + GBA_SAVESTATE_VERSION, 0, &state->versionMagic);
 	STORE_32(gba->biosChecksum, 0, &state->biosChecksum);
 	STORE_32(gba->romCrc32, 0, &state->romCrc32);
 	STORE_32(gba->timing.masterCycles, 0, &state->masterCycles);
-	STORE_64LE(gba->timing.globalCycles, 0, &state->globalCycles);
 
 	if (gba->memory.rom) {
-		switch (gba->memory.unl.type) {
-		case GBA_UNL_CART_NONE:
-		case GBA_UNL_CART_VFAME:
-			state->id = ((struct GBACartridge*) gba->memory.rom)->id;
-			memcpy(state->title, ((struct GBACartridge*) gba->memory.rom)->title, sizeof(state->title));
-			break;
-		case GBA_UNL_CART_MULTICART:
-			state->id = ((struct GBACartridge*) gba->memory.unl.multi.rom)->id;
-			memcpy(state->title, ((struct GBACartridge*) gba->memory.unl.multi.rom)->title, sizeof(state->title));
-			break;
-		}
+		state->id = ((struct GBACartridge*) gba->memory.rom)->id;
+		memcpy(state->title, ((struct GBACartridge*) gba->memory.rom)->title, sizeof(state->title));
 	} else {
 		state->id = 0;
 		memset(state->title, 0, sizeof(state->title));
@@ -71,25 +62,22 @@ void GBASerialize(struct GBA* gba, struct GBASerializedState* state) {
 
 	GBASerializedMiscFlags miscFlags = 0;
 	miscFlags = GBASerializedMiscFlagsSetHalted(miscFlags, gba->cpu->halted);
-	miscFlags = GBASerializedMiscFlagsSetPOSTFLG(miscFlags, gba->memory.io[GBA_REG(POSTFLG)] & 1);
+	miscFlags = GBASerializedMiscFlagsSetPOSTFLG(miscFlags, gba->memory.io[REG_POSTFLG >> 1] & 1);
 	if (mTimingIsScheduled(&gba->timing, &gba->irqEvent)) {
 		miscFlags = GBASerializedMiscFlagsFillIrqPending(miscFlags);
 		STORE_32(gba->irqEvent.when - mTimingCurrentTime(&gba->timing), 0, &state->nextIrq);
 	}
-	miscFlags = GBASerializedMiscFlagsSetBlocked(miscFlags, gba->cpuBlocked);
-	miscFlags = GBASerializedMiscFlagsSetKeyIRQKeys(miscFlags, gba->keysLast);
 	STORE_32(miscFlags, 0, &state->miscFlags);
-	STORE_32(gba->biosStall, 0, &state->biosStall);
 
 	GBAMemorySerialize(&gba->memory, state);
 	GBAIOSerialize(gba, state);
-	GBAUnlCartSerialize(gba, state);
 	GBAVideoSerialize(&gba->video, state);
 	GBAAudioSerialize(&gba->audio, state);
 	GBASavedataSerialize(&gba->memory.savedata, state);
 
-	if (gba->memory.matrix.size) {
-		GBAMatrixSerialize(gba, state);
+	state->associatedStreamId = 0;
+	if (gba->rr) {
+		gba->rr->stateSaved(gba->rr, state);
 	}
 }
 
@@ -98,40 +86,27 @@ bool GBADeserialize(struct GBA* gba, const struct GBASerializedState* state) {
 	int32_t check;
 	uint32_t ucheck;
 	LOAD_32(ucheck, 0, &state->versionMagic);
-	if (ucheck > GBASavestateMagic + GBASavestateVersion) {
-		mLOG(GBA_STATE, WARN, "Invalid or too new savestate: expected %08X, got %08X", GBASavestateMagic + GBASavestateVersion, ucheck);
+	if (ucheck > GBA_SAVESTATE_MAGIC + GBA_SAVESTATE_VERSION) {
+		mLOG(GBA_STATE, WARN, "Invalid or too new savestate: expected %08X, got %08X", GBA_SAVESTATE_MAGIC + GBA_SAVESTATE_VERSION, ucheck);
 		error = true;
-	} else if (ucheck < GBASavestateMagic) {
-		mLOG(GBA_STATE, WARN, "Invalid savestate: expected %08X, got %08X", GBASavestateMagic + GBASavestateVersion, ucheck);
+	} else if (ucheck < GBA_SAVESTATE_MAGIC) {
+		mLOG(GBA_STATE, WARN, "Invalid savestate: expected %08X, got %08X", GBA_SAVESTATE_MAGIC + GBA_SAVESTATE_VERSION, ucheck);
 		error = true;
-	} else if (ucheck < GBASavestateMagic + GBASavestateVersion) {
-		mLOG(GBA_STATE, WARN, "Old savestate: expected %08X, got %08X, continuing anyway", GBASavestateMagic + GBASavestateVersion, ucheck);
+	} else if (ucheck < GBA_SAVESTATE_MAGIC + GBA_SAVESTATE_VERSION) {
+		mLOG(GBA_STATE, WARN, "Old savestate: expected %08X, got %08X, continuing anyway", GBA_SAVESTATE_MAGIC + GBA_SAVESTATE_VERSION, ucheck);
 	}
 	LOAD_32(ucheck, 0, &state->biosChecksum);
 	if (ucheck != gba->biosChecksum) {
 		mLOG(GBA_STATE, WARN, "Savestate created using a different version of the BIOS: expected %08X, got %08X", gba->biosChecksum, ucheck);
 		uint32_t pc;
 		LOAD_32(pc, ARM_PC * sizeof(state->cpu.gprs[0]), state->cpu.gprs);
-		if ((ucheck == GBA_BIOS_CHECKSUM || gba->biosChecksum == GBA_BIOS_CHECKSUM) && pc < GBA_SIZE_BIOS && pc >= 0x20) {
+		if ((ucheck == GBA_BIOS_CHECKSUM || gba->biosChecksum == GBA_BIOS_CHECKSUM) && pc < SIZE_BIOS && pc >= 0x20) {
 			error = true;
 		}
 	}
-	if (gba->memory.rom) {
-		struct GBACartridge* cart;
-		switch (gba->memory.unl.type) {
-		case GBA_UNL_CART_NONE:
-		case GBA_UNL_CART_VFAME:
-		default:
-			cart = (struct GBACartridge*) gba->memory.rom;
-			break;
-		case GBA_UNL_CART_MULTICART:
-			cart = (struct GBACartridge*) gba->memory.unl.multi.rom;
-			break;
-		}
-		if (state->id != cart->id || memcmp(state->title, cart->title, sizeof(state->title))) {
-			mLOG(GBA_STATE, WARN, "Savestate is for a different game");
-			error = true;
-		}
+	if (gba->memory.rom && (state->id != ((struct GBACartridge*) gba->memory.rom)->id || memcmp(state->title, ((struct GBACartridge*) gba->memory.rom)->title, sizeof(state->title)))) {
+		mLOG(GBA_STATE, WARN, "Savestate is for a different game");
+		error = true;
 	} else if (!gba->memory.rom && state->id != 0) {
 		mLOG(GBA_STATE, WARN, "Savestate is for a game, but no game loaded");
 		error = true;
@@ -151,7 +126,7 @@ bool GBADeserialize(struct GBA* gba, const struct GBASerializedState* state) {
 	}
 	LOAD_32(check, ARM_PC * sizeof(state->cpu.gprs[0]), state->cpu.gprs);
 	int region = (check >> BASE_OFFSET);
-	if ((region == GBA_REGION_ROM0 || region == GBA_REGION_ROM1 || region == GBA_REGION_ROM2) && ((check - WORD_SIZE_ARM) & GBA_SIZE_ROM0) >= gba->memory.romSize - WORD_SIZE_ARM) {
+	if ((region == REGION_CART0 || region == REGION_CART1 || region == REGION_CART2) && ((check - WORD_SIZE_ARM) & SIZE_CART0) >= gba->memory.romSize - WORD_SIZE_ARM) {
 		mLOG(GBA_STATE, WARN, "Savestate created using a differently sized version of the ROM");
 		error = true;
 	}
@@ -160,7 +135,6 @@ bool GBADeserialize(struct GBA* gba, const struct GBASerializedState* state) {
 	}
 	mTimingClear(&gba->timing);
 	LOAD_32(gba->timing.masterCycles, 0, &state->masterCycles);
-	LOAD_64LE(gba->timing.globalCycles, 0, &state->globalCycles);
 
 	size_t i;
 	for (i = 0; i < 16; ++i) {
@@ -178,14 +152,11 @@ bool GBADeserialize(struct GBA* gba, const struct GBASerializedState* state) {
 		LOAD_32(gba->cpu->bankedSPSRs[i], i * sizeof(gba->cpu->bankedSPSRs[0]), state->cpu.bankedSPSRs);
 	}
 	gba->cpu->privilegeMode = gba->cpu->cpsr.priv;
-	if (gba->cpu->gprs[ARM_PC] & 1) {
+	uint32_t pcMask = (gba->cpu->executionMode == MODE_THUMB ? WORD_SIZE_THUMB : WORD_SIZE_ARM) - 1;
+	if (gba->cpu->gprs[ARM_PC] & pcMask) {
 		mLOG(GBA_STATE, WARN, "Savestate has unaligned PC and is probably corrupted");
-		gba->cpu->gprs[ARM_PC] &= ~1;
+		gba->cpu->gprs[ARM_PC] &= ~pcMask;
 	}
-
-	// Since this can remap the ROM, we need to do this before we reset the pipeline
-	GBAUnlCartDeserialize(gba, state);
-	gba->memory.activeRegion = -1;
 	gba->cpu->memory.setActiveRegion(gba->cpu, gba->cpu->gprs[ARM_PC]);
 	if (state->biosPrefetch) {
 		LOAD_32(gba->memory.biosPrefetch, 0, &state->biosPrefetch);
@@ -217,15 +188,12 @@ bool GBADeserialize(struct GBA* gba, const struct GBASerializedState* state) {
 	GBASerializedMiscFlags miscFlags = 0;
 	LOAD_32(miscFlags, 0, &state->miscFlags);
 	gba->cpu->halted = GBASerializedMiscFlagsGetHalted(miscFlags);
-	gba->memory.io[GBA_REG(POSTFLG)] = GBASerializedMiscFlagsGetPOSTFLG(miscFlags);
+	gba->memory.io[REG_POSTFLG >> 1] = GBASerializedMiscFlagsGetPOSTFLG(miscFlags);
 	if (GBASerializedMiscFlagsIsIrqPending(miscFlags)) {
 		int32_t when;
 		LOAD_32(when, 0, &state->nextIrq);
-		mTimingSchedule(&gba->timing, &gba->irqEvent, when);
+		mTimingSchedule(&gba->timing, &gba->irqEvent, when);		
 	}
-	gba->cpuBlocked = GBASerializedMiscFlagsGetBlocked(miscFlags);
-	gba->keysLast = GBASerializedMiscFlagsGetKeyIRQKeys(miscFlags);
-	LOAD_32(gba->biosStall, 0, &state->biosStall);
 
 	GBAVideoDeserialize(&gba->video, state);
 	GBAMemoryDeserialize(&gba->memory, state);
@@ -233,11 +201,12 @@ bool GBADeserialize(struct GBA* gba, const struct GBASerializedState* state) {
 	GBAAudioDeserialize(&gba->audio, state);
 	GBASavedataDeserialize(&gba->memory.savedata, state);
 
-	if (gba->memory.matrix.size) {
-		GBAMatrixDeserialize(gba, state);
+	if (gba->rr) {
+		gba->rr->stateLoaded(gba->rr, state);
 	}
 
-	mTimingInterrupt(&gba->timing);
+	gba->timing.reroot = gba->timing.root;
+	gba->timing.root = NULL;
 
 	return true;
 }

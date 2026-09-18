@@ -28,19 +28,14 @@ void ConfigurationSetUIntValue(struct Configuration*, const char* section, const
 void ConfigurationSetFloatValue(struct Configuration*, const char* section, const char* key, float value);
 
 bool ConfigurationHasSection(const struct Configuration*, const char* section);
-void ConfigurationDeleteSection(struct Configuration*, const char* section);
-
 const char* ConfigurationGetValue(const struct Configuration*, const char* section, const char* key);
 
 void ConfigurationClearValue(struct Configuration*, const char* section, const char* key);
 
-#ifdef ENABLE_VFS
 bool ConfigurationRead(struct Configuration*, const char* path);
+bool ConfigurationReadVFile(struct Configuration*, struct VFile* vf);
 bool ConfigurationWrite(const struct Configuration*, const char* path);
 bool ConfigurationWriteSection(const struct Configuration*, const char* path, const char* section);
-#endif
-bool ConfigurationReadVFile(struct Configuration*, struct VFile* vf);
-bool ConfigurationWriteVFile(const struct Configuration*, struct VFile* vf);
 
 void ConfigurationEnumerateSections(const struct Configuration* configuration, void (*handler)(const char* sectionName, void* user), void* user);
 void ConfigurationEnumerate(const struct Configuration* configuration, const char* section, void (*handler)(const char* key, const char* value, void* user), void* user);

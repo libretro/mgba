@@ -1,13 +1,13 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <ui version="4.0">
- <class>QGBA::OverrideView</class>
- <widget class="QWidget" name="QGBA::OverrideView">
+ <class>OverrideView</class>
+ <widget class="QWidget" name="OverrideView">
   <property name="geometry">
    <rect>
     <x>0</x>
     <y>0</y>
     <width>444</width>
-    <height>288</height>
+    <height>284</height>
    </rect>
   </property>
   <property name="sizePolicy">
@@ -143,17 +143,7 @@
               </item>
               <item>
                <property name="text">
-                <string>EEPROM 8kB</string>
-               </property>
-              </item>
-              <item>
-               <property name="text">
-                <string>EEPROM 512 bytes</string>
-               </property>
-              </item>
-              <item>
-               <property name="text">
-                <string>SRAM 64kB (bootlegs only)</string>
+                <string>EEPROM</string>
                </property>
               </item>
              </widget>
@@ -185,24 +175,41 @@
            </widget>
           </item>
           <item>
-           <widget class="QCheckBox" name="hwGBPlayer">
-            <property name="text">
-             <string>Game Boy Player features</string>
-            </property>
-           </widget>
-          </item>
-          <item>
-           <widget class="QCheckBox" name="vbaBugCompat">
-            <property name="text">
-             <string>VBA bug compatibility mode</string>
-            </property>
-            <property name="tristate">
-             <bool>true</bool>
-            </property>
-            <property name="checkState">
-             <enum>Qt::PartiallyChecked</enum>
-            </property>
-           </widget>
+           <layout class="QHBoxLayout" name="horizontalLayout_2">
+            <item>
+             <spacer name="horizontalSpacer">
+              <property name="orientation">
+               <enum>Qt::Horizontal</enum>
+              </property>
+              <property name="sizeHint" stdset="0">
+               <size>
+                <width>0</width>
+                <height>0</height>
+               </size>
+              </property>
+             </spacer>
+            </item>
+            <item>
+             <widget class="QCheckBox" name="hwGBPlayer">
+              <property name="text">
+               <string>Game Boy Player features</string>
+              </property>
+             </widget>
+            </item>
+            <item>
+             <spacer name="horizontalSpacer_3">
+              <property name="orientation">
+               <enum>Qt::Horizontal</enum>
+              </property>
+              <property name="sizeHint" stdset="0">
+               <size>
+                <width>0</width>
+                <height>0</height>
+               </size>
+              </property>
+             </spacer>
+            </item>
+           </layout>
           </item>
          </layout>
         </widget>
@@ -241,6 +248,26 @@
            <string>Autodetect</string>
           </property>
          </item>
+         <item>
+          <property name="text">
+           <string>Game Boy (DMG)</string>
+          </property>
+         </item>
+         <item>
+          <property name="text">
+           <string>Super Game Boy (SGB)</string>
+          </property>
+         </item>
+         <item>
+          <property name="text">
+           <string>Game Boy Color (CGB)</string>
+          </property>
+         </item>
+         <item>
+          <property name="text">
+           <string>Game Boy Advance (AGB)</string>
+          </property>
+         </item>
         </widget>
        </item>
        <item row="1" column="0">
@@ -257,16 +284,91 @@
            <string>Autodetect</string>
           </property>
          </item>
+         <item>
+          <property name="text">
+           <string>None</string>
+          </property>
+         </item>
+         <item>
+          <property name="text">
+           <string>MBC1</string>
+          </property>
+         </item>
+         <item>
+          <property name="text">
+           <string>MBC2</string>
+          </property>
+         </item>
+         <item>
+          <property name="text">
+           <string>MBC3</string>
+          </property>
+         </item>
+         <item>
+          <property name="text">
+           <string>MBC3 + RTC</string>
+          </property>
+         </item>
+         <item>
+          <property name="text">
+           <string>MBC5</string>
+          </property>
+         </item>
+         <item>
+          <property name="text">
+           <string>MBC5 + Rumble</string>
+          </property>
+         </item>
+         <item>
+          <property name="text">
+           <string>MBC6</string>
+          </property>
+         </item>
+         <item>
+          <property name="text">
+           <string>MBC7</string>
+          </property>
+         </item>
+         <item>
+          <property name="text">
+           <string>MMM01</string>
+          </property>
+         </item>
+         <item>
+          <property name="text">
+           <string>Pocket Cam</string>
+          </property>
+         </item>
+         <item>
+          <property name="text">
+           <string>TAMA5</string>
+          </property>
+         </item>
+         <item>
+          <property name="text">
+           <string>HuC-1</string>
+          </property>
+         </item>
+         <item>
+          <property name="text">
+           <string>HuC-3</string>
+          </property>
+         </item>
+         <item>
+          <property name="text">
+           <string>Wisdom Tree (Unlicensed)</string>
+          </property>
+         </item>
         </widget>
        </item>
-       <item row="3" column="0">
+       <item row="2" column="0">
         <widget class="QLabel" name="label_5">
          <property name="text">
           <string>Background Colors</string>
          </property>
         </widget>
        </item>
-       <item row="3" column="1">
+       <item row="2" column="1">
         <layout class="QHBoxLayout" name="horizontalLayout">
          <item>
           <widget class="QFrame" name="color0">
@@ -346,21 +448,21 @@
          </item>
         </layout>
        </item>
-       <item row="4" column="0">
+       <item row="3" column="0">
         <widget class="QLabel" name="label_6">
          <property name="text">
           <string>Sprite Colors 1</string>
          </property>
         </widget>
        </item>
-       <item row="5" column="0">
+       <item row="4" column="0">
         <widget class="QLabel" name="label_7">
          <property name="text">
           <string>Sprite Colors 2</string>
          </property>
         </widget>
        </item>
-       <item row="4" column="1">
+       <item row="3" column="1">
         <layout class="QHBoxLayout" name="horizontalLayout_3">
          <item>
           <widget class="QFrame" name="color4">
@@ -440,7 +542,7 @@
          </item>
         </layout>
        </item>
-       <item row="5" column="1">
+       <item row="4" column="1">
         <layout class="QHBoxLayout" name="horizontalLayout_4">
          <item>
           <widget class="QFrame" name="color8">
@@ -519,16 +621,6 @@
           </widget>
          </item>
         </layout>
-       </item>
-       <item row="2" column="1">
-        <widget class="QComboBox" name="colorPreset"/>
-       </item>
-       <item row="2" column="0">
-        <widget class="QLabel" name="label_15">
-         <property name="text">
-          <string>Palette preset</string>
-         </property>
-        </widget>
        </item>
       </layout>
      </widget>

@@ -3,6 +3,7 @@
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+#include <mgba/core/blip_buf.h>
 #include <mgba/core/cheats.h>
 #include <mgba/core/config.h>
 #include <mgba/core/core.h>
@@ -15,7 +16,7 @@
 #include <mgba-util/string.h>
 #include <mgba-util/vfs.h>
 
-#ifdef __3DS__
+#ifdef _3DS
 #include <3ds.h>
 #endif
 #ifdef __SWITCH__
@@ -30,10 +31,6 @@ uint32_t* romBuffer;
 size_t romBufferSize;
 #endif
 #endif
-#ifdef PSP2
-#include <psp2/kernel/processmgr.h>
-#include <psp2/power.h>
-#endif
 
 #include <errno.h>
 #include <fcntl.h>
@@ -43,7 +40,7 @@ size_t romBufferSize;
 
 #define PERF_OPTIONS "DF:L:NPS:T"
 #define PERF_USAGE \
-	"Benchmark options:\n" \
+	"\nBenchmark options:\n" \
 	"  -F FRAMES        Run for the specified number of FRAMES before exiting\n" \
 	"  -N               Disable video rendering entirely\n" \
 	"  -T               Use threaded video rendering\n" \
@@ -80,10 +77,10 @@ static Socket _socket = INVALID_SOCKET;
 static Socket _server = INVALID_SOCKET;
 
 int main(int argc, char** argv) {
-#ifdef __3DS__
+#ifdef _3DS
 	UNUSED(_mPerfShutdown);
-	gfxInitDefault();
-	osSetSpeedupEnable(true);
+    gfxInitDefault();
+    osSetSpeedupEnable(true);
 	consoleInit(GFX_BOTTOM, NULL);
 #elif defined(__SWITCH__)
 	UNUSED(_mPerfShutdown);
@@ -94,7 +91,16 @@ int main(int argc, char** argv) {
 	VIDEO_Flush();
 	VIDEO_WaitVSync();
 
-	consoleInit(NULL);
+	GXRModeObj* vmode = VIDEO_GetPreferredMode(0);
+	void* xfb = MEM_K0_TO_K1(SYS_AllocateFramebuffer(vmode));
+	console_init(xfb, 20, 20, vmode->fbWidth, vmode->xfbHeight, vmode->fbWidth * VI_DISPLAY_PIX_SZ);
+
+	VIDEO_Configure(vmode);
+	VIDEO_SetNextFramebuffer(xfb);
+	VIDEO_SetBlack(false);
+	VIDEO_Flush();
+	VIDEO_WaitVSync();
+	VIDEO_WaitVSync();
 	fatInitDefault();
 
 #ifdef FIXED_ROM_BUFFER
@@ -102,8 +108,6 @@ int main(int argc, char** argv) {
 	romBuffer = SYS_GetArena2Lo();
 	SYS_SetArena2Lo((void*)((intptr_t) romBuffer + romBufferSize));
 #endif
-#elif defined(PSP2)
-	scePowerSetArmClockFrequency(444);
 #else
 	signal(SIGINT, _mPerfShutdown);
 #endif
@@ -121,12 +125,12 @@ int main(int argc, char** argv) {
 	};
 
 	struct mArguments args = {};
-	bool parsed = mArgumentsParse(&args, argc, argv, &subparser, 1);
+	bool parsed = parseArguments(&args, argc, argv, &subparser);
 	if (!args.fname && !perfOpts.server) {
 		parsed = false;
 	}
 	if (!parsed || args.showHelp) {
-		usage(argv[0], NULL, NULL, &subparser, 1);
+		usage(argv[0], PERF_USAGE);
 		didFail = !parsed;
 		goto cleanup;
 	}
@@ -161,9 +165,9 @@ int main(int argc, char** argv) {
 		_savestate->close(_savestate);
 	}
 	cleanup:
-	mArgumentsDeinit(&args);
+	freeArguments(&args);
 
-#ifdef __3DS__
+#ifdef _3DS
 	gfxExit();
 	acExit();
 #elif defined(__SWITCH__)
@@ -173,8 +177,6 @@ int main(int argc, char** argv) {
 	VIDEO_Flush();
 	VIDEO_WaitVSync();
 	VIDEO_WaitVSync();
-#elif defined(PSP2)
-	sceKernelExitProcess(0);
 #endif
 
 	return didFail;
@@ -187,6 +189,8 @@ bool _mPerfRunCore(const char* fname, const struct mArguments* args, const struc
 	}
 
 	// TODO: Put back debugger
+	char gameCode[9] = { 0 };
+
 	core->init(core);
 	if (!perfOpts->noVideo) {
 		core->setVideoBuffer(core, _outputBuffer, 256);
@@ -205,7 +209,7 @@ bool _mPerfRunCore(const char* fname, const struct mArguments* args, const struc
 	mCoreConfigMap(&core->config, &opts);
 	opts.audioSync = false;
 	opts.videoSync = false;
-	mArgumentsApply(args, NULL, 0, &core->config);
+	applyArguments(args, NULL, &core->config);
 	mCoreConfigLoadDefaults(&core->config, &opts);
 	mCoreConfigSetDefaultValue(&core->config, "idleOptimization", "detect");
 	mCoreLoadConfig(core);
@@ -215,8 +219,7 @@ bool _mPerfRunCore(const char* fname, const struct mArguments* args, const struc
 		mCoreLoadStateNamed(core, _savestate, 0);
 	}
 
-	struct mGameInfo info;
-	core->getGameInfo(core, &info);
+	core->getGameCode(core, gameCode);
 
 	int frames = perfOpts->frames;
 	if (!frames) {
@@ -245,7 +248,7 @@ bool _mPerfRunCore(const char* fname, const struct mArguments* args, const struc
 		} else {
 			rendererName = "software";
 		}
-		snprintf(buffer, sizeof(buffer), "%s-%s,%i,%" PRIu64 ",%s\n", info.system, info.code, frames, duration, rendererName);
+		snprintf(buffer, sizeof(buffer), "%s,%i,%" PRIu64 ",%s\n", gameCode, frames, duration, rendererName);
 		printf("%s", buffer);
 		if (_socket != INVALID_SOCKET) {
 			SocketSend(_socket, buffer, strlen(buffer));

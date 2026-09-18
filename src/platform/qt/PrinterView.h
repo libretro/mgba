@@ -29,7 +29,6 @@ signals:
 
 public slots:
 	void save();
-	void copy();
 	void clear();
 
 private slots:

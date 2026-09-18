@@ -4,22 +4,20 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 #include "AbstractUpdater.h"
-#include "moc_AbstractUpdater.cpp"
 
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
-
-#include "GBAApp.h"
 
 using namespace QGBA;
 
 AbstractUpdater::AbstractUpdater(QObject* parent)
 	: QObject(parent)
+	, m_netman(new QNetworkAccessManager(this))
 {
 }
 
 void AbstractUpdater::checkUpdate() {
-	QNetworkReply* reply = GBAApp::app()->httpGet(manifestLocation());
+	QNetworkReply* reply = m_netman->get(QNetworkRequest(manifestLocation()));
 	chaseRedirects(reply, &AbstractUpdater::manifestDownloaded);
 }
 
@@ -38,25 +36,15 @@ void AbstractUpdater::downloadUpdate() {
 		return;
 	}
 	m_isUpdating = true;
-	QNetworkReply* reply = GBAApp::app()->httpGet(url);
+	QNetworkReply* reply = m_netman->get(QNetworkRequest(url));
 	chaseRedirects(reply, &AbstractUpdater::updateDownloaded);
 }
 
-void AbstractUpdater::progress(qint64 progress, qint64 max) {
-	if (!max) {
-		return;
-	}
-	emit updateProgress(static_cast<float>(progress) / static_cast<float>(max));
-}
-
 void AbstractUpdater::chaseRedirects(QNetworkReply* reply, void (AbstractUpdater::*cb)(QNetworkReply*)) {
-	if (m_isUpdating) {
-		connect(reply, &QNetworkReply::downloadProgress, this, &AbstractUpdater::progress);
-	}
 	connect(reply, &QNetworkReply::finished, this, [this, reply, cb]() {
 		// TODO: check domains, etc
 		if (reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt() / 100 == 3) {
-			QNetworkReply* newReply = GBAApp::app()->httpGet(reply->header(QNetworkRequest::LocationHeader).toString());
+			QNetworkReply* newReply = m_netman->get(QNetworkRequest(reply->header(QNetworkRequest::LocationHeader).toString()));
 			chaseRedirects(newReply, cb);
 		} else {
 			(this->*cb)(reply);
@@ -71,7 +59,7 @@ void AbstractUpdater::manifestDownloaded(QNetworkReply* reply) {
 		if (!url.isValid()) {
 			emit updateDone(false);
 		} else {
-			QNetworkReply* reply = GBAApp::app()->httpGet(url);
+			QNetworkReply* reply = m_netman->get(QNetworkRequest(url));
 			chaseRedirects(reply, &AbstractUpdater::updateDownloaded);
 		}
 	} else {

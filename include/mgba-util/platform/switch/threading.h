@@ -11,7 +11,6 @@
 #include <switch.h>
 
 #define THREAD_ENTRY void
-#define THREAD_EXIT(RES) return
 typedef ThreadFunc ThreadEntry;
 typedef CondVar Condition;
 

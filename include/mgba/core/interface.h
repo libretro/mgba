@@ -10,34 +10,78 @@
 
 CXX_GUARD_START
 
-#include <mgba-util/image.h>
 #include <mgba-util/vector.h>
-
-#define mCALLBACKS_INVOKE(BOARD, CALLBACK) do {\
-		size_t c; \
-		for (c = 0; c < mCoreCallbacksListSize(&(BOARD)->coreCallbacks); ++c) { \
-			const struct mCoreCallbacks* callbacks = mCoreCallbacksListGetConstPointer(&(BOARD)->coreCallbacks, c); \
-			if (callbacks->CALLBACK) { \
-				callbacks->CALLBACK(callbacks->context); \
-			} \
-		} \
-	} while (0);
 
 struct mCore;
 struct mStateExtdataItem;
 
-struct mAudioBuffer;
+#ifdef COLOR_16_BIT
+typedef uint16_t color_t;
+#define BYTES_PER_PIXEL 2
+#else
+typedef uint32_t color_t;
+#define BYTES_PER_PIXEL 4
+#endif
+
+#define M_R5(X) ((X) & 0x1F)
+#define M_G5(X) (((X) >> 5) & 0x1F)
+#define M_B5(X) (((X) >> 10) & 0x1F)
+
+#define M_R8(X) (((((X) << 3) & 0xF8) * 0x21) >> 5)
+#define M_G8(X) (((((X) >> 2) & 0xF8) * 0x21) >> 5)
+#define M_B8(X) (((((X) >> 7) & 0xF8) * 0x21) >> 5)
+
+#define M_RGB5_TO_BGR8(X) ((M_R5(X) << 3) | (M_G5(X) << 11) | (M_B5(X) << 19))
+#define M_RGB5_TO_RGB8(X) ((M_R5(X) << 19) | (M_G5(X) << 11) | (M_B5(X) << 3))
+#define M_RGB8_TO_BGR5(X) ((((X) & 0xF8) >> 3) | (((X) & 0xF800) >> 6) | (((X) & 0xF80000) >> 9))
+#define M_RGB8_TO_RGB5(X) ((((X) & 0xF8) << 7) | (((X) & 0xF800) >> 6) | (((X) & 0xF80000) >> 19))
+
+#ifndef PYCPARSE
+static inline color_t mColorFrom555(uint16_t value) {
+#ifdef COLOR_16_BIT
+#ifdef COLOR_5_6_5
+	color_t color = 0;
+	color |= (value & 0x001F) << 11;
+	color |= (value & 0x03E0) << 1;
+	color |= (value & 0x7C00) >> 10;
+#else
+	color_t color = value;
+#endif
+#else
+	color_t color = M_RGB5_TO_BGR8(value);
+	color |= (color >> 5) & 0x070707;
+#endif
+	return color;
+}
+#endif
+
+struct blip_t;
+
+enum mColorFormat {
+	mCOLOR_XBGR8  = 0x00001,
+	mCOLOR_XRGB8  = 0x00002,
+	mCOLOR_BGRX8  = 0x00004,
+	mCOLOR_RGBX8  = 0x00008,
+	mCOLOR_ABGR8  = 0x00010,
+	mCOLOR_ARGB8  = 0x00020,
+	mCOLOR_BGRA8  = 0x00040,
+	mCOLOR_RGBA8  = 0x00080,
+	mCOLOR_RGB5   = 0x00100,
+	mCOLOR_BGR5   = 0x00200,
+	mCOLOR_RGB565 = 0x00400,
+	mCOLOR_BGR565 = 0x00800,
+	mCOLOR_ARGB5  = 0x01000,
+	mCOLOR_ABGR5  = 0x02000,
+	mCOLOR_RGBA5  = 0x04000,
+	mCOLOR_BGRA5  = 0x08000,
+	mCOLOR_RGB8   = 0x10000,
+	mCOLOR_BGR8   = 0x20000,
+
+	mCOLOR_ANY    = -1
+};
 
 enum mCoreFeature {
 	mCORE_FEATURE_OPENGL = 1,
-};
-
-struct mGameInfo {
-	char title[17];
-	char system[4];
-	char code[5];
-	char maker[3];
-	uint8_t version;
 };
 
 struct mCoreCallbacks {
@@ -46,31 +90,20 @@ struct mCoreCallbacks {
 	void (*videoFrameEnded)(void* context);
 	void (*coreCrashed)(void* context);
 	void (*sleep)(void* context);
-	void (*shutdown)(void* context);
 	void (*keysRead)(void* context);
-	void (*savedataUpdated)(void* context);
-	void (*alarm)(void* context);
-	void (*memoryBlocksChanged)(void* context);
 };
 
 DECLARE_VECTOR(mCoreCallbacksList, struct mCoreCallbacks);
 
 struct mAVStream {
 	void (*videoDimensionsChanged)(struct mAVStream*, unsigned width, unsigned height);
-	void (*audioRateChanged)(struct mAVStream*, unsigned rate);
-	void (*postVideoFrame)(struct mAVStream*, const mColor* buffer, size_t stride);
+	void (*postVideoFrame)(struct mAVStream*, const color_t* buffer, size_t stride);
 	void (*postAudioFrame)(struct mAVStream*, int16_t left, int16_t right);
-	void (*postAudioBuffer)(struct mAVStream*, struct mAudioBuffer*);
-};
-
-struct mStereoSample {
-	int16_t left;
-	int16_t right;
+	void (*postAudioBuffer)(struct mAVStream*, struct blip_t* left, struct blip_t* right);
 };
 
 struct mKeyCallback {
 	uint16_t (*readKeys)(struct mKeyCallback*);
-	bool requireOpposingDirections;
 };
 
 enum mPeripheral {
@@ -108,7 +141,6 @@ enum mRTCGenericType {
 	RTC_NO_OVERRIDE,
 	RTC_FIXED,
 	RTC_FAKE_EPOCH,
-	RTC_WALLCLOCK_OFFSET,
 	RTC_CUSTOM_START = 0x1000
 };
 
@@ -129,22 +161,8 @@ struct mRTCGenericState {
 void mRTCGenericSourceInit(struct mRTCGenericSource* rtc, struct mCore* core);
 
 struct mRumble {
-	void (*reset)(struct mRumble*, bool enable);
-	void (*setRumble)(struct mRumble*, bool enable, uint32_t sinceLast);
-	void (*integrate)(struct mRumble*, uint32_t period);
+	void (*setRumble)(struct mRumble*, int enable);
 };
-
-struct mRumbleIntegrator {
-	struct mRumble d;
-	bool state;
-	uint32_t timeOn;
-	uint32_t totalTime;
-
-	void (*setRumble)(struct mRumbleIntegrator*, float value);
-};
-
-void mRumbleIntegratorInit(struct mRumbleIntegrator*);
-void mRumbleIntegratorReset(struct mRumbleIntegrator*);
 
 struct mCoreChannelInfo {
 	size_t id;
@@ -157,7 +175,6 @@ enum mCoreMemoryBlockFlags {
 	mCORE_MEMORY_READ = 0x01,
 	mCORE_MEMORY_WRITE = 0x02,
 	mCORE_MEMORY_RW = 0x03,
-	mCORE_MEMORY_WORM = 0x04,
 	mCORE_MEMORY_MAPPED = 0x10,
 	mCORE_MEMORY_VIRTUAL = 0x20,
 };
@@ -173,36 +190,6 @@ struct mCoreMemoryBlock {
 	uint32_t flags;
 	uint16_t maxSegment;
 	uint32_t segmentStart;
-};
-
-struct mCoreScreenRegion {
-	size_t id;
-	const char* description;
-	int16_t x;
-	int16_t y;
-	int16_t w;
-	int16_t h;
-};
-
-enum mCoreRegisterType {
-	mCORE_REGISTER_GPR = 0,
-	mCORE_REGISTER_FPR,
-	mCORE_REGISTER_FLAGS,
-	mCORE_REGISTER_SIMD,
-};
-
-struct mCoreRegisterInfo {
-	const char* name;
-	const char** aliases;
-	unsigned width;
-	uint32_t mask;
-	enum mCoreRegisterType type;
-};
-
-enum mCoreChecksumType {
-	mCHECKSUM_CRC32,
-	mCHECKSUM_MD5,
-	mCHECKSUM_SHA1,
 };
 
 CXX_GUARD_END

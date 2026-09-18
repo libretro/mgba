@@ -4,7 +4,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 #include "BattleChipView.h"
-#include "moc_BattleChipView.cpp"
 
 #include "BattleChipUpdater.h"
 #include "ConfigController.h"
@@ -25,19 +24,24 @@ using namespace QGBA;
 
 BattleChipView::BattleChipView(std::shared_ptr<CoreController> controller, Window* window, QWidget* parent)
 	: QDialog(parent, Qt::WindowTitleHint | Qt::WindowSystemMenuHint | Qt::WindowCloseButtonHint)
-	, m_controller(std::move(controller))
+	, m_controller(controller)
 	, m_window(window)
 {
 	m_ui.setupUi(this);
 	m_ui.chipList->setModel(&m_model);
 
+	char title[9];
 	CoreController::Interrupter interrupter(m_controller);
 	mCore* core = m_controller->thread()->core;
-	mGameInfo info;
-	core->getGameInfo(core, &info);
-	QString qtitle(info.code);
+	title[8] = '\0';
+	core->getGameCode(core, title);
+	QString qtitle(title);
 
+#if (QT_VERSION >= QT_VERSION_CHECK(5, 6, 0))
 	int size = QFontMetrics(QFont()).height() / ((int) ceil(devicePixelRatioF()) * 12);
+#else
+	int size = QFontMetrics(QFont()).height() / (devicePixelRatio() * 12);
+#endif
 	if (!size) {
 		size = 1;
 	}
@@ -46,7 +50,7 @@ BattleChipView::BattleChipView(std::shared_ptr<CoreController> controller, Windo
 	m_model.setScale(size);
 
 	connect(m_ui.chipId, static_cast<void (QSpinBox::*)(int)>(&QSpinBox::valueChanged), m_ui.inserted, [this]() {
-		m_ui.inserted->setChecked(false);
+		m_ui.inserted->setChecked(Qt::Unchecked);
 	});
 	connect(m_ui.chipName, static_cast<void (QComboBox::*)(int)>(&QComboBox::currentIndexChanged), m_ui.chipId, [this](int id) {
 		if (id < 0) {
@@ -59,6 +63,7 @@ BattleChipView::BattleChipView(std::shared_ptr<CoreController> controller, Windo
 	connect(m_ui.insert, &QAbstractButton::clicked, this, &BattleChipView::reinsert);
 	connect(m_ui.add, &QAbstractButton::clicked, this, &BattleChipView::addChip);
 	connect(m_ui.remove, &QAbstractButton::clicked, this, &BattleChipView::removeChip);
+	connect(controller.get(), &CoreController::stopping, this, &QWidget::close);
 	connect(m_ui.save, &QAbstractButton::clicked, this, &BattleChipView::saveDeck);
 	connect(m_ui.load, &QAbstractButton::clicked, this, &BattleChipView::loadDeck);
 	connect(m_ui.updateData, &QAbstractButton::clicked, this, &BattleChipView::updateData);
@@ -97,12 +102,12 @@ BattleChipView::BattleChipView(std::shared_ptr<CoreController> controller, Windo
 
 	m_controller->attachBattleChipGate();
 	setFlavor(4);
-	if (qtitle.startsWith("B4B") || qtitle.startsWith("B4W") || qtitle.startsWith("BR4") || qtitle.startsWith("BZ3")) {
-		m_ui.gateBattleChip->setChecked(true);
-	} else if (qtitle.startsWith("BRB") || qtitle.startsWith("BRK")) {
-		m_ui.gateProgress->setChecked(true);
-	} else if (qtitle.startsWith("BR5") || qtitle.startsWith("BR6")) {
-		m_ui.gateBeastLink->setChecked(true);
+	if (qtitle.startsWith("AGB-B4B") || qtitle.startsWith("AGB-B4W") || qtitle.startsWith("AGB-BR4") || qtitle.startsWith("AGB-BZ3")) {
+		m_ui.gateBattleChip->setChecked(Qt::Checked);
+	} else if (qtitle.startsWith("AGB-BRB") || qtitle.startsWith("AGB-BRK")) {
+		m_ui.gateProgress->setChecked(Qt::Checked);
+	} else if (qtitle.startsWith("AGB-BR5") || qtitle.startsWith("AGB-BR6")) {
+		m_ui.gateBeastLink->setChecked(Qt::Checked);
 	}
 
 	if (!QFileInfo(GBAApp::dataDir() + "/chips.rcc").exists() && !QFileInfo(ConfigController::configDir() + "/chips.rcc").exists()) {
@@ -213,7 +218,7 @@ void BattleChipView::loadDeck() {
 		error->show();
 		return;
 	}
-
+	
 	QList<int> newDeck;
 	QStringList deck = ini.value("deck").toString().split(',');
 	for (const auto& item : deck) {

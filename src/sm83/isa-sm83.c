@@ -9,27 +9,33 @@
 #include <mgba/internal/sm83/sm83.h>
 
 static inline uint16_t SM83ReadHL(struct SM83Core* cpu) {
-	return cpu->hl;
+	uint16_t hl;
+	LOAD_16LE(hl, 0, &cpu->hl);
+	return hl;
 }
 
 static inline void SM83WriteHL(struct SM83Core* cpu, uint16_t hl) {
-	cpu->hl = hl;
+	STORE_16LE(hl, 0, &cpu->hl);
 }
 
 static inline uint16_t SM83ReadBC(struct SM83Core* cpu) {
-	return cpu->bc;
+	uint16_t bc;
+	LOAD_16LE(bc, 0, &cpu->bc);
+	return bc;
 }
 
 static inline void SM83WriteBC(struct SM83Core* cpu, uint16_t bc) {
-	cpu->bc = bc;
+	STORE_16LE(bc, 0, &cpu->bc);
 }
 
 static inline uint16_t SM83ReadDE(struct SM83Core* cpu) {
-	return cpu->de;
+	uint16_t de;
+	LOAD_16LE(de, 0, &cpu->de);
+	return de;
 }
 
 static inline void SM83WriteDE(struct SM83Core* cpu, uint16_t de) {
-	cpu->de = de;
+	STORE_16LE(de, 0, &cpu->de);
 }
 
 #define DEFINE_INSTRUCTION_SM83(NAME, BODY) \
@@ -71,7 +77,7 @@ DEFINE_INSTRUCTION_SM83(JPDelay,
 DEFINE_CONDITIONAL_INSTRUCTION_SM83(JP);
 
 DEFINE_INSTRUCTION_SM83(JPHL,
-	cpu->pc = cpu->hl;
+	cpu->pc = SM83ReadHL(cpu);
 	cpu->memory.setActiveRegion(cpu, cpu->pc);)
 
 DEFINE_INSTRUCTION_SM83(JRFinish,
@@ -220,7 +226,7 @@ DEFINE_CONDITIONAL_ONLY_INSTRUCTION_SM83(RET)
 #define DEFINE_LDHL__INSTRUCTION_SM83(NAME, OPERAND) \
 	DEFINE_INSTRUCTION_SM83(LDHL_ ## NAME, \
 		cpu->bus = OPERAND; \
-		cpu->index = cpu->hl; \
+		cpu->index = SM83ReadHL(cpu); \
 		cpu->executionState = SM83_CORE_MEMORY_STORE; \
 		cpu->instruction = _SM83InstructionNOP;)
 
@@ -238,7 +244,7 @@ DEFINE_CONDITIONAL_ONLY_INSTRUCTION_SM83(RET)
 	DEFINE_ ## NAME ## _INSTRUCTION_SM83(L, cpu->l);
 
 DEFINE_INSTRUCTION_SM83(LDHL_Bus, \
-	cpu->index = cpu->hl; \
+	cpu->index = SM83ReadHL(cpu); \
 	cpu->executionState = SM83_CORE_MEMORY_STORE; \
 	cpu->instruction = _SM83InstructionNOP;)
 
@@ -261,7 +267,7 @@ DEFINE_INSTRUCTION_SM83(LDHL_SP,
 	cpu->instruction = _SM83InstructionLDHL_SPDelay;)
 
 DEFINE_INSTRUCTION_SM83(LDSP_HL,
-	cpu->sp = cpu->hl;
+	cpu->sp = SM83ReadHL(cpu);
 	cpu->executionState = SM83_CORE_STALL;)
 
 #define DEFINE_ALU_INSTRUCTION_SM83_MEM(NAME, REG) \
@@ -372,7 +378,7 @@ DEFINE_INSTRUCTION_SM83(LDBC, \
 	cpu->instruction = _SM83InstructionLDBCDelay;)
 
 DEFINE_INSTRUCTION_SM83(LDBC_A, \
-	cpu->index = cpu->bc; \
+	cpu->index = SM83ReadBC(cpu); \
 	cpu->bus = cpu->a; \
 	cpu->executionState = SM83_CORE_MEMORY_STORE; \
 	cpu->instruction = _SM83InstructionNOP;)
@@ -387,7 +393,7 @@ DEFINE_INSTRUCTION_SM83(LDDE, \
 	cpu->instruction = _SM83InstructionLDDEDelay;)
 
 DEFINE_INSTRUCTION_SM83(LDDE_A, \
-	cpu->index = cpu->de; \
+	cpu->index = SM83ReadDE(cpu); \
 	cpu->bus = cpu->a; \
 	cpu->executionState = SM83_CORE_MEMORY_STORE; \
 	cpu->instruction = _SM83InstructionNOP;)
@@ -413,27 +419,27 @@ DEFINE_INSTRUCTION_SM83(LDSP, \
 	cpu->instruction = _SM83InstructionLDSPDelay;)
 
 DEFINE_INSTRUCTION_SM83(LDIHLA, \
-	cpu->index = cpu->hl; \
+	cpu->index = SM83ReadHL(cpu); \
 	SM83WriteHL(cpu, cpu->index + 1); \
 	cpu->bus = cpu->a; \
 	cpu->executionState = SM83_CORE_MEMORY_STORE; \
 	cpu->instruction = _SM83InstructionNOP;)
 
 DEFINE_INSTRUCTION_SM83(LDDHLA, \
-	cpu->index = cpu->hl; \
+	cpu->index = SM83ReadHL(cpu); \
 	SM83WriteHL(cpu, cpu->index - 1); \
 	cpu->bus = cpu->a; \
 	cpu->executionState = SM83_CORE_MEMORY_STORE; \
 	cpu->instruction = _SM83InstructionNOP;)
 
 DEFINE_INSTRUCTION_SM83(LDA_IHL, \
-	cpu->index = cpu->hl; \
+	cpu->index = SM83ReadHL(cpu); \
 	SM83WriteHL(cpu, cpu->index + 1); \
 	cpu->executionState = SM83_CORE_MEMORY_LOAD; \
 	cpu->instruction = _SM83InstructionLDA_Bus;)
 
 DEFINE_INSTRUCTION_SM83(LDA_DHL, \
-	cpu->index = cpu->hl; \
+	cpu->index = SM83ReadHL(cpu); \
 	SM83WriteHL(cpu, cpu->index - 1); \
 	cpu->executionState = SM83_CORE_MEMORY_LOAD; \
 	cpu->instruction = _SM83InstructionLDA_Bus;)
@@ -581,7 +587,7 @@ DEFINE_INSTRUCTION_SM83(INC_HLDelay,
 	cpu->executionState = SM83_CORE_MEMORY_STORE;)
 
 DEFINE_INSTRUCTION_SM83(INC_HL,
-	cpu->index = cpu->hl;
+	cpu->index = SM83ReadHL(cpu);
 	cpu->instruction = _SM83InstructionINC_HLDelay;
 	cpu->executionState = SM83_CORE_MEMORY_LOAD;)
 
@@ -595,7 +601,7 @@ DEFINE_INSTRUCTION_SM83(DEC_HLDelay,
 	cpu->executionState = SM83_CORE_MEMORY_STORE;)
 
 DEFINE_INSTRUCTION_SM83(DEC_HL,
-	cpu->index = cpu->hl;
+	cpu->index = SM83ReadHL(cpu);
 	cpu->instruction = _SM83InstructionDEC_HLDelay;
 	cpu->executionState = SM83_CORE_MEMORY_LOAD;)
 
@@ -693,7 +699,7 @@ DEFINE_POPPUSH_INSTRUCTION_SM83(AF, A, a, f.packed);
 		cpu->executionState = WB; \
 		cpu->instruction = _SM83InstructionNOP;) \
 	DEFINE_INSTRUCTION_SM83(NAME ## HL, \
-		cpu->index = cpu->hl; \
+		cpu->index = SM83ReadHL(cpu); \
 		cpu->executionState = SM83_CORE_MEMORY_LOAD; \
 		cpu->instruction = _SM83Instruction ## NAME ## HLDelay;) \
 	DEFINE_INSTRUCTION_SM83(NAME ## A, uint8_t reg = cpu->a; BODY; cpu->a = reg)
@@ -761,10 +767,7 @@ DEFINE_INSTRUCTION_SM83(RRCA_,
 
 DEFINE_INSTRUCTION_SM83(DI, cpu->irqh.setInterrupts(cpu, false));
 DEFINE_INSTRUCTION_SM83(EI, cpu->irqh.setInterrupts(cpu, true));
-DEFINE_INSTRUCTION_SM83(HALT,
-	cpu->irqh.halt(cpu);
-	// XXX: Subtract the cycles that will be added later in the tick function
-	cpu->cycles -= cpu->tMultiplier;);
+DEFINE_INSTRUCTION_SM83(HALT, cpu->irqh.halt(cpu));
 
 #define DEFINE_RST_INSTRUCTION_SM83(VEC) \
 	DEFINE_INSTRUCTION_SM83(RST ## VEC ## UpdateSPL, \

@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <ui version="4.0">
- <class>QGBA::IOViewer</class>
- <widget class="QWidget" name="QGBA::IOViewer">
+ <class>IOViewer</class>
+ <widget class="QWidget" name="IOViewer">
   <property name="geometry">
    <rect>
     <x>0</x>
@@ -24,9 +24,6 @@
     <widget class="QLabel" name="regValue">
      <property name="text">
       <string>0x0000</string>
-     </property>
-     <property name="textInteractionFlags">
-      <set>Qt::LinksAccessibleByMouse|Qt::TextSelectableByKeyboard|Qt::TextSelectableByMouse</set>
      </property>
     </widget>
    </item>
@@ -58,7 +55,7 @@
         </font>
        </property>
        <property name="text">
-        <string notr="true">2</string>
+        <string>2</string>
        </property>
       </widget>
      </item>
@@ -82,7 +79,7 @@
         </font>
        </property>
        <property name="text">
-        <string notr="true">5</string>
+        <string>5</string>
        </property>
       </widget>
      </item>
@@ -100,7 +97,7 @@
         </font>
        </property>
        <property name="text">
-        <string notr="true">4</string>
+        <string>4</string>
        </property>
       </widget>
      </item>
@@ -118,7 +115,7 @@
         </font>
        </property>
        <property name="text">
-        <string notr="true">7</string>
+        <string>7</string>
        </property>
       </widget>
      </item>
@@ -136,7 +133,7 @@
         </font>
        </property>
        <property name="text">
-        <string notr="true">0</string>
+        <string>0</string>
        </property>
       </widget>
      </item>
@@ -157,7 +154,7 @@
         </font>
        </property>
        <property name="text">
-        <string notr="true">9</string>
+        <string>9</string>
        </property>
       </widget>
      </item>
@@ -178,7 +175,7 @@
         </font>
        </property>
        <property name="text">
-        <string notr="true">1</string>
+        <string>1</string>
        </property>
       </widget>
      </item>
@@ -196,7 +193,7 @@
         </font>
        </property>
        <property name="text">
-        <string notr="true">3</string>
+        <string>3</string>
        </property>
       </widget>
      </item>
@@ -217,7 +214,7 @@
         </font>
        </property>
        <property name="text">
-        <string notr="true">8</string>
+        <string>8</string>
        </property>
       </widget>
      </item>
@@ -241,7 +238,7 @@
         </font>
        </property>
        <property name="text">
-        <string notr="true">C</string>
+        <string>C</string>
        </property>
       </widget>
      </item>
@@ -259,7 +256,7 @@
         </font>
        </property>
        <property name="text">
-        <string notr="true">E</string>
+        <string>E</string>
        </property>
       </widget>
      </item>
@@ -283,7 +280,7 @@
         </font>
        </property>
        <property name="text">
-        <string notr="true">6</string>
+        <string>6</string>
        </property>
       </widget>
      </item>
@@ -310,7 +307,7 @@
         </font>
        </property>
        <property name="text">
-        <string notr="true">D</string>
+        <string>D</string>
        </property>
       </widget>
      </item>
@@ -328,7 +325,7 @@
         </font>
        </property>
        <property name="text">
-        <string notr="true">F</string>
+        <string>F</string>
        </property>
       </widget>
      </item>
@@ -346,7 +343,7 @@
         </font>
        </property>
        <property name="text">
-        <string notr="true">A</string>
+        <string>A</string>
        </property>
       </widget>
      </item>

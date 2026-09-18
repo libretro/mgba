@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <ui version="4.0">
- <class>QGBA::PlacementControl</class>
- <widget class="QDialog" name="QGBA::PlacementControl">
+ <class>PlacementControl</class>
+ <widget class="QDialog" name="PlacementControl">
   <property name="geometry">
    <rect>
     <x>0</x>

@@ -21,9 +21,6 @@ mLOG_DEFINE_CATEGORY(GBA_VIDEO, "GBA Video", "gba.video");
 static void GBAVideoDummyRendererInit(struct GBAVideoRenderer* renderer);
 static void GBAVideoDummyRendererReset(struct GBAVideoRenderer* renderer);
 static void GBAVideoDummyRendererDeinit(struct GBAVideoRenderer* renderer);
-static uint32_t GBAVideoDummyRendererId(const struct GBAVideoRenderer* renderer);
-static bool GBAVideoDummyRendererLoadState(struct GBAVideoRenderer* renderer, const void* state, size_t size);
-static void GBAVideoDummyRendererSaveState(struct GBAVideoRenderer* renderer, void** state, size_t* size);
 static uint16_t GBAVideoDummyRendererWriteVideoRegister(struct GBAVideoRenderer* renderer, uint32_t address, uint16_t value);
 static void GBAVideoDummyRendererWriteVRAM(struct GBAVideoRenderer* renderer, uint32_t address);
 static void GBAVideoDummyRendererWritePalette(struct GBAVideoRenderer* renderer, uint32_t address, uint16_t value);
@@ -35,7 +32,6 @@ static void GBAVideoDummyRendererPutPixels(struct GBAVideoRenderer* renderer, si
 
 static void _startHblank(struct mTiming*, void* context, uint32_t cyclesLate);
 static void _startHdraw(struct mTiming*, void* context, uint32_t cyclesLate);
-static unsigned _calculateStallMask(struct GBA* gba, unsigned dispcnt);
 
 MGBA_EXPORT const int GBAVideoObjSizes[16][2] = {
 	{ 8, 8 },
@@ -56,9 +52,24 @@ MGBA_EXPORT const int GBAVideoObjSizes[16][2] = {
 	{ 0, 0 },
 };
 
+static struct GBAVideoRenderer dummyRenderer = {
+	.init = GBAVideoDummyRendererInit,
+	.reset = GBAVideoDummyRendererReset,
+	.deinit = GBAVideoDummyRendererDeinit,
+	.writeVideoRegister = GBAVideoDummyRendererWriteVideoRegister,
+	.writeVRAM = GBAVideoDummyRendererWriteVRAM,
+	.writePalette = GBAVideoDummyRendererWritePalette,
+	.writeOAM = GBAVideoDummyRendererWriteOAM,
+	.drawScanline = GBAVideoDummyRendererDrawScanline,
+	.finishFrame = GBAVideoDummyRendererFinishFrame,
+	.getPixels = GBAVideoDummyRendererGetPixels,
+	.putPixels = GBAVideoDummyRendererPutPixels,
+};
+
 void GBAVideoInit(struct GBAVideo* video) {
-	video->renderer = NULL;
-	video->vram = anonymousMemoryMap(GBA_SIZE_VRAM);
+	video->renderer = &dummyRenderer;
+	video->renderer->cache = NULL;
+	video->vram = anonymousMemoryMap(SIZE_VRAM);
 	video->frameskip = 0;
 	video->event.name = "GBA Video";
 	video->event.callback = NULL;
@@ -73,80 +84,42 @@ void GBAVideoReset(struct GBAVideo* video) {
 	} else {
 		// TODO: Verify exact scanline on hardware
 		video->vcount = 0x7E;
-		nextEvent = 120;
+		nextEvent = 170;
 	}
-	video->p->memory.io[GBA_REG(VCOUNT)] = video->vcount;
+	video->p->memory.io[REG_VCOUNT >> 1] = video->vcount;
 
 	video->event.callback = _startHblank;
 	mTimingSchedule(&video->p->timing, &video->event, nextEvent);
 
 	video->frameCounter = 0;
 	video->frameskipCounter = 0;
-	video->stallMask = 0;
+	video->renderer->vram = video->vram;
 
 	memset(video->palette, 0, sizeof(video->palette));
 	memset(video->oam.raw, 0, sizeof(video->oam.raw));
-	memset(video->vram, 0, GBA_SIZE_VRAM);
 
-	if (!video->renderer) {
-		mLOG(GBA_VIDEO, FATAL, "No renderer associated");
-		return;
-	}
-	video->renderer->vram = video->vram;
 	video->renderer->reset(video->renderer);
 }
 
 void GBAVideoDeinit(struct GBAVideo* video) {
 	video->renderer->deinit(video->renderer);
-	mappedMemoryFree(video->vram, GBA_SIZE_VRAM);
-}
-
-void GBAVideoDummyRendererCreate(struct GBAVideoRenderer* renderer) {
-	static const struct GBAVideoRenderer dummyRenderer = {
-		.init = GBAVideoDummyRendererInit,
-		.reset = GBAVideoDummyRendererReset,
-		.deinit = GBAVideoDummyRendererDeinit,
-		.rendererId = GBAVideoDummyRendererId,
-		.loadState = GBAVideoDummyRendererLoadState,
-		.saveState = GBAVideoDummyRendererSaveState,
-		.writeVideoRegister = GBAVideoDummyRendererWriteVideoRegister,
-		.writeVRAM = GBAVideoDummyRendererWriteVRAM,
-		.writePalette = GBAVideoDummyRendererWritePalette,
-		.writeOAM = GBAVideoDummyRendererWriteOAM,
-		.drawScanline = GBAVideoDummyRendererDrawScanline,
-		.finishFrame = GBAVideoDummyRendererFinishFrame,
-		.getPixels = GBAVideoDummyRendererGetPixels,
-		.putPixels = GBAVideoDummyRendererPutPixels,
-	};
-	memcpy(renderer, &dummyRenderer, sizeof(*renderer));
+	mappedMemoryFree(video->vram, SIZE_VRAM);
 }
 
 void GBAVideoAssociateRenderer(struct GBAVideo* video, struct GBAVideoRenderer* renderer) {
-	if (video->renderer) {
-		video->renderer->deinit(video->renderer);
-		renderer->cache = video->renderer->cache;
-	} else {
-		renderer->cache = NULL;
-	}
+	video->renderer->deinit(video->renderer);
+	renderer->cache = video->renderer->cache;
 	video->renderer = renderer;
 	renderer->palette = video->palette;
 	renderer->vram = video->vram;
 	renderer->oam = &video->oam;
 	video->renderer->init(video->renderer);
-	video->renderer->reset(video->renderer);
-	renderer->writeVideoRegister(renderer, GBA_REG_DISPCNT, video->p->memory.io[GBA_REG(DISPCNT)]);
-	renderer->writeVideoRegister(renderer, GBA_REG_STEREOCNT, video->p->memory.io[GBA_REG(STEREOCNT)]);
-	int address;
-	for (address = GBA_REG_BG0CNT; address < 0x56; address += 2) {
-		if (address == 0x4E) {
-			continue;
-		}
-		renderer->writeVideoRegister(renderer, address, video->p->memory.io[address >> 1]);
-	}
 }
 
 void _startHdraw(struct mTiming* timing, void* context, uint32_t cyclesLate) {
 	struct GBAVideo* video = context;
+	GBARegisterDISPSTAT dispstat = video->p->memory.io[REG_DISPSTAT >> 1];
+	dispstat = GBARegisterDISPSTATClearInHblank(dispstat);
 	video->event.callback = _startHblank;
 	mTimingSchedule(timing, &video->event, VIDEO_HDRAW_LENGTH - cyclesLate);
 
@@ -154,24 +127,17 @@ void _startHdraw(struct mTiming* timing, void* context, uint32_t cyclesLate) {
 	if (video->vcount == VIDEO_VERTICAL_TOTAL_PIXELS) {
 		video->vcount = 0;
 	}
-	video->p->memory.io[GBA_REG(VCOUNT)] = video->vcount;
+	video->p->memory.io[REG_VCOUNT >> 1] = video->vcount;
 
-	if (video->vcount < GBA_VIDEO_VERTICAL_PIXELS) {
-		unsigned dispcnt = video->p->memory.io[GBA_REG(DISPCNT)];
-		video->stallMask = _calculateStallMask(video->p, dispcnt);
-	}
-
-	GBARegisterDISPSTAT dispstat = video->p->memory.io[GBA_REG(DISPSTAT)];
-	dispstat = GBARegisterDISPSTATClearInHblank(dispstat);
 	if (video->vcount == GBARegisterDISPSTATGetVcountSetting(dispstat)) {
 		dispstat = GBARegisterDISPSTATFillVcounter(dispstat);
 		if (GBARegisterDISPSTATIsVcounterIRQ(dispstat)) {
-			GBARaiseIRQ(video->p, GBA_IRQ_VCOUNTER, cyclesLate);
+			GBARaiseIRQ(video->p, IRQ_VCOUNTER, cyclesLate);
 		}
 	} else {
 		dispstat = GBARegisterDISPSTATClearVcounter(dispstat);
 	}
-	video->p->memory.io[GBA_REG(DISPSTAT)] = dispstat;
+	video->p->memory.io[REG_DISPSTAT >> 1] = dispstat;
 
 	// Note: state may be recorded during callbacks, so ensure it is consistent!
 	switch (video->vcount) {
@@ -179,13 +145,13 @@ void _startHdraw(struct mTiming* timing, void* context, uint32_t cyclesLate) {
 		GBAFrameStarted(video->p);
 		break;
 	case GBA_VIDEO_VERTICAL_PIXELS:
-		video->p->memory.io[GBA_REG(DISPSTAT)] = GBARegisterDISPSTATFillInVblank(dispstat);
+		video->p->memory.io[REG_DISPSTAT >> 1] = GBARegisterDISPSTATFillInVblank(dispstat);
 		if (video->frameskipCounter <= 0) {
 			video->renderer->finishFrame(video->renderer);
 		}
 		GBADMARunVblank(video->p, -cyclesLate);
 		if (GBARegisterDISPSTATIsVblankIRQ(dispstat)) {
-			GBARaiseIRQ(video->p, GBA_IRQ_VBLANK, cyclesLate);
+			GBARaiseIRQ(video->p, IRQ_VBLANK, cyclesLate);
 		}
 		GBAFrameEnded(video->p);
 		mCoreSyncPostFrame(video->p->sync);
@@ -194,21 +160,21 @@ void _startHdraw(struct mTiming* timing, void* context, uint32_t cyclesLate) {
 			video->frameskipCounter = video->frameskip;
 		}
 		++video->frameCounter;
-		GBAInterrupt(video->p);
 		break;
 	case VIDEO_VERTICAL_TOTAL_PIXELS - 1:
-		video->p->memory.io[GBA_REG(DISPSTAT)] = GBARegisterDISPSTATClearInVblank(dispstat);
+		video->p->memory.io[REG_DISPSTAT >> 1] = GBARegisterDISPSTATClearInVblank(dispstat);
 		break;
 	}
 }
 
 void _startHblank(struct mTiming* timing, void* context, uint32_t cyclesLate) {
 	struct GBAVideo* video = context;
+	GBARegisterDISPSTAT dispstat = video->p->memory.io[REG_DISPSTAT >> 1];
+	dispstat = GBARegisterDISPSTATFillInHblank(dispstat);
 	video->event.callback = _startHdraw;
 	mTimingSchedule(timing, &video->event, VIDEO_HBLANK_LENGTH - cyclesLate);
 
 	// Begin Hblank
-	GBARegisterDISPSTAT dispstat = video->p->memory.io[GBA_REG(DISPSTAT)];
 	dispstat = GBARegisterDISPSTATFillInHblank(dispstat);
 	if (video->vcount < GBA_VIDEO_VERTICAL_PIXELS && video->frameskipCounter <= 0) {
 		video->renderer->drawScanline(video->renderer, video->vcount);
@@ -221,104 +187,15 @@ void _startHblank(struct mTiming* timing, void* context, uint32_t cyclesLate) {
 		GBADMARunDisplayStart(video->p, -cyclesLate);
 	}
 	if (GBARegisterDISPSTATIsHblankIRQ(dispstat)) {
-		GBARaiseIRQ(video->p, GBA_IRQ_HBLANK, cyclesLate - 6); // TODO: Where does this fudge factor come from?
+		GBARaiseIRQ(video->p, IRQ_HBLANK, cyclesLate);
 	}
-	video->stallMask = 0;
-	video->p->memory.io[GBA_REG(DISPSTAT)] = dispstat;
+	video->p->memory.io[REG_DISPSTAT >> 1] = dispstat;
 }
 
-uint16_t GBAVideoWriteDISPSTAT(struct GBAVideo* video, uint16_t value) {
-	GBARegisterDISPSTAT dispstat = video->p->memory.io[GBA_REG(DISPSTAT)] & 0x7;
-	dispstat |= value & 0xFFF8;
-
-	if (video->vcount == GBARegisterDISPSTATGetVcountSetting(dispstat)) {
-		// Edge trigger only
-		if (GBARegisterDISPSTATIsVcounterIRQ(dispstat) && !GBARegisterDISPSTATIsVcounter(dispstat)) {
-			GBARaiseIRQ(video->p, GBA_IRQ_VCOUNTER, 0);
-		}
-		dispstat = GBARegisterDISPSTATFillVcounter(dispstat);
-	} else {
-		dispstat = GBARegisterDISPSTATClearVcounter(dispstat);
-	}
-	return dispstat;
-}
-
-static unsigned _calculateStallMask(struct GBA* gba, unsigned dispcnt) {
-	unsigned mask = 0;
-
-	if (GBARegisterDISPCNTIsForcedBlank(dispcnt)) {
-		return 0;
-	}
-
-	switch (GBARegisterDISPCNTGetMode(dispcnt)) {
-	case 0:
-		if (GBARegisterDISPCNTIsBg0Enable(dispcnt)) {
-			if (GBARegisterBGCNTIs256Color(gba->memory.io[GBA_REG(BG0CNT)])) {
-				mask |= GBA_VSTALL_T8(0);
-			} else {
-				mask |= GBA_VSTALL_T4(0);
-			}
-		}
-		if (GBARegisterDISPCNTIsBg1Enable(dispcnt)) {
-			if (GBARegisterBGCNTIs256Color(gba->memory.io[GBA_REG(BG1CNT)])) {
-				mask |= GBA_VSTALL_T8(1);
-			} else {
-				mask |= GBA_VSTALL_T4(1);
-			}
-		}
-		if (GBARegisterDISPCNTIsBg2Enable(dispcnt)) {
-			if (GBARegisterBGCNTIs256Color(gba->memory.io[GBA_REG(BG2CNT)])) {
-				mask |= GBA_VSTALL_T8(2);
-			} else {
-				mask |= GBA_VSTALL_T4(2);
-			}
-		}
-		if (GBARegisterDISPCNTIsBg3Enable(dispcnt)) {
-			if (GBARegisterBGCNTIs256Color(gba->memory.io[GBA_REG(BG3CNT)])) {
-				mask |= GBA_VSTALL_T8(3);
-			} else {
-				mask |= GBA_VSTALL_T4(3);
-			}
-		}
-		break;
-	case 1:
-		if (GBARegisterDISPCNTIsBg0Enable(dispcnt)) {
-			if (GBARegisterBGCNTIs256Color(gba->memory.io[GBA_REG(BG0CNT)])) {
-				mask |= GBA_VSTALL_T8(0);
-			} else {
-				mask |= GBA_VSTALL_T4(0);
-			}
-		}
-		if (GBARegisterDISPCNTIsBg1Enable(dispcnt)) {
-			if (GBARegisterBGCNTIs256Color(gba->memory.io[GBA_REG(BG1CNT)])) {
-				mask |= GBA_VSTALL_T8(1);
-			} else {
-				mask |= GBA_VSTALL_T4(1);
-			}
-		}
-		if (GBARegisterDISPCNTIsBg2Enable(dispcnt)) {
-			mask |= GBA_VSTALL_A2;
-		}
-		break;
-	case 2:
-		if (GBARegisterDISPCNTIsBg2Enable(dispcnt)) {
-			mask |= GBA_VSTALL_A2;
-		}
-		if (GBARegisterDISPCNTIsBg3Enable(dispcnt)) {
-			mask |= GBA_VSTALL_A3;
-		}
-		break;
-	case 3:
-	case 4:
-	case 5:
-		if (GBARegisterDISPCNTIsBg2Enable(dispcnt)) {
-			mask |= GBA_VSTALL_B;
-		}
-		break;
-	default:
-		break;
-	}
-	return mask;
+void GBAVideoWriteDISPSTAT(struct GBAVideo* video, uint16_t value) {
+	video->p->memory.io[REG_DISPSTAT >> 1] &= 0x7;
+	video->p->memory.io[REG_DISPSTAT >> 1] |= value;
+	// TODO: Does a VCounter IRQ trigger on write?
 }
 
 static void GBAVideoDummyRendererInit(struct GBAVideoRenderer* renderer) {
@@ -331,23 +208,6 @@ static void GBAVideoDummyRendererReset(struct GBAVideoRenderer* renderer) {
 	// Nothing to do
 }
 
-static uint32_t GBAVideoDummyRendererId(const struct GBAVideoRenderer* renderer) {
-	UNUSED(renderer);
-	return 0xDEADBEEF;
-}
-
-static bool GBAVideoDummyRendererLoadState(struct GBAVideoRenderer* renderer, const void* state, size_t size) {
-	UNUSED(renderer);
-	UNUSED(state);
-	return size == 0;
-}
-
-static void GBAVideoDummyRendererSaveState(struct GBAVideoRenderer* renderer, void** state, size_t* size) {
-	UNUSED(renderer);
-	*state = NULL;
-	*size = 0;
-}
-
 static void GBAVideoDummyRendererDeinit(struct GBAVideoRenderer* renderer) {
 	UNUSED(renderer);
 	// Nothing to do
@@ -358,35 +218,35 @@ static uint16_t GBAVideoDummyRendererWriteVideoRegister(struct GBAVideoRenderer*
 		GBAVideoCacheWriteVideoRegister(renderer->cache, address, value);
 	}
 	switch (address) {
-	case GBA_REG_DISPCNT:
+	case REG_DISPCNT:
 		value &= 0xFFF7;
 		break;
-	case GBA_REG_BG0CNT:
-	case GBA_REG_BG1CNT:
+	case REG_BG0CNT:
+	case REG_BG1CNT:
 		value &= 0xDFFF;
 		break;
-	case GBA_REG_BG2CNT:
-	case GBA_REG_BG3CNT:
+	case REG_BG2CNT:
+	case REG_BG3CNT:
 		value &= 0xFFFF;
 		break;
-	case GBA_REG_BG0HOFS:
-	case GBA_REG_BG0VOFS:
-	case GBA_REG_BG1HOFS:
-	case GBA_REG_BG1VOFS:
-	case GBA_REG_BG2HOFS:
-	case GBA_REG_BG2VOFS:
-	case GBA_REG_BG3HOFS:
-	case GBA_REG_BG3VOFS:
+	case REG_BG0HOFS:
+	case REG_BG0VOFS:
+	case REG_BG1HOFS:
+	case REG_BG1VOFS:
+	case REG_BG2HOFS:
+	case REG_BG2VOFS:
+	case REG_BG3HOFS:
+	case REG_BG3VOFS:
 		value &= 0x01FF;
 		break;
-	case GBA_REG_BLDCNT:
+	case REG_BLDCNT:
 		value &= 0x3FFF;
 		break;
-	case GBA_REG_BLDALPHA:
+	case REG_BLDALPHA:
 		value &= 0x1F1F;
 		break;
-	case GBA_REG_WININ:
-	case GBA_REG_WINOUT:
+	case REG_WININ:
+	case REG_WINOUT:
 		value &= 0x3F3F;
 		break;
 	default:
@@ -439,66 +299,37 @@ static void GBAVideoDummyRendererPutPixels(struct GBAVideoRenderer* renderer, si
 }
 
 void GBAVideoSerialize(const struct GBAVideo* video, struct GBASerializedState* state) {
-	memcpy(state->vram, video->vram, GBA_SIZE_VRAM);
-	memcpy(state->oam, video->oam.raw, GBA_SIZE_OAM);
-	memcpy(state->pram, video->palette, GBA_SIZE_PALETTE_RAM);
+	memcpy(state->vram, video->vram, SIZE_VRAM);
+	memcpy(state->oam, video->oam.raw, SIZE_OAM);
+	memcpy(state->pram, video->palette, SIZE_PALETTE_RAM);
 	STORE_32(video->event.when - mTimingCurrentTime(&video->p->timing), 0, &state->video.nextEvent);
-	int32_t flags = 0;
-	if (video->event.callback == _startHdraw) {
-		flags = GBASerializedVideoFlagsSetMode(flags, 1);
-	} else if (video->event.callback == _startHblank) {
-		flags = GBASerializedVideoFlagsSetMode(flags, 2);
-	}
-	STORE_32(flags, 0, &state->video.flags);
 	STORE_32(video->frameCounter, 0, &state->video.frameCounter);
 }
 
 void GBAVideoDeserialize(struct GBAVideo* video, const struct GBASerializedState* state) {
-	memcpy(video->vram, state->vram, GBA_SIZE_VRAM);
+	memcpy(video->vram, state->vram, SIZE_VRAM);
 	uint16_t value;
 	int i;
-	for (i = 0; i < GBA_SIZE_OAM; i += 2) {
+	for (i = 0; i < SIZE_OAM; i += 2) {
 		LOAD_16(value, i, state->oam);
-		GBAStore16(video->p->cpu, GBA_BASE_OAM | i, value, 0);
+		GBAStore16(video->p->cpu, BASE_OAM | i, value, 0);
 	}
-	for (i = 0; i < GBA_SIZE_PALETTE_RAM; i += 2) {
+	for (i = 0; i < SIZE_PALETTE_RAM; i += 2) {
 		LOAD_16(value, i, state->pram);
-		GBAStore16(video->p->cpu, GBA_BASE_PALETTE_RAM | i, value, 0);
+		GBAStore16(video->p->cpu, BASE_PALETTE_RAM | i, value, 0);
 	}
 	LOAD_32(video->frameCounter, 0, &state->video.frameCounter);
 
-	video->stallMask = 0;
-	int32_t flags;
-	LOAD_32(flags, 0, &state->video.flags);
-	GBARegisterDISPSTAT dispstat = state->io[GBA_REG(DISPSTAT)];
-	switch (GBASerializedVideoFlagsGetMode(flags)) {
-	case 0:
-		if (GBARegisterDISPSTATIsInHblank(dispstat)) {
-			video->event.callback = _startHdraw;
-		} else {
-			video->event.callback = _startHblank;
-		}
-		break;
-	case 1:
-		video->event.callback = _startHdraw;
-		break;
-	case 2:
-		video->event.callback = _startHblank;
-		video->stallMask = _calculateStallMask(video->p, state->io[GBA_REG(DISPCNT)]);
-		break;
-	case 3:
-		video->event.callback = _startHdraw;
-		break;
-	}
 	uint32_t when;
-	if (state->versionMagic < 0x01000007) {
-		// This field was moved in v7
-		LOAD_32(when, 0, &state->audio.lastSample);
+	LOAD_32(when, 0, &state->video.nextEvent);
+	GBARegisterDISPSTAT dispstat = state->io[REG_DISPSTAT >> 1];
+	if (GBARegisterDISPSTATIsInHblank(dispstat)) {
+		video->event.callback = _startHdraw;
 	} else {
-		LOAD_32(when, 0, &state->video.nextEvent);
+		video->event.callback = _startHblank;
 	}
 	mTimingSchedule(&video->p->timing, &video->event, when);
 
-	LOAD_16(video->vcount, GBA_REG_VCOUNT, state->io);
+	LOAD_16(video->vcount, REG_VCOUNT, state->io);
 	video->renderer->reset(video->renderer);
 }

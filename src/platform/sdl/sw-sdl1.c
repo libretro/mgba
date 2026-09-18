@@ -8,6 +8,7 @@
 #include <mgba/core/core.h>
 #include <mgba/core/thread.h>
 #include <mgba/core/version.h>
+#include <mgba-util/arm-algo.h>
 
 static bool mSDLSWInit(struct mSDLRenderer* renderer);
 static void mSDLSWRunloop(struct mSDLRenderer* renderer, void* user);
@@ -28,7 +29,7 @@ bool mSDLSWInit(struct mSDLRenderer* renderer) {
 	SDL_WM_SetCaption(projectName, "");
 
 	unsigned width, height;
-	renderer->core->baseVideoSize(renderer->core, &width, &height);
+	renderer->core->desiredVideoDimensions(renderer->core, &width, &height);
 	SDL_Surface* surface = SDL_GetVideoSurface();
 	SDL_LockSurface(surface);
 
@@ -82,7 +83,18 @@ void mSDLSWRunloop(struct mSDLRenderer* renderer, void* user) {
 				    renderer->viewportWidth, renderer->viewportHeight);
 			}
 #else
-			if (renderer->ratio != 1) {
+			switch (renderer->ratio) {
+#if defined(__ARM_NEON) && COLOR_16_BIT
+			case 2:
+				_neon2x(surface->pixels, renderer->outputBuffer, width, height);
+				break;
+			case 4:
+				_neon4x(surface->pixels, renderer->outputBuffer, width, height);
+				break;
+#endif
+			case 1:
+				break;
+			default:
 				abort();
 			}
 #endif

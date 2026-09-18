@@ -4,7 +4,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 #include "LogConfigModel.h"
-#include "moc_LogConfigModel.cpp"
 
 #include <algorithm>
 
@@ -28,9 +27,6 @@ QVariant LogConfigModel::data(const QModelIndex& index, int role) const {
 	}
 	int levels;
 	if (index.row() == 0) {
-		if (index.column() == 0) {
-			return QVariant();
-		}
 		levels = m_levels;
 	} else {
 		levels = m_cache[index.row() - 1].levels;
@@ -50,9 +46,6 @@ bool LogConfigModel::setData(const QModelIndex& index, const QVariant& value, in
 	}
 	int levels;
 	if (index.row() == 0) {
-		if (index.column() == 0) {
-			return false;
-		}
 		levels = m_levels;
 	} else {
 		levels = m_cache[index.row() - 1].levels;
@@ -63,12 +56,7 @@ bool LogConfigModel::setData(const QModelIndex& index, const QVariant& value, in
 		if (levels < 0) {
 			levels = m_levels;
 		}
-		int bit = 1 << (index.column() - 1);
-		if (value.value<Qt::CheckState>() == Qt::Unchecked) {
-			levels &= ~bit;
-		} else {
-			levels |= bit;
-		}
+		levels ^= 1 << (index.column() - 1);
 	}
 	if (index.row() == 0) {
 		beginResetModel();
@@ -114,35 +102,26 @@ QVariant LogConfigModel::headerData(int section, Qt::Orientation orientation, in
 }
 
 QModelIndex LogConfigModel::index(int row, int column, const QModelIndex& parent) const {
-	if (parent.isValid()) {
-		return QModelIndex();
-	}
 	return createIndex(row, column, nullptr);
 }
 
-QModelIndex LogConfigModel::parent(const QModelIndex&) const {
+QModelIndex LogConfigModel::parent(const QModelIndex& index) const {
 	return QModelIndex();
 }
 
 int LogConfigModel::columnCount(const QModelIndex& parent) const {
-	if (parent.isValid()) {
-		return 0;
-	}
 	return 8;
 }
 
 int LogConfigModel::rowCount(const QModelIndex& parent) const {
-	if (parent.isValid()) {
-		return 0;
-	}
 	return m_cache.size() + 1;
 }
 
 Qt::ItemFlags LogConfigModel::flags(const QModelIndex& index) const {
-	if (!index.isValid() || (index.row() == 0 && index.column() == 0)) {
-		return Qt::NoItemFlags;
+	if (!index.isValid()) {
+		return 0;
 	}
-	return Qt::ItemIsUserCheckable | Qt::ItemIsEnabled;
+	return Qt::ItemIsUserCheckable | Qt::ItemIsEditable | Qt::ItemIsEnabled;
 }
 
 void LogConfigModel::reset() {

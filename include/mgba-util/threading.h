@@ -17,7 +17,7 @@ CXX_GUARD_START
 #include <mgba-util/platform/windows/threading.h>
 #elif defined(PSP2)
 #include <mgba-util/platform/psp2/threading.h>
-#elif defined(__3DS__)
+#elif defined(_3DS)
 #include <mgba-util/platform/3ds/threading.h>
 #elif defined(__SWITCH__)
 #include <mgba-util/platform/switch/threading.h>
@@ -25,16 +25,8 @@ CXX_GUARD_START
 #define DISABLE_THREADING
 #endif
 #endif
-
-#ifndef DISABLE_THREADING
-#if (__STDC_VERSION__ >= 201112L) && (__STDC_NO_THREADS__ != 1)
-#define ThreadLocal _Thread_local void*
-#define ThreadLocalInitKey(X)
-#define ThreadLocalSetKey(K, V) K = V
-#define ThreadLocalGetValue(K) K
-#endif
-#else
-#ifdef __3DS__
+#ifdef DISABLE_THREADING
+#ifdef _3DS
 // ctrulib already has a type called Thread
 #include <3ds/thread.h>
 #elif defined(__SWITCH__)
@@ -48,7 +40,6 @@ typedef void* Thread;
 typedef void* Mutex;
 #endif
 typedef void* Condition;
-typedef int ThreadLocal;
 
 static inline int MutexInit(Mutex* mutex) {
 	UNUSED(mutex);
@@ -101,20 +92,6 @@ static inline int ConditionWaitTimed(Condition* cond, Mutex* mutex, int32_t time
 static inline int ConditionWake(Condition* cond) {
 	UNUSED(cond);
 	return 0;
-}
-
-static inline void ThreadLocalInitKey(ThreadLocal* key) {
-	UNUSED(key);
-}
-
-static inline void ThreadLocalSetKey(ThreadLocal key, void* value) {
-	UNUSED(key);
-	UNUSED(value);
-}
-
-static inline void* ThreadLocalGetValue(ThreadLocal key) {
-	UNUSED(key);
-	return NULL;
 }
 #endif
 

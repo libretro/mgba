@@ -14,14 +14,6 @@
 #include <mgba/core/version.h>
 #include <mgba/gba/interface.h>
 
-#ifdef BUILD_SDL
-#define SDL_MAIN_HANDLED
-#include "platform/sdl/sdl-events.h"
-#if SDL_VERSION_ATLEAST(3, 0, 0)
-#include <SDL_main.h>
-#endif
-#endif
-
 #include <QLibraryInfo>
 #include <QTranslator>
 
@@ -32,7 +24,6 @@
 #ifdef QT_STATIC
 #include <QtPlugin>
 #ifdef Q_OS_WIN
-Q_IMPORT_PLUGIN(QJpegPlugin);
 Q_IMPORT_PLUGIN(QWindowsIntegrationPlugin);
 Q_IMPORT_PLUGIN(QWindowsVistaStylePlugin);
 #ifdef BUILD_QT_MULTIMEDIA
@@ -45,26 +36,12 @@ Q_IMPORT_PLUGIN(QCocoaIntegrationPlugin);
 Q_IMPORT_PLUGIN(CoreAudioPlugin);
 Q_IMPORT_PLUGIN(AVFServicePlugin);
 #endif
-#elif defined(Q_OS_UNIX)
-Q_IMPORT_PLUGIN(QXcbIntegrationPlugin);
-Q_IMPORT_PLUGIN(QWaylandIntegrationPlugin);
 #endif
-#endif
-
-#ifdef Q_OS_WIN
-#include <process.h>
-#include <wincon.h>
-extern "C" __declspec (dllexport) DWORD NoHotPatch = 0x1;
-#else
-#include <unistd.h>
 #endif
 
 using namespace QGBA;
 
 int main(int argc, char* argv[]) {
-#ifdef Q_OS_WIN
-	AttachConsole(ATTACH_PARENT_PROCESS);
-#endif
 #ifdef BUILD_SDL
 #if SDL_VERSION_ATLEAST(2, 0, 0) // CPP does not shortcut function lookup
 	SDL_SetMainReady();
@@ -79,25 +56,19 @@ int main(int argc, char* argv[]) {
 		QLocale::setDefault(locale);
 	}
 
-	if (configController.parseArguments(argc, argv)) {
-		if (configController.args()->showHelp) {
-			configController.usage(argv[0]);
-			return 0;
-		}
-		if (configController.args()->showVersion) {
-			version(argv[0]);
-			return 0;
-		}
-	} else {
-		configController.usage(argv[0]);
-		return 1;
+	mArguments args;
+	mGraphicsOpts graphicsOpts;
+	mSubParser subparser;
+	initParserForGraphics(&subparser, &graphicsOpts);
+	bool loaded = configController.parseArguments(&args, argc, argv, &subparser);
+	if (loaded && args.showHelp) {
+		usage(argv[0], subparser.usage);
+		return 0;
 	}
 
 	QApplication::setApplicationName(projectName);
 	QApplication::setApplicationVersion(projectVersion);
-#if (QT_VERSION < QT_VERSION_CHECK(6, 0, 0))
 	QApplication::setAttribute(Qt::AA_UseHighDpiPixmaps, true);
-#endif
 
 #ifdef BUILD_GLES2
 	QSurfaceFormat format;
@@ -108,21 +79,12 @@ int main(int argc, char* argv[]) {
 	GBAApp application(argc, argv, &configController);
 
 #ifndef Q_OS_MAC
-	QApplication::setWindowIcon(QIcon(":/res/mgba-256.png"));
-#endif
-
-#ifdef Q_OS_UNIX
-	QApplication::setDesktopFileName(QString("io.mgba.mGBA"));
+	QApplication::setWindowIcon(QIcon(":/res/mgba-1024.png"));
 #endif
 
 	QTranslator qtTranslator;
-#if (QT_VERSION < QT_VERSION_CHECK(6, 0, 0))
-	if (qtTranslator.load(locale, "qt", "_", QLibraryInfo::location(QLibraryInfo::TranslationsPath))) {
-#else
-	if (qtTranslator.load(locale, "qt", "_", QLibraryInfo::path(QLibraryInfo::TranslationsPath))) {
-#endif
-		application.installTranslator(&qtTranslator);
-	}
+	qtTranslator.load(locale, "qt", "_", QLibraryInfo::location(QLibraryInfo::TranslationsPath));
+	application.installTranslator(&qtTranslator);
 
 #ifdef QT_STATIC
 	QTranslator qtStaticTranslator;
@@ -131,30 +93,27 @@ int main(int argc, char* argv[]) {
 #endif
 
 	QTranslator langTranslator;
-	if (langTranslator.load(locale, binaryName, "-", ":/translations/")) {
-		application.installTranslator(&langTranslator);
-	}
+	langTranslator.load(locale, binaryName, "-", ":/translations/");
+	application.installTranslator(&langTranslator);
 
 	Window* w = application.newWindow();
-	w->argumentsPassed();
-
-	application.initMultiplayer();
-
-	int ret = application.exec();
-	if (ret != 0) {
-		return ret;
+	if (loaded) {
+		w->argumentsPassed(&args);
+	} else {
+		w->loadConfig();
 	}
-	QString invoke = application.invokeOnExit();
-	if (!invoke.isNull()) {
-		QByteArray proc = invoke.toUtf8();
-#ifdef Q_OS_WIN
-		_execl(proc.constData(), proc.constData(), NULL);
-#else
-		execl(proc.constData(), proc.constData(), NULL);
-#endif
+	freeArguments(&args);
+
+	if (graphicsOpts.multiplier) {
+		w->resizeFrame(QSize(GBA_VIDEO_HORIZONTAL_PIXELS * graphicsOpts.multiplier, GBA_VIDEO_VERTICAL_PIXELS * graphicsOpts.multiplier));
+	}
+	if (graphicsOpts.fullscreen) {
+		w->enterFullScreen();
 	}
 
-	return ret;
+	w->show();
+
+	return application.exec();
 }
 
 #ifdef _WIN32
@@ -167,7 +126,6 @@ int wmain(int argc, wchar_t* argv[]) {
 	for (int i = 0; i < argc; ++i) {
 		argv8.push_back(utf16to8(reinterpret_cast<uint16_t*>(argv[i]), wcslen(argv[i]) * 2));
 	}
-	__argv = argv8.data();
 	int ret = main(argc, argv8.data());
 	for (char* ptr : argv8) {
 		free(ptr);

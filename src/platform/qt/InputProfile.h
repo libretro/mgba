@@ -5,10 +5,9 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 #pragma once
 
-#include "input/GamepadAxisEvent.h"
+#include "GamepadAxisEvent.h"
 
 #include <mgba/gba/interface.h>
-#include <mgba/internal/gba/input.h>
 
 namespace QGBA {
 

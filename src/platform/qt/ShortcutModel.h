@@ -44,7 +44,7 @@ private:
 		const Shortcut* shortcut = nullptr;
 	};
 
-	mutable QHash<size_t, Item> m_cache;
+	QHash<QString, Item> m_cache;
 };
 
 }

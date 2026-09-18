@@ -7,14 +7,12 @@
 
 #include "Override.h"
 
-#include <QHash>
+#include <QMap>
 #include <QObject>
 #include <QSettings>
 #include <QVariant>
 
-#include <array>
 #include <functional>
-#include <memory>
 
 #include <mgba/core/config.h>
 #include <mgba-util/configuration.h>
@@ -38,9 +36,9 @@ public:
 
 	void connect(std::function<void(const QVariant&)>, QObject* parent = nullptr);
 
-	std::shared_ptr<Action> addValue(const QString& text, const QVariant& value, ActionMapper* actions = nullptr, const QString& menu = {});
-	std::shared_ptr<Action> addValue(const QString& text, const char* value, ActionMapper* actions = nullptr, const QString& menu = {});
-	std::shared_ptr<Action> addBoolean(const QString& text, ActionMapper* actions = nullptr, const QString& menu = {});
+	Action* addValue(const QString& text, const QVariant& value, ActionMapper* actions = nullptr, const QString& menu = {});
+	Action* addValue(const QString& text, const char* value, ActionMapper* actions = nullptr, const QString& menu = {});
+	Action* addBoolean(const QString& text, ActionMapper* actions = nullptr, const QString& menu = {});
 
 	QString name() const { return m_name; }
 
@@ -55,8 +53,8 @@ signals:
 	void valueChanged(const QVariant& value);
 
 private:
-	QHash<QObject*, std::function<void(const QVariant&)>> m_slots;
-	QList<std::pair<std::shared_ptr<Action>, QVariant>> m_actions;
+	QMap<QObject*, std::function<void(const QVariant&)>> m_slots;
+	QList<std::pair<Action*, QVariant>> m_actions;
 	QString m_name;
 };
 
@@ -67,16 +65,11 @@ public:
 	constexpr static const char* const PORT = "qt";
 	static const int MRU_LIST_SIZE = 10;
 
-	enum class MRU {
-		ROM,
-		Script
-	};
-
 	ConfigController(QObject* parent = nullptr);
 	~ConfigController();
 
 	const mCoreOptions* options() const { return &m_opts; }
-	bool parseArguments(int argc, char* argv[]);
+	bool parseArguments(mArguments* args, int argc, char* argv[], mSubParser* subparser = nullptr);
 
 	ConfigOption* addOption(const char* key);
 	void updateOption(const char* key);
@@ -86,11 +79,8 @@ public:
 
 	QVariant getQtOption(const QString& key, const QString& group = QString()) const;
 
-	QVariant getArgvOption(const QString& key) const;
-	QVariant takeArgvOption(const QString& key);
-
-	QStringList getMRU(MRU = MRU::ROM) const;
-	QList<QVariant> getList(const QString& group) const;
+	QList<QString> getMRU() const;
+	void setMRU(const QList<QString>& mru);
 
 	Configuration* overrides() { return mCoreConfigGetOverrides(&m_config); }
 	void saveOverride(const Override&);
@@ -100,14 +90,7 @@ public:
 	const mCoreConfig* config() const { return &m_config; }
 	mCoreConfig* config() { return &m_config; }
 
-	const mArguments* args() const { return &m_args; }
-	const mGraphicsOpts* graphicsOpts() const { return &m_graphicsOpts; }
-	QStringList fileNames() const { return m_fnames; }
-	void usage(const char* arg0) const;
-
 	static const QString& configDir();
-	static const QString& cacheDir();
-	static bool isPortable();
 
 public slots:
 	void setOption(const char* key, bool value);
@@ -116,28 +99,18 @@ public slots:
 	void setOption(const char* key, const char* value);
 	void setOption(const char* key, const QVariant& value);
 	void setQtOption(const QString& key, const QVariant& value, const QString& group = QString());
-	void setMRU(const QStringList& mru, MRU = MRU::ROM);
-	void setList(const QString& group, const QList<QVariant>& list);
 
 	void makePortable();
 	void write();
 
 private:
-	static constexpr const char* mruName(ConfigController::MRU);
-
 	Configuration* defaults() { return &m_config.defaultsTable; }
 
 	mCoreConfig m_config;
 	mCoreOptions m_opts{};
-	mArguments m_args{};
-	mGraphicsOpts m_graphicsOpts{};
-	std::array<mSubParser, 2> m_subparsers;
-	QStringList m_fnames;
-	bool m_parsed = false;
 
-	QHash<QString, QVariant> m_argvOptions;
-	QHash<QString, ConfigOption*> m_optionSet;
-	std::unique_ptr<QSettings> m_settings;
+	QMap<QString, ConfigOption*> m_optionSet;
+	QSettings* m_settings;
 	static QString s_configDir;
 };
 

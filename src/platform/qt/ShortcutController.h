@@ -6,7 +6,7 @@
 #pragma once
 
 #include "ActionMapper.h"
-#include "input/GamepadAxisEvent.h"
+#include "GamepadAxisEvent.h"
 
 #include <QHash>
 #include <QMap>
@@ -21,17 +21,16 @@ namespace QGBA {
 
 class ConfigController;
 class InputProfile;
-class ScriptingController;
 
 class Shortcut : public QObject {
 Q_OBJECT
 
 public:
-	Shortcut(std::shared_ptr<Action> action);
+	Shortcut(Action* action);
 
-	std::shared_ptr<Action> action() { return m_action; }
-	const std::shared_ptr<Action> action() const { return m_action; }
-	int shortcut() const { return m_shortcut; }
+	Action* action() { return m_action; }
+	const Action* action() const { return m_action; }
+	const int shortcut() const { return m_shortcut; }
 	QString visibleName() const { return m_action ? m_action->visibleName() : QString(); }
 	QString name() const { return m_action ? m_action->name() : QString(); }
 	int button() const { return m_button; }
@@ -53,11 +52,11 @@ signals:
 	void axisChanged(int axis, GamepadAxisEvent::Direction direction);
 
 private:
-	std::shared_ptr<Action> m_action;
+	Action* m_action = nullptr;
 	int m_shortcut = 0;
 	int m_button = -1;
 	int m_axis = -1;
-	GamepadAxisEvent::Direction m_direction = GamepadAxisEvent::NEUTRAL;
+	GamepadAxisEvent::Direction m_direction;
 };
 
 class ShortcutController : public QObject {
@@ -75,7 +74,6 @@ public:
 
 	void setConfigController(ConfigController* controller);
 	void setActionMapper(ActionMapper* actionMapper);
-	void setScriptingController(ScriptingController* scriptingController);
 
 	void setProfile(const QString& profile);
 
@@ -123,7 +121,6 @@ private:
 	QHash<int, std::shared_ptr<Shortcut>> m_heldKeys;
 	ActionMapper* m_actions = nullptr;
 	ConfigController* m_config = nullptr;
-	ScriptingController* m_scripting = nullptr;
 	QString m_profileName;
 	const InputProfile* m_profile = nullptr;
 };

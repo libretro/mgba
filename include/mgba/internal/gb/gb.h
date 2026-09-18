@@ -27,6 +27,7 @@ extern const uint32_t SGB_SM83_FREQUENCY;
 
 mLOG_DECLARE_CATEGORY(GB);
 
+// TODO: Prefix GBAIRQ
 enum GBIRQ {
 	GB_IRQ_VBLANK = 0x0,
 	GB_IRQ_LCDSTAT = 0x1,
@@ -71,19 +72,6 @@ enum GBSGBCommand {
 	SGB_OBJ_TRN
 };
 
-struct GBXMetadata {
-	enum GBMemoryBankControllerType mbc;
-	bool battery;
-	bool rumble;
-	bool timer;
-	uint32_t romSize;
-	uint32_t ramSize;
-	union {
-		uint8_t u8[32];
-		uint32_t u32[8];
-	} mapperVars;
-};
-
 struct SM83Core;
 struct mCoreSync;
 struct mAVStream;
@@ -97,7 +85,6 @@ struct GB {
 	struct GBAudio audio;
 	struct GBSIO sio;
 	enum GBModel model;
-	struct GBXMetadata gbx;
 
 	struct mCoreSync* sync;
 	struct mTiming timing;
@@ -115,7 +102,7 @@ struct GB {
 	struct VFile* sramRealVf;
 	uint32_t sramSize;
 	int sramDirty;
-	uint32_t sramDirtAge;
+	int32_t sramDirtAge;
 	bool sramMaskWriteback;
 
 	int sgbBit;
@@ -178,7 +165,6 @@ bool GBLoadSave(struct GB* gb, struct VFile* vf);
 void GBUnloadROM(struct GB* gb);
 void GBSynthesizeROM(struct VFile* vf);
 void GBYankROM(struct GB* gb);
-bool GBLoadGBX(struct GBXMetadata* metadata, struct VFile* vf);
 
 void GBLoadBIOS(struct GB* gb, struct VFile* vf);
 
@@ -190,14 +176,13 @@ void GBSavedataUnmask(struct GB* gb);
 struct Patch;
 void GBApplyPatch(struct GB* gb, struct Patch* patch);
 
-void GBGetGameInfo(const struct GB* gba, struct mGameInfo* info);
+void GBGetGameTitle(const struct GB* gba, char* out);
+void GBGetGameCode(const struct GB* gba, char* out);
 
 void GBTestKeypadIRQ(struct GB* gb);
 
 void GBFrameStarted(struct GB* gb);
 void GBFrameEnded(struct GB* gb);
-
-void GBInterrupt(struct GB* gb);
 
 CXX_GUARD_END
 

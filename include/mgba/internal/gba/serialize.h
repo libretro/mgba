@@ -14,13 +14,13 @@ CXX_GUARD_START
 #include <mgba/internal/gba/gba.h>
 #include <mgba/internal/gb/serialize.h>
 
-extern MGBA_EXPORT const uint32_t GBASavestateMagic;
-extern MGBA_EXPORT const uint32_t GBASavestateVersion;
+extern const uint32_t GBA_SAVESTATE_MAGIC;
+extern const uint32_t GBA_SAVESTATE_VERSION;
 
 mLOG_DECLARE_CATEGORY(GBA_STATE);
 
 /* Savestate format:
- * 0x00000 - 0x00003: Version Magic (0x0100000B)
+ * 0x00000 - 0x00003: Version Magic (0x01000001)
  * 0x00004 - 0x00007: BIOS checksum (e.g. 0xBAAE187F for official BIOS)
  * 0x00008 - 0x0000B: ROM CRC32
  * 0x0000C - 0x0000F: Master cycles
@@ -39,23 +39,17 @@ mLOG_DECLARE_CATEGORY(GBA_STATE);
  *   | bits 0 - 6: Remaining length
  *   | bits 7 - 9: Next step
  *   | bits 10 - 20: Shadow frequency register
- *   | bits 21 - 23: Duty index
- *   | bits 24 - 31: Reserved
+ *   | bits 21 - 31: Reserved
  * | 0x00134 - 0x00137: Next frame
- * | 0x00138 - 0x0013B: Reserved
- * | 0x0013C - 0x0013F: Sweep state
- *   | bits 0 - 2: Timesteps
- *   | bits 3 - 7: Reserved
- * | 0x00140 - 0x00143: Last update
+ * | 0x00138 - 0x0013F: Reserved
+ * | 0x00140 - 0x00143: Next event
  * 0x00144 - 0x00153: Audio channel 2 state
  * | 0x00144 - 0x00147: Envelepe timing
  *   | bits 0 - 2: Remaining length
  *   | bits 3 - 5: Next step
- *   | bits 6 - 20: Reserved
- *   | bits 21 - 23: Duty index
- *   | bits 24 - 31: Reserved
+ *   | bits 6 - 31: Reserved
  * | 0x00148 - 0x0014F: Reserved
- * | 0x00150 - 0x00153: Last update
+ * | 0x00150 - 0x00153: Next event
  * 0x00154 - 0x0017B: Audio channel 3 state
  * | 0x00154 - 0x00173: Wave banks
  * | 0x00174 - 0x00175: Remaining length
@@ -71,50 +65,33 @@ mLOG_DECLARE_CATEGORY(GBA_STATE);
  * | 0x00188 - 0x0018B: Next event
  * 0x0018C - 0x001AB: Audio FIFO 1
  * 0x001AC - 0x001CB: Audio FIFO 2
- * 0x001CC - 0x001EF: Audio miscellaneous state
- * | 0x001CC - 0x001CF: Channel A internal audio samples
- * | 0x001D0 - 0x001D3: Channel B internal audio samples
+ * 0x001CC - 0x001DF: Audio miscellaneous state
+ * | 0x001CC - 0x001D3: Reserved
  * | 0x001D4 - 0x001D7: Next sample
- * | 0x001D8: Channel A current sample
- * | 0x001D9: Channel B current sample
- * | 0x001DA - 0x001DB: Flags
- *   | bits 0 - 1: Channel B internal samples remaining
- *   | bits 2 - 4: Channel B readable words
- *   | bits 5 - 6: Channel A internal samples remaining
- *   | bits 7 - 9: Channel A readable words
+ * | 0x001D8 - 0x001DB: FIFO size
  * | TODO: Fix this, they're in big-endian order, but field is little-endian
  * | 0x001DC - 0x001DC: Channel 1 envelope state
  *   | bits 0 - 3: Current volume
  *   | bits 4 - 5: Is dead?
  *   | bit 6: Is high?
-*    | bit 7: Reserved
  * | 0x001DD - 0x001DD: Channel 2 envelope state
  *   | bits 0 - 3: Current volume
  *   | bits 4 - 5: Is dead?
  *   | bit 6: Is high?
-*    | bit 7: Reserved
+*    | bits 7: Reserved
  * | 0x001DE - 0x001DE: Channel 4 envelope state
  *   | bits 0 - 3: Current volume
  *   | bits 4 - 5: Is dead?
- *   | bits 6 - 7: Current frame (continued)
+ *   | bit 6: Is high?
+*    | bits 7: Reserved
  * | 0x001DF - 0x001DF: Miscellaneous audio flags
- *   | bit 0: Current frame (continuation)
- *   | bit 1: Is channel 1 sweep enabled?
- *   | bit 2: Has channel 1 sweep occurred?
- *   | bit 3: Is channel 3's memory readable?
- *   | bit 4: Skip frame
- *   | bits 5 - 7: Reserved
- * | 0x001E0 - 0x001E3: Last sample
- * | 0x001E4 - 0x001E7: Additional audio flags
- *   | bits 0 - 3: Current sample index
- *   | bits 4 - 5: Channel A DMA source
- *   | bits 6 - 7: Channel B DMA source
- *   | bits 8 - 31: Reserved
- * | 0x001E8 - 0x001EF: Reserved
- * 0x001F0 - 0x001FF: Video miscellaneous state
- * | 0x001F0 - 0x001F3: Reserved
- * | 0x001F4 - 0x001F7: Next event
- * | 0x001F8 - 0x001FB: Miscellaneous flags
+ *   | bits 0 - 3: Current frame
+ *   | bit 4: Is channel 1 sweep enabled?
+ *   | bit 5: Has channel 1 sweep occurred?
+ *   | bits 6 - 7: Reserved
+ * 0x001E0 - 0x001FF: Video miscellaneous state
+ * | 0x001E0 - 0x001E3: Next event
+ * | 0x001E4 - 0x001FB: Reserved
  * | 0x001FC - 0x001FF: Frame counter
  * 0x00200 - 0x00213: Timer 0
  * | 0x00200 - 0x00201: Reload value
@@ -165,12 +142,8 @@ mLOG_DECLARE_CATEGORY(GBA_STATE);
  * | 0x00288 - 0x0028B: DMA next count
  * | 0x0028C - 0x0028F: DMA next event
  * 0x00290 - 0x002C3: GPIO state
- * | 0x00290: Pin state
- * | 0x00291: Write latch
- * | 0x00292: Direction state
- * | 0x00293: Flags
- *   | bit 0: RTC SIO output
- *   | bit 1 - 7: Reserved
+ * | 0x00290 - 0x00291: Pin state
+ * | 0x00292 - 0x00293: Direction state
  * | 0x00294 - 0x002B6: RTC state (see hardware.h for format)
  * | 0x002B7 - 0x002B7: GPIO devices
  *   | bit 0: Has RTC values
@@ -187,25 +160,17 @@ mLOG_DECLARE_CATEGORY(GBA_STATE);
  *   | bit 0: Is read enabled
  *   | bit 1: Gyroscope sample is edge
  *   | bit 2: Light sample is edge
- *   | bit 3: RTC SCK is edge
+ *   | bit 3: Reserved
  *   | bits 4 - 15: Light counter
  * | 0x002C0 - 0x002C0: Light sample
- * | 0x002C1: Flags
+ * | 0x002C1 - 0x002C3: Flags
  *   | bits 0 - 1: Tilt state machine
  *   | bits 2 - 3: GB Player inputs posted
- *   | bits 4 - 7: GB Player transmit position
- * | 0x002C2 - 0x002C3: Unlicensed cart flags
- *   | bits 0 - 4: Cartridge type
- *   | bits 5 - 7: Cartridge subtype
- *   | bits 8 - 15: Reserved
- * 0x002C4 - 0x002C7: SIO next event
- * 0x002C8 - 0x002CB: Latched DMA 0 value
- * 0x002CC - 0x002CF: Last DMA transfer PC
- * 0x002D0 - 0x002DF: Matrix memory command buffer
- * | 0x002D0 - 0x002D3: Command
- * | 0x002D4 - 0x002D7: Physical address
- * | 0x002D8 - 0x002DB: Virtual address
- * | 0x002DC - 0x002DF: Size
+ *   | bits 4 - 8: GB Player transmit position
+ *   | bits 9 - 23: Reserved
+ * 0x002C4 - 0x002C7: Game Boy Player next event
+ * 0x002C8 - 0x002CB: Current DMA transfer word
+ * 0x002CC - 0x002DF: Reserved (leave zero)
  * 0x002E0 - 0x002EF: Savedata state
  * | 0x002E0 - 0x002E0: Savedata type
  * | 0x002E1 - 0x002E1: Savedata command (see savedata.h)
@@ -225,47 +190,15 @@ mLOG_DECLARE_CATEGORY(GBA_STATE);
  * | 0x002F4 - 0x002F7: GBA BIOS bus prefetch
  * | 0x002F8 - 0x002FB: CPU prefecth (decode slot)
  * | 0x002FC - 0x002FF: CPU prefetch (fetch slot)
- * 0x00300 - 0x0030F: Reserved (leave zero)
- * 0x00310 - 0x00317: Global cycle counter
+ * 0x00300 - 0x00303: Associated movie stream ID for record/replay (or 0 if no stream)
+ * 0x00304 - 0x00317: Savestate creation time (usec since 1970)
  * 0x00318 - 0x0031B: Last prefetched program counter
  * 0x0031C - 0x0031F: Miscellaneous flags
- * | bit 0: Is CPU halted?
- * | bit 1: POSTFLG
- * | bit 2: Is IRQ pending?
- * | bit 3: Is CPU blocked?
- * | bits 4 - 14: Active key IRQ keys
- * | bits 15 - 31: Reserved
+ *  | bit 0: Is CPU halted?
+ *  | bit 1: POSTFLG
+ *  | bit 2: Is IRQ pending?
  * 0x00320 - 0x00323: Next IRQ event
- * 0x00324 - 0x00327: Interruptable BIOS stall cycles
- * 0x00328 - 0x0036F: Special cartridge state, one of:
- * | Matrix Memory:
- * | 0x00328 - 0x00367: Matrix memory mapping table
- * | 0x00368 - 0x0036F: Reserved (leave zero)
- * | Unlicensed multicart:
- * | 0x00328: Bank value
- * | 0x00329: Offset value
- * | 0x0032A: Size value
- * | 0x0032B: SRAM active value
- * | 0x0032C: Unknown value
- * | 0x0032D: Current size
- * | 0x0032E - 0x0032F: Current bank/offset
- * | 0x00330 - 0x00333: Next settle event
- * | 0x00334 - 0x00337: Flags
- *   | bit 0: Is settling occuring?
- *   | bits 1 - 31: Reserved
- * | 0x00338 - 0x0036F: Reserved (leave zero)
- * 0x00370 - 0x0037F: Audio FIFO A samples
- * 0x00380 - 0x0038F: Audio FIFO B samples
- * 0x00390 - 0x003CF: Audio rendered samples
- * 0x003D0 - 0x003D3: Memory bus value
- * 0x003D4 - 0x003D7: Latched DMA 1 value
- * 0x003D8 - 0x003DB: Latched DMA 2 value
- * 0x003DC - 0x003DF: Latched DMA 3 value
- * 0x003E0 - 0x003E1: Latched DMA 0 count
- * 0x003E2 - 0x003E3: Latched DMA 1 count
- * 0x003E4 - 0x003E5: Latched DMA 2 count
- * 0x003E6 - 0x003E7: Latched DMA 3 count
- * 0x003E8 - 0x003FF: Reserved (leave zero)
+ * 0x00324 - 0x003FF: Reserved (leave zero)
  * 0x00400 - 0x007FF: I/O memory
  * 0x00800 - 0x00BFF: Palette
  * 0x00C00 - 0x00FFF: OAM
@@ -275,42 +208,18 @@ mLOG_DECLARE_CATEGORY(GBA_STATE);
  * Total size: 0x61000 (397,312) bytes
  */
 
-DECL_BITFIELD(GBASerializedAudioFlags, uint16_t);
-DECL_BITS(GBASerializedAudioFlags, FIFOInternalSamplesB, 0, 2);
-DECL_BITS(GBASerializedAudioFlags, FIFOSamplesB, 2, 3); // Yay legacy?
-DECL_BITS(GBASerializedAudioFlags, FIFOInternalSamplesA, 5, 2);
-DECL_BITS(GBASerializedAudioFlags, FIFOSamplesA, 7, 3);
-
-DECL_BITFIELD(GBASerializedAudioFlags2, uint32_t);
-DECL_BITS(GBASerializedAudioFlags2, SampleIndex, 0, 4);
-DECL_BITS(GBASerializedAudioFlags2, ChASource, 4, 2);
-DECL_BITS(GBASerializedAudioFlags2, ChBSource, 6, 2);
-
-DECL_BITFIELD(GBASerializedVideoFlags, uint32_t);
-DECL_BITS(GBASerializedVideoFlags, Mode, 0, 2);
-
 DECL_BITFIELD(GBASerializedHWFlags1, uint16_t);
 DECL_BIT(GBASerializedHWFlags1, ReadWrite, 0);
 DECL_BIT(GBASerializedHWFlags1, GyroEdge, 1);
 DECL_BIT(GBASerializedHWFlags1, LightEdge, 2);
-DECL_BIT(GBASerializedHWFlags1, RtcSckEdge, 3);
 DECL_BITS(GBASerializedHWFlags1, LightCounter, 4, 12);
 
 DECL_BITFIELD(GBASerializedHWFlags2, uint8_t);
 DECL_BITS(GBASerializedHWFlags2, TiltState, 0, 2);
 DECL_BITS(GBASerializedHWFlags2, GbpInputsPosted, 2, 2);
-DECL_BITS(GBASerializedHWFlags2, GbpTxPosition, 4, 4);
+DECL_BITS(GBASerializedHWFlags2, GbpTxPosition, 4, 5);
 
-DECL_BITFIELD(GBASerializedHWFlags3, uint8_t);
-DECL_BITS(GBASerializedHWFlags3, RtcSioOutput, 0, 1);
-
-DECL_BITFIELD(GBASerializedUnlCartFlags, uint16_t);
-DECL_BITS(GBASerializedUnlCartFlags, Type, 0, 5);
-DECL_BITS(GBASerializedUnlCartFlags, Subtype, 5, 3);
-
-DECL_BITFIELD(GBASerializedMulticartFlags, uint32_t);
-DECL_BIT(GBASerializedMulticartFlags, DustSettling, 0);
-DECL_BIT(GBASerializedMulticartFlags, Locked, 1);
+DECL_BITFIELD(GBASerializedHWFlags3, uint16_t);
 
 DECL_BITFIELD(GBASerializedSavedataFlags, uint8_t);
 DECL_BITS(GBASerializedSavedataFlags, FlashState, 0, 2);
@@ -321,14 +230,6 @@ DECL_BITFIELD(GBASerializedMiscFlags, uint32_t);
 DECL_BIT(GBASerializedMiscFlags, Halted, 0);
 DECL_BIT(GBASerializedMiscFlags, POSTFLG, 1);
 DECL_BIT(GBASerializedMiscFlags, IrqPending, 2);
-DECL_BIT(GBASerializedMiscFlags, Blocked, 3);
-DECL_BITS(GBASerializedMiscFlags, KeyIRQKeys, 4, 11);
-
-enum {
-	GBA_SUBSYSTEM_VIDEO_RENDERER = 0,
-	GBA_SUBSYSTEM_SIO_DRIVER = 1,
-	GBA_SUBSYSTEM_MAX,
-};
 
 struct GBASerializedState {
 	uint32_t versionMagic;
@@ -353,25 +254,18 @@ struct GBASerializedState {
 
 	struct {
 		struct GBSerializedPSGState psg;
-		uint32_t fifoA[8];
-		uint32_t fifoB[8];
-		uint32_t internalA;
-		uint32_t internalB;
-		int32_t nextSample;
-		int8_t sampleA;
-		int8_t sampleB;
-		GBASerializedAudioFlags gbaFlags;
-		GBSerializedAudioFlags flags;
-		int32_t lastSample;
-		GBASerializedAudioFlags2 gbaFlags2;
+		uint8_t fifoA[32];
+		uint8_t fifoB[32];
 		int32_t reserved[2];
+		int32_t nextSample;
+		uint32_t fifoSize;
+		GBSerializedAudioFlags flags;
 	} audio;
 
 	struct {
-		int32_t reserved;
 		int32_t nextEvent;
-		GBASerializedVideoFlags flags;
-		uint32_t frameCounter;
+		int32_t reserved[6];
+		int32_t frameCounter;
 	} video;
 
 	struct {
@@ -391,19 +285,9 @@ struct GBASerializedState {
 	} dma[4];
 
 	struct {
-		uint8_t pinState;
-		uint8_t writeLatch;
-		uint8_t pinDirection;
-		GBASerializedHWFlags3 flags3;
-		int32_t rtcBytesRemaining;
-		int32_t reserved0;
-		int32_t rtcBitsRead;
-		int32_t rtcBits;
-		int32_t rtcCommandActive;
-		RTCCommandData rtcCommand;
-		uint8_t rtcControl;
-		uint8_t reserved1[3];
-		uint8_t time[7];
+		uint16_t pinState;
+		uint16_t pinDirection;
+		struct GBARTC rtc;
 		uint8_t devices;
 		uint16_t gyroSample;
 		uint16_t tiltSampleX;
@@ -411,19 +295,13 @@ struct GBASerializedState {
 		GBASerializedHWFlags1 flags1;
 		uint8_t lightSample;
 		GBASerializedHWFlags2 flags2;
-		GBASerializedUnlCartFlags unlCartFlags;
-		uint32_t sioNextEvent;
+		GBASerializedHWFlags3 flags3;
+		uint32_t gbpNextEvent;
 	} hw;
 
 	uint32_t dmaTransferRegister;
-	uint32_t dmaBlockPC;
 
-	struct {
-		uint32_t cmd;
-		uint32_t paddr;
-		uint32_t vaddr;
-		uint32_t size;
-	} matrix;
+	uint32_t reservedHardware[5];
 
 	struct {
 		uint8_t type;
@@ -440,60 +318,22 @@ struct GBASerializedState {
 	uint32_t biosPrefetch;
 	uint32_t cpuPrefetch[2];
 
-	uint32_t reservedCpu[4];
+	uint32_t associatedStreamId;
+	uint32_t reservedRr[5];
 
-	uint64_t globalCycles;
 	uint32_t lastPrefetchedPc;
 	GBASerializedMiscFlags miscFlags;
 	uint32_t nextIrq;
-	int32_t biosStall;
 
-	union {
-		struct {
-			uint32_t mappings[16];
-			uint32_t reserved[2];
-		} matrix2;
-		struct {
-			uint8_t bank;
-			uint8_t offset;
-			uint8_t size;
-			uint8_t sramActive;
-			uint8_t unk;
-			uint8_t currentSize;
-			uint16_t currentOffset;
-			uint32_t settleNextEvent;
-			GBASerializedMulticartFlags flags;
-		} multicart;
-		struct {
-			int16_t sramMode;
-			int16_t romMode;
-			int8_t writeSequence[5];
-			bool acceptingModeChange;
-		} vfame;
-	};
+	uint32_t reserved[55];
 
-	struct {
-		int8_t chA[16];
-		int8_t chB[16];
-	} samples;
-
-	struct mStereoSample currentSamples[GBA_MAX_SAMPLES];
-
-	uint32_t bus;
-	uint32_t dmaLatch[3];
-	uint16_t dmaCountLatch[4];
-
-	uint32_t reserved[6];
-
-	uint16_t io[GBA_SIZE_IO >> 1];
-	uint16_t pram[GBA_SIZE_PALETTE_RAM >> 1];
-	uint16_t oam[GBA_SIZE_OAM >> 1];
-	uint16_t vram[GBA_SIZE_VRAM >> 1];
-	uint8_t iwram[GBA_SIZE_IWRAM];
-	uint8_t wram[GBA_SIZE_EWRAM];
+	uint16_t io[SIZE_IO >> 1];
+	uint16_t pram[SIZE_PALETTE_RAM >> 1];
+	uint16_t oam[SIZE_OAM >> 1];
+	uint16_t vram[SIZE_VRAM >> 1];
+	uint8_t iwram[SIZE_WORKING_IRAM];
+	uint8_t wram[SIZE_WORKING_RAM];
 };
-
-static_assert(sizeof(struct GBASerializedState) == 0x61000, "GBA savestate struct sized wrong");
 
 struct VDir;
 

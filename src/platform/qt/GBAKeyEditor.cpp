@@ -4,7 +4,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 #include "GBAKeyEditor.h"
-#include "moc_GBAKeyEditor.cpp"
 
 #include <QApplication>
 #include <QComboBox>
@@ -14,12 +13,10 @@
 #include <QPushButton>
 #include <QVBoxLayout>
 
-#include "input/InputMapper.h"
 #include "InputController.h"
 #include "KeyEditor.h"
 
 #ifdef BUILD_SDL
-#define SDL_MAIN_HANDLED
 #include "platform/sdl/sdl-events.h"
 #endif
 
@@ -39,6 +36,7 @@ GBAKeyEditor::GBAKeyEditor(InputController* controller, int type, const QString&
 	setWindowFlags(windowFlags() & ~Qt::WindowFullscreenButtonHint);
 	setMinimumSize(300, 300);
 
+	const mInputMap* map = controller->map();
 	controller->stealFocus(this);
 
 	m_keyDU = new KeyEditor(this);
@@ -55,7 +53,7 @@ GBAKeyEditor::GBAKeyEditor(InputController* controller, int type, const QString&
 	refresh();
 
 #ifdef BUILD_SDL
-	if (type == SDL_BINDING_BUTTON || type == SDL_BINDING_CONTROLLER) {
+	if (type == SDL_BINDING_BUTTON) {
 		m_profileSelect = new QComboBox(this);
 		connect(m_profileSelect, static_cast<void(QComboBox::*)(int)>(&QComboBox::currentIndexChanged),
 		        this, &GBAKeyEditor::selectGamepad);
@@ -123,7 +121,6 @@ GBAKeyEditor::GBAKeyEditor(InputController* controller, int type, const QString&
 		connect(key, &KeyEditor::valueChanged, this, &GBAKeyEditor::setNext);
 		connect(key, &KeyEditor::axisChanged, this, &GBAKeyEditor::setNext);
 		connect(key, &KeyEditor::hatChanged, this, &GBAKeyEditor::setNext);
-		key->setInputController(m_controller);
 		key->installEventFilter(this);
 	}
 
@@ -143,7 +140,7 @@ void GBAKeyEditor::setAll() {
 	(*m_currentKey)->setFocus();
 }
 
-void GBAKeyEditor::resizeEvent(QResizeEvent*) {
+void GBAKeyEditor::resizeEvent(QResizeEvent* event) {
 	setLocation(m_buttons, 0.5, 0.2);
 	setLocation(m_keyDU, DPAD_CENTER_X, DPAD_CENTER_Y - DPAD_HEIGHT);
 	setLocation(m_keyDD, DPAD_CENTER_X, DPAD_CENTER_Y + DPAD_HEIGHT);
@@ -165,7 +162,7 @@ void GBAKeyEditor::resizeEvent(QResizeEvent*) {
 	}
 }
 
-void GBAKeyEditor::paintEvent(QPaintEvent*) {
+void GBAKeyEditor::paintEvent(QPaintEvent* event) {
 	QPainter painter(this);
 	painter.scale(width() / 480.0, height() / 480.0);
 	painter.drawPicture(0, 0, m_background);
@@ -218,9 +215,7 @@ void GBAKeyEditor::setNext() {
 
 void GBAKeyEditor::save() {
 #ifdef BUILD_SDL
-	InputMapper mapper = m_controller->mapper(m_type);
-	mapper.unbindAllAxes();
-	mapper.unbindAllHats();
+	m_controller->unbindAllAxes(m_type);
 #endif
 
 	bindKey(m_keyDU, GBA_KEY_UP);
@@ -265,9 +260,9 @@ void GBAKeyEditor::refresh() {
 #endif
 }
 
-void GBAKeyEditor::lookupBinding(const mInputMap* map, KeyEditor* keyEditor, int key) {
+void GBAKeyEditor::lookupBinding(const mInputMap* map, KeyEditor* keyEditor, GBAKey key) {
 #ifdef BUILD_SDL
-	if (m_type == SDL_BINDING_BUTTON || m_type == SDL_BINDING_CONTROLLER) {
+	if (m_type == SDL_BINDING_BUTTON) {
 		int value = mInputQueryBinding(map, m_type, key);
 		keyEditor->setValueButton(value);
 		return;
@@ -280,14 +275,14 @@ void GBAKeyEditor::lookupBinding(const mInputMap* map, KeyEditor* keyEditor, int
 void GBAKeyEditor::lookupAxes(const mInputMap* map) {
 	mInputEnumerateAxes(map, m_type, [](int axis, const mInputAxis* description, void* user) {
 		GBAKeyEditor* self = static_cast<GBAKeyEditor*>(user);
-		if (description->highDirection != -1) {
-			KeyEditor* key = self->keyById(description->highDirection);
+		if (description->highDirection != GBA_KEY_NONE) {
+			KeyEditor* key = self->keyById(static_cast<enum GBAKey>(description->highDirection));
 			if (key) {
 				key->setValueAxis(axis, GamepadAxisEvent::POSITIVE);
 			}
 		}
-		if (description->lowDirection != -1) {
-			KeyEditor* key = self->keyById(description->lowDirection);
+		if (description->lowDirection != GBA_KEY_NONE) {
+			KeyEditor* key = self->keyById(static_cast<enum GBAKey>(description->lowDirection));
 			if (key) {
 				key->setValueAxis(axis, GamepadAxisEvent::NEGATIVE);
 			}
@@ -300,25 +295,25 @@ void GBAKeyEditor::lookupHats(const mInputMap* map) {
 	int i = 0;
 	while (mInputQueryHat(map, m_type, i, &bindings)) {
 		if (bindings.up >= 0) {
-			KeyEditor* key = keyById(bindings.up);
+			KeyEditor* key = keyById(static_cast<enum GBAKey>(bindings.up));
 			if (key) {
 				key->setValueHat(i, GamepadHatEvent::UP);
 			}
 		}
 		if (bindings.right >= 0) {
-			KeyEditor* key = keyById(bindings.right);
+			KeyEditor* key = keyById(static_cast<enum GBAKey>(bindings.right));
 			if (key) {
 				key->setValueHat(i, GamepadHatEvent::RIGHT);
 			}
 		}
 		if (bindings.down >= 0) {
-			KeyEditor* key = keyById(bindings.down);
+			KeyEditor* key = keyById(static_cast<enum GBAKey>(bindings.down));
 			if (key) {
 				key->setValueHat(i, GamepadHatEvent::DOWN);
 			}
 		}
 		if (bindings.left >= 0) {
-			KeyEditor* key = keyById(bindings.left);
+			KeyEditor* key = keyById(static_cast<enum GBAKey>(bindings.left));
 			if (key) {
 				key->setValueHat(i, GamepadHatEvent::LEFT);
 			}
@@ -328,17 +323,16 @@ void GBAKeyEditor::lookupHats(const mInputMap* map) {
 }
 #endif
 
-void GBAKeyEditor::bindKey(const KeyEditor* keyEditor, int key) {
-	InputMapper mapper = m_controller->mapper(m_type);
+void GBAKeyEditor::bindKey(const KeyEditor* keyEditor, GBAKey key) {
 #ifdef BUILD_SDL
-	if ((m_type == SDL_BINDING_BUTTON || m_type == SDL_BINDING_CONTROLLER) && keyEditor->axis() >= 0) {
-		mapper.bindAxis(keyEditor->axis(), keyEditor->direction(), key);
+	if (m_type == SDL_BINDING_BUTTON && keyEditor->axis() >= 0) {
+		m_controller->bindAxis(m_type, keyEditor->axis(), keyEditor->direction(), key);
 	}
 	if (m_type == SDL_BINDING_BUTTON && keyEditor->hat() >= 0) {
-		mapper.bindHat(keyEditor->hat(), keyEditor->hatDirection(), key);
+		m_controller->bindHat(m_type, keyEditor->hat(), keyEditor->hatDirection(), key);
 	}
 #endif
-	mapper.bindKey(keyEditor->value(), key);
+	m_controller->bindKey(m_type, keyEditor->value(), key);
 }
 
 bool GBAKeyEditor::findFocus(KeyEditor* needle) {
@@ -364,7 +358,7 @@ void GBAKeyEditor::selectGamepad(int index) {
 }
 #endif
 
-KeyEditor* GBAKeyEditor::keyById(int key) {
+KeyEditor* GBAKeyEditor::keyById(GBAKey key) {
 	switch (key) {
 	case GBA_KEY_UP:
 		return m_keyDU;
@@ -401,13 +395,14 @@ void GBAKeyEditor::setLocation(QWidget* widget, qreal x, qreal y) {
 
 #ifdef BUILD_SDL
 void GBAKeyEditor::updateJoysticks() {
-	m_controller->update();
+	m_controller->updateJoysticks();
+	m_controller->recalibrateAxes();
 
 	// Block the currentIndexChanged signal while rearranging the combo box
 	auto wasBlocked = m_profileSelect->blockSignals(true);
 	m_profileSelect->clear();
 	m_profileSelect->addItems(m_controller->connectedGamepads(m_type));
-	int activeGamepad = m_controller->gamepadIndex(m_type);
+	int activeGamepad = m_controller->gamepad(m_type);
 	m_profileSelect->setCurrentIndex(activeGamepad);
 	m_profileSelect->blockSignals(wasBlocked);
 

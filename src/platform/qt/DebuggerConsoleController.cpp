@@ -4,14 +4,10 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 #include "DebuggerConsoleController.h"
-#include "moc_DebuggerConsoleController.cpp"
 
-#include "ConfigController.h"
 #include "CoreController.h"
-#include "LogController.h"
 
 #include <QMutexLocker>
-#include <QThread>
 
 #include <mgba/internal/debugger/cli-debugger.h>
 
@@ -19,57 +15,41 @@ using namespace QGBA;
 
 DebuggerConsoleController::DebuggerConsoleController(QObject* parent)
 	: DebuggerController(&m_cliDebugger.d, parent)
-	, m_history(new QStringListModel(this))
 {
-	m_backend.printf = printf;
-	m_backend.init = init;
-	m_backend.deinit = deinit;
-	m_backend.poll = poll;
-	m_backend.readline = readLine;
-	m_backend.lineAppend = lineAppend;
-	m_backend.historyLast = historyLast;
-	m_backend.historyAppend = historyAppend;
-	m_backend.interrupt = interrupt;
+	m_backend.d.printf = printf;
+	m_backend.d.init = init;
+	m_backend.d.deinit = deinit;
+	m_backend.d.readline = readLine;
+	m_backend.d.lineAppend = lineAppend;
+	m_backend.d.historyLast = historyLast;
+	m_backend.d.historyAppend = historyAppend;
 	m_backend.self = this;
 
 	CLIDebuggerCreate(&m_cliDebugger);
-	CLIDebuggerAttachBackend(&m_cliDebugger, &m_backend);
-}
-
-bool DebuggerConsoleController::isPaused() {
-	CoreController::Interrupter interrupter(m_gameController);
-	QMutexLocker lock(&m_mutex);
-	return m_cliDebugger.d.isPaused;
+	CLIDebuggerAttachBackend(&m_cliDebugger, &m_backend.d);
 }
 
 void DebuggerConsoleController::enterLine(const QString& line) {
-	CoreController::Interrupter interrupter(m_gameController);
 	QMutexLocker lock(&m_mutex);
 	m_lines.append(line);
-	if (m_cliDebugger.d.p && m_cliDebugger.d.p->state == DEBUGGER_RUNNING) {
-		mDebuggerEnter(m_cliDebugger.d.p, DEBUGGER_ENTER_MANUAL, nullptr);
+	if (m_cliDebugger.d.state == DEBUGGER_RUNNING) {
+		mDebuggerEnter(&m_cliDebugger.d, DEBUGGER_ENTER_MANUAL, nullptr);
 	}
 	m_cond.wakeOne();
 }
 
 void DebuggerConsoleController::detach() {
-	{
-		CoreController::Interrupter interrupter(m_gameController);
-		QMutexLocker lock(&m_mutex);
-		if (m_cliDebugger.d.p && m_cliDebugger.d.p->state != DEBUGGER_SHUTDOWN) {
-			m_lines.append(QString());
-			m_cond.wakeOne();
-		}
+	if (m_cliDebugger.d.state != DEBUGGER_SHUTDOWN) {
+		m_lines.append(QString());
+		m_cond.wakeOne();
 	}
 	DebuggerController::detach();
-	historySave();
 }
 
 void DebuggerConsoleController::attachInternal() {
-	CoreController::Interrupter interrupter(m_gameController);
-	QMutexLocker lock(&m_mutex);
+	m_history.clear();
 	mCore* core = m_gameController->thread()->core;
-	CLIDebuggerAttachBackend(&m_cliDebugger, &m_backend);
+	CLIDebuggerAttachBackend(&m_cliDebugger, &m_backend.d);
 	CLIDebuggerAttachSystem(&m_cliDebugger, core->cliDebuggerSystem(core));
 }
 
@@ -78,36 +58,28 @@ void DebuggerConsoleController::printf(struct CLIDebuggerBackend* be, const char
 	DebuggerConsoleController* self = consoleBe->self;
 	va_list args;
 	va_start(args, fmt);
-	self->log(QString::vasprintf(fmt, args));
+	self->log(QString().vsprintf(fmt, args));
 	va_end(args);
 }
 
 void DebuggerConsoleController::init(struct CLIDebuggerBackend* be) {
 	Backend* consoleBe = reinterpret_cast<Backend*>(be);
 	DebuggerConsoleController* self = consoleBe->self;
-	UNUSED(self);
 }
 
 void DebuggerConsoleController::deinit(struct CLIDebuggerBackend* be) {
 	Backend* consoleBe = reinterpret_cast<Backend*>(be);
 	DebuggerConsoleController* self = consoleBe->self;
-	if (QThread::currentThread() == self->thread() && be->p->d.p->state != DEBUGGER_SHUTDOWN) {
+	if (be->p->d.state != DEBUGGER_SHUTDOWN) {
 		self->m_lines.append(QString());
 		self->m_cond.wakeOne();
 	}
 }
 
-int DebuggerConsoleController::poll(struct CLIDebuggerBackend* be, int32_t timeoutMs) {
-	Backend* consoleBe = reinterpret_cast<Backend*>(be);
-	DebuggerConsoleController* self = consoleBe->self;
-	QMutexLocker lock(&self->m_mutex);
-	self->m_cond.wait(&self->m_mutex, timeoutMs < 0 ? ULONG_MAX : static_cast<unsigned long>(timeoutMs));
-	return !self->m_lines.isEmpty();
-}
-
 const char* DebuggerConsoleController::readLine(struct CLIDebuggerBackend* be, size_t* len) {
 	Backend* consoleBe = reinterpret_cast<Backend*>(be);
 	DebuggerConsoleController* self = consoleBe->self;
+	CoreController::Interrupter interrupter(self->m_gameController, true);
 	QMutexLocker lock(&self->m_mutex);
 	while (self->m_lines.isEmpty()) {
 		self->m_cond.wait(&self->m_mutex);
@@ -131,73 +103,19 @@ void DebuggerConsoleController::lineAppend(struct CLIDebuggerBackend* be, const 
 const char* DebuggerConsoleController::historyLast(struct CLIDebuggerBackend* be, size_t* len) {
 	Backend* consoleBe = reinterpret_cast<Backend*>(be);
 	DebuggerConsoleController* self = consoleBe->self;
-	CoreController::Interrupter interrupter(self->m_gameController);
+	CoreController::Interrupter interrupter(self->m_gameController, true);
 	QMutexLocker lock(&self->m_mutex);
-	int rowCount = self->m_history->rowCount();
-	if (rowCount == 0) {
+	if (self->m_history.isEmpty()) {
 		return "i";
 	}
-
-	QModelIndex index = self->m_history->index(rowCount - 1, 0);
-	self->m_last = self->m_history->data(index, Qt::DisplayRole).toString().toUtf8();
-	*len = self->m_last.size();
+	self->m_last = self->m_history.last().toUtf8();
 	return self->m_last.constData();
 }
 
 void DebuggerConsoleController::historyAppend(struct CLIDebuggerBackend* be, const char* line) {
 	Backend* consoleBe = reinterpret_cast<Backend*>(be);
 	DebuggerConsoleController* self = consoleBe->self;
-	CoreController::Interrupter interrupter(self->m_gameController);
+	CoreController::Interrupter interrupter(self->m_gameController, true);
 	QMutexLocker lock(&self->m_mutex);
-	int rowCount = self->m_history->rowCount();
-	self->m_history->insertRows(rowCount, 1);
-	QModelIndex index = self->m_history->index(rowCount, 0);
-	self->m_history->setData(index, QString::fromUtf8(line), Qt::DisplayRole);
-}
-
-void DebuggerConsoleController::interrupt(struct CLIDebuggerBackend* be) {
-	Backend* consoleBe = reinterpret_cast<Backend*>(be);
-	DebuggerConsoleController* self = consoleBe->self;
-	QMutexLocker lock(&self->m_mutex);
-	self->m_cond.wakeOne();
-}
-
-void DebuggerConsoleController::historyLoad() {
-	QFile log(ConfigController::configDir() + "/cli_history.log");
-	QStringList history;
-	if (!log.open(QIODevice::ReadOnly | QIODevice::Text)) {
-		return;
-	}
-	while (true) {
-		QByteArray line = log.readLine();
-		if (line.isEmpty()) {
-			break;
-		}
-		if (line.endsWith("\r\n")) {
-			line.chop(2);
-		} else if (line.endsWith("\n")) {
-			line.chop(1);
-		}
-		history.append(QString::fromUtf8(line));
-	}
-	QMutexLocker lock(&m_mutex);
-	m_history->setStringList(history);
-}
-
-void DebuggerConsoleController::historySave() {
-	QFile log(ConfigController::configDir() + "/cli_history.log");
-	if (!log.open(QIODevice::WriteOnly | QIODevice::Text)) {
-		LOG(QT, WARN) << tr("Could not open CLI history for writing");
-		return;
-	}
-	for (const QString& line : m_history->stringList()) {
-		log.write(line.toUtf8());
-		log.write("\n");
-	}
-}
-
-void DebuggerConsoleController::doContinue() {
-	CoreController::Interrupter interrupter(m_gameController);
-	QMutexLocker lock(&m_mutex);
-	CLIDebuggerContinue(&m_cliDebugger);
+	self->m_history.append(QString::fromUtf8(line));
 }

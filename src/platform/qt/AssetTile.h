@@ -29,7 +29,6 @@ public slots:
 	void selectIndex(int);
 	void setFlip(bool h, bool v);
 	void selectColor(int);
-	void setMaxTile(int);
 
 protected:
 	int customLocation(const QString& id = {}) override;
@@ -46,7 +45,6 @@ private:
 	int m_addressBase;
 	int m_boundary;
 	int m_boundaryBase;
-	int m_maxTile;
 	bool m_flipH = false;
 	bool m_flipV = false;
 

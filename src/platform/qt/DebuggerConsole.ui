@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <ui version="4.0">
- <class>QGBA::DebuggerConsole</class>
- <widget class="QWidget" name="QGBA::DebuggerConsole">
+ <class>DebuggerConsole</class>
+ <widget class="QWidget" name="DebuggerConsole">
   <property name="geometry">
    <rect>
     <x>0</x>
@@ -14,15 +14,13 @@
    <string>Debugger</string>
   </property>
   <layout class="QGridLayout" name="gridLayout">
-   <item row="0" column="0" colspan="3">
-    <widget class="QGBA::LogWidget" name="log">
-     <property name="readOnly">
-      <bool>true</bool>
-     </property>
-    </widget>
-   </item>
    <item row="1" column="0">
-    <widget class="QGBA::HistoryLineEdit" name="prompt">
+    <widget class="QLineEdit" name="prompt">
+     <property name="font">
+      <font>
+       <family>Source Code Pro</family>
+      </font>
+     </property>
      <property name="placeholderText">
       <string>Enter command (try `help` for more info)</string>
      </property>
@@ -35,30 +33,20 @@
      </property>
     </widget>
    </item>
-   <item row="1" column="2">
-    <widget class="QPushButton" name="doContinue">
-     <property name="enabled">
-      <bool>false</bool>
+   <item row="0" column="0" colspan="2">
+    <widget class="QPlainTextEdit" name="log">
+     <property name="font">
+      <font>
+       <family>Source Code Pro</family>
+      </font>
      </property>
-     <property name="text">
-      <string>Continue</string>
+     <property name="readOnly">
+      <bool>true</bool>
      </property>
     </widget>
    </item>
   </layout>
  </widget>
- <customwidgets>
-  <customwidget>
-   <class>QGBA::LogWidget</class>
-   <extends>QPlainTextEdit</extends>
-   <header>LogWidget.h</header>
-  </customwidget>
-  <customwidget>
-   <class>QGBA::HistoryLineEdit</class>
-   <extends>QLineEdit</extends>
-   <header>HistoryLineEdit.h</header>
-  </customwidget>
- </customwidgets>
  <resources/>
  <connections/>
 </ui>

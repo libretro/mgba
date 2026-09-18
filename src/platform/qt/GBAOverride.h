@@ -7,18 +7,17 @@
 
 #include "Override.h"
 
-#include <mgba/gba/interface.h>
+#include <mgba/internal/gba/overrides.h>
 
 namespace QGBA {
 
 class GBAOverride : public Override {
 public:
+	void apply(struct mCore*) override;
 	void identify(const struct mCore*) override;
 	void save(struct Configuration*) const override;
-	const void* raw() const override;
 
 	struct GBACartridgeOverride override;
-	bool vbaBugCompatSet;
 };
 
 }

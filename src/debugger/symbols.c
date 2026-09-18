@@ -7,7 +7,6 @@
 
 #include <mgba-util/string.h>
 #include <mgba-util/table.h>
-#include <mgba-util/hash.h>
 #include <mgba-util/vfs.h>
 
 struct mDebuggerSymbol {
@@ -17,19 +16,16 @@ struct mDebuggerSymbol {
 
 struct mDebuggerSymbols {
 	struct Table names;
-	struct Table reverse;
 };
 
 struct mDebuggerSymbols* mDebuggerSymbolTableCreate(void) {
 	struct mDebuggerSymbols* st = malloc(sizeof(*st));
 	HashTableInit(&st->names, 0, free);
-	HashTableInit(&st->reverse, 0, free);
 	return st;
 }
 
 void mDebuggerSymbolTableDestroy(struct mDebuggerSymbols* st) {
 	HashTableDeinit(&st->names);
-	HashTableDeinit(&st->reverse);
 	free(st);
 }
 
@@ -43,25 +39,15 @@ bool mDebuggerSymbolLookup(const struct mDebuggerSymbols* st, const char* name, 
 	return true;
 }
 
-const char* mDebuggerSymbolReverseLookup(const struct mDebuggerSymbols* st, int32_t value, int segment) {
-	struct mDebuggerSymbol sym = { value, segment };
-	return HashTableLookupBinary(&st->reverse, &sym, sizeof(sym));
-}
-
 void mDebuggerSymbolAdd(struct mDebuggerSymbols* st, const char* name, int32_t value, int segment) {
 	struct mDebuggerSymbol* sym = malloc(sizeof(*sym));
 	sym->value = value;
 	sym->segment = segment;
 	HashTableInsert(&st->names, name, sym);
-	HashTableInsertBinary(&st->reverse, sym, sizeof(*sym), strdup(name));
 }
 
 void mDebuggerSymbolRemove(struct mDebuggerSymbols* st, const char* name) {
-	struct mDebuggerSymbol* sym = HashTableLookup(&st->names, name);
-	if (sym) {
-		HashTableRemoveBinary(&st->reverse, sym, sizeof(*sym));
-		HashTableRemove(&st->names, name);
-	}
+	HashTableRemove(&st->names, name);
 }
 
 void mDebuggerLoadARMIPSSymbols(struct mDebuggerSymbols* st, struct VFile* vf) {
@@ -76,8 +62,8 @@ void mDebuggerLoadARMIPSSymbols(struct mDebuggerSymbols* st, struct VFile* vf) {
 			line[bytesRead - 1] = '\0';
 		}
 		uint32_t address = 0;
-		char* buf = line;
-		buf = (char*) hex32(buf, &address);
+		const char* buf = line;
+		buf = hex32(buf, &address);
 		if (!buf) {
 			continue;
 		}
@@ -95,13 +81,6 @@ void mDebuggerLoadARMIPSSymbols(struct mDebuggerSymbols* st, struct VFile* vf) {
 		if (buf[0] == '.') {
 			// Directives are not handled yet
 			continue;
-		}
-
-		char* buf2 = strchr(buf, ',');
-
-		if (buf2 != NULL) {
-			// Commas separate names from function sizes
-			*buf2 = '\0';
 		}
 
 		mDebuggerSymbolAdd(st, buf, address, -1);

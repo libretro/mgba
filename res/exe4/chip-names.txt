@@ -17,10 +17,10 @@ Vulcan2
 Vulcan3
 Spreader
 HeatShot
-Heat-V
+HeatV
 HeatSide
 Bubbler
-Bubble-V
+BubbleV
 BubbleSide
 ElementFlare
 ElementIce
@@ -50,13 +50,13 @@ WideSword
 LongSword
 WideBlade
 LongBlade
-WindRack
+WindRacket
 CustomSword
 VariableSword
 Slasher
-Thunder1
-Thunder2
-Thunder3
+ThunderBall1
+ThunderBall2
+ThunderBall3
 Counter1
 Counter2
 Counter3
@@ -80,9 +80,9 @@ SideBamboo2
 SideBamboo3
 Lance
 Hole
-BoyBomb1
-BoyBomb2
-BoyBomb3
+Boy'sBomb1
+Boy'sBomb2
+Boy'sBomb3
 Guard1
 Guard2
 Guard3
@@ -171,7 +171,7 @@ BlackWing
 GodHammer
 DarkLine
 NeoVariable
-Z-Saber
+ZSaber
 GunDelSolEX
 SuperVulcan
 Roll
@@ -236,7 +236,7 @@ VideoManSP
 VideoManDS
 Marking
 CannonMode
-BallMode
+CannonballMode
 SwordMode
 FirePlus
 ThunderPlus
@@ -292,24 +292,24 @@ BugFix
 Sanctuary
 SignalRed
 BlackBarrier
-MegaMan Navi
-Roll Navi
-GutsMan Navi
-WindMan Navi
-SearchMan Navi
-FireMan Navi
-ThunderMan Navi
-ProtoMan Navi
-NumberMan Navi
-MetalMan Navi
-JunkMan Navi
-AquaMan Navi
-WoodMan Navi
-StarMan Navi
-IceMan Navi
-ShadowMan Navi
-ElecMan Navi
-KnightMan Navi
-PlantMan Navi
-NapalmMan Navi
-Bass Navi
+MegaManNavi
+RollNavi
+GutsManNavi
+WindManNavi
+SearchManNavi
+FireManNavi
+ThunderManNavi
+ProtoManNavi
+NumberManNavi
+MetalManNavi
+JunkManNavi
+AquaManNavi
+WoodManNavi
+StarManNavi
+IceManNavi
+ShadowManNavi
+ElecManNavi
+KnightManNavi
+PlantManNavi
+NapalmManNavi
+BassNavi

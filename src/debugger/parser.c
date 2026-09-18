@@ -493,21 +493,16 @@ static const int _operatorPrecedence[] = {
 	[OP_DEREFERENCE] = 2,
 };
 
-struct ParseTree* parseTreeCreate(void) {
+static struct ParseTree* _parseTreeCreate() {
 	struct ParseTree* tree = malloc(sizeof(struct ParseTree));
 	tree->token.type = TOKEN_ERROR_TYPE;
-	tree->p = NULL;
-	tree->rhs = NULL;
-	tree->lhs = NULL;
-	tree->precedence = INT_MAX;
+	tree->rhs = 0;
+	tree->lhs = 0;
 	return tree;
 }
 
-static size_t _parseExpression(struct ParseTree* tree, struct LexVector* lv, int* openParens) {
-	struct ParseTree* newTree = NULL;
-	bool pop = false;
-	int precedence = INT_MAX;
-	size_t i = 0;
+static size_t _parseExpression(struct ParseTree* tree, struct LexVector* lv, size_t i, int precedence, int* openParens) {
+	struct ParseTree* newTree = 0;
 	while (i < LexVectorSize(lv)) {
 		struct Token* token = LexVectorGetPointer(lv, i);
 		int newPrecedence;
@@ -522,36 +517,27 @@ static size_t _parseExpression(struct ParseTree* tree, struct LexVector* lv, int
 				++i;
 			} else {
 				tree->token.type = TOKEN_ERROR_TYPE;
-				++i;
-				pop = true;
+				return i + 1;
 			}
 			break;
 		case TOKEN_SEGMENT_TYPE:
-			tree->lhs = parseTreeCreate();
+			tree->lhs = _parseTreeCreate();
 			tree->lhs->token.type = TOKEN_UINT_TYPE;
 			tree->lhs->token.uintValue = token->uintValue;
-			tree->lhs->p = tree;
-			tree->lhs->precedence = precedence;
-			tree->rhs = parseTreeCreate();
-			tree->rhs->p = tree;
-			tree->rhs->precedence = precedence;
+			tree->rhs = _parseTreeCreate();
 			tree->token.type = TOKEN_SEGMENT_TYPE;
-			tree = tree->rhs;
-			++i;
+			i = _parseExpression(tree->rhs, lv, i + 1, precedence, openParens);
 			break;
 		case TOKEN_OPEN_PAREN_TYPE:
 			++*openParens;
-			precedence = INT_MAX;
-			++i;
+			i = _parseExpression(tree, lv, i + 1, INT_MAX, openParens);
 			break;
 		case TOKEN_CLOSE_PAREN_TYPE:
 			if (*openParens <= 0) {
 				tree->token.type = TOKEN_ERROR_TYPE;
 			}
 			--*openParens;
-			++i;
-			pop = true;
-			break;
+			return i + 1;
 		case TOKEN_OPERATOR_TYPE:
 			if (tree->token.type == TOKEN_ERROR_TYPE) {
 				switch (token->operatorValue) {
@@ -570,71 +556,45 @@ static size_t _parseExpression(struct ParseTree* tree, struct LexVector* lv, int
 			}
 			newPrecedence = _operatorPrecedence[token->operatorValue];
 			if (newPrecedence < precedence) {
-				newTree = parseTreeCreate();
-				memcpy(newTree, tree, sizeof(*tree));
-				if (newTree->lhs) {
-					newTree->lhs->p = newTree;
-				}
-				if (newTree->rhs) {
-					newTree->rhs->p = newTree;
-				}
-				newTree->p = tree;
+				newTree = _parseTreeCreate();
+				*newTree = *tree;
 				tree->lhs = newTree;
-				tree->rhs = parseTreeCreate();
-				tree->rhs->p = tree;
-				tree->rhs->precedence = newPrecedence;
-				precedence = newPrecedence;
+				tree->rhs = _parseTreeCreate();
 				tree->token = *token;
-				tree = tree->rhs;
-				++i;
+				i = _parseExpression(tree->rhs, lv, i + 1, newPrecedence, openParens);
+				if (tree->token.type == TOKEN_ERROR_TYPE) {
+					tree->token.type = TOKEN_ERROR_TYPE;
+				}
 			} else {
-				pop = true;
+				return i;
 			}
 			break;
 		case TOKEN_ERROR_TYPE:
 			tree->token.type = TOKEN_ERROR_TYPE;
-			++i;
-			pop = true;
-			break;
-		}
-
-		if (pop) {
-			if (tree->token.type == TOKEN_ERROR_TYPE && tree->p) {
-				tree->p->token.type = TOKEN_ERROR_TYPE;
-			}
-			tree = tree->p;
-			pop = false;
-			if (!tree) {
-				break;
-			} else {
-				precedence = tree->precedence;
-			}
+			return i + 1;
 		}
 	}
 
 	return i;
 }
 
-bool parseLexedExpression(struct ParseTree* tree, struct LexVector* lv) {
+void parseLexedExpression(struct ParseTree* tree, struct LexVector* lv) {
 	if (!tree) {
-		return false;
+		return;
 	}
 
 	tree->token.type = TOKEN_ERROR_TYPE;
-	tree->lhs = NULL;
-	tree->rhs = NULL;
-	tree->p = NULL;
-	tree->precedence = INT_MAX;
+	tree->lhs = 0;
+	tree->rhs = 0;
 
 	int openParens = 0;
-	_parseExpression(tree, lv, &openParens);
+	_parseExpression(tree, lv, 0, INT_MAX, &openParens);
 	if (openParens) {
 		if (tree->token.type == TOKEN_IDENTIFIER_TYPE) {
 			free(tree->token.identifierValue);
 		}
 		tree->token.type = TOKEN_ERROR_TYPE;
 	}
-	return tree->token.type != TOKEN_ERROR_TYPE;
 }
 
 void lexFree(struct LexVector* lv) {
@@ -647,39 +607,22 @@ void lexFree(struct LexVector* lv) {
 	}
 }
 
-static void _freeTree(struct ParseTree* tree) {
+void parseFree(struct ParseTree* tree) {
+	if (!tree) {
+		return;
+	}
+
+	if (tree->lhs) {
+		parseFree(tree->lhs);
+		free(tree->lhs);
+	}
+	if (tree->rhs) {
+		parseFree(tree->rhs);
+		free(tree->rhs);
+	}
+
 	if (tree->token.type == TOKEN_IDENTIFIER_TYPE) {
 		free(tree->token.identifierValue);
-	}
-	free(tree);
-}
-
-void parseFree(struct ParseTree* tree) {
-	while (tree) {
-		if (tree->lhs) {
-			tree = tree->lhs;
-			continue;
-		}
-		if (tree->rhs) {
-			tree = tree->rhs;
-			continue;
-		}
-		if (tree->p) {
-			if (tree->p->lhs == tree) {
-				tree = tree->p;
-				_freeTree(tree->lhs);
-				tree->lhs = NULL;
-			} else if (tree->p->rhs == tree) {
-				tree = tree->p;
-				_freeTree(tree->rhs);
-				tree->rhs = NULL;
-			} else {
-				abort();
-			}
-		} else {
-			_freeTree(tree);
-			break;
-		}
 	}
 }
 
@@ -778,125 +721,56 @@ bool mDebuggerEvaluateParseTree(struct mDebugger* debugger, struct ParseTree* tr
 	if (!value) {
 		return false;
 	}
-	struct IntList stack;
-	int nextBranch;
-	bool ok = true;
-	int32_t tmpVal = 0;
-	int32_t tmpSegment = -1;
-
-	IntListInit(&stack, 0);
-	while (ok) {
-		switch (tree->token.type) {
-		case TOKEN_UINT_TYPE:
-			nextBranch = 2;
-			tmpSegment = -1;
-			tmpVal = tree->token.uintValue;
-			break;
-		case TOKEN_SEGMENT_TYPE:
-			nextBranch = 0;
-			break;
-		case TOKEN_OPERATOR_TYPE:
-			switch (tree->token.operatorValue) {
-			case OP_ASSIGN:
-			case OP_ADD:
-			case OP_SUBTRACT:
-			case OP_MULTIPLY:
-			case OP_DIVIDE:
-			case OP_MODULO:
-			case OP_AND:
-			case OP_OR:
-			case OP_XOR:
-			case OP_LESS:
-			case OP_GREATER:
-			case OP_EQUAL:
-			case OP_NOT_EQUAL:
-			case OP_LOGICAL_AND:
-			case OP_LOGICAL_OR:
-			case OP_LE:
-			case OP_GE:
-			case OP_SHIFT_L:
-			case OP_SHIFT_R:
-				nextBranch = 0;
-				break;
-			default:
-				nextBranch = 1;
-				break;
-			}
-			break;
-		case TOKEN_IDENTIFIER_TYPE:
-			if (!mDebuggerLookupIdentifier(debugger, tree->token.identifierValue, &tmpVal, &tmpSegment)) {
-				ok = false;
-			}
-			nextBranch = 2;
-			break;
-		case TOKEN_ERROR_TYPE:
-		default:
-			ok = false;
-			break;
-		}
-		if (!ok) {
-			break;
-		}
-
-		bool gotTree = false;
-		while (!gotTree && tree) {
-			int32_t lhs, rhs;
-
-			switch (nextBranch) {
-			case 0:
-				*IntListAppend(&stack) = tmpVal;
-				*IntListAppend(&stack) = tmpSegment;
-				*IntListAppend(&stack) = nextBranch;
-				tree = tree->lhs;
-				gotTree = true;
-				break;
-			case 1:
-				*IntListAppend(&stack) = tmpVal;
-				*IntListAppend(&stack) = tmpSegment;
-				*IntListAppend(&stack) = nextBranch;
-				tree = tree->rhs;
-				gotTree = true;
-				break;
-			case 2:
-				if (!IntListSize(&stack)) {
-					tree = NULL;
-					break;
-				}
-				nextBranch = *IntListGetPointer(&stack, IntListSize(&stack) - 1);
-				IntListResize(&stack, -1);
-				tree = tree->p;
-				if (nextBranch == 0) {
-					++nextBranch;
-				} else if (tree) {
-					nextBranch = 2;
-					switch (tree->token.type) {
-					case TOKEN_OPERATOR_TYPE:
-						rhs = tmpVal;
-						lhs = *IntListGetPointer(&stack, IntListSize(&stack) - 2);
-						tmpSegment = *IntListGetPointer(&stack, IntListSize(&stack) - 1);
-						ok = _performOperation(debugger, tree->token.operatorValue, lhs, rhs, &tmpVal, &tmpSegment);
-						break;
-					case TOKEN_SEGMENT_TYPE:
-						tmpSegment = *IntListGetPointer(&stack, IntListSize(&stack) - 2);
-						break;
-					default:
-						break;
-					}
-				}
-				IntListResize(&stack, -2);
-				break;
-			}
-		}
-		if (!tree) {
-			break;
-		}
-	}
-	IntListDeinit(&stack);
-	if (ok) {
-		*value = tmpVal;
+	int32_t lhs, rhs;
+	switch (tree->token.type) {
+	case TOKEN_UINT_TYPE:
 		if (segment) {
-			*segment = tmpSegment;
+			*segment = -1;
 		}
+		*value = tree->token.uintValue;
+		return true;
+	case TOKEN_SEGMENT_TYPE:
+		if (!mDebuggerEvaluateParseTree(debugger, tree->rhs, value, segment)) {
+			return false;
+		}
+		return mDebuggerEvaluateParseTree(debugger, tree->lhs, segment, NULL);
+	case TOKEN_OPERATOR_TYPE:
+		switch (tree->token.operatorValue) {
+		case OP_ASSIGN:
+		case OP_ADD:
+		case OP_SUBTRACT:
+		case OP_MULTIPLY:
+		case OP_DIVIDE:
+		case OP_MODULO:
+		case OP_AND:
+		case OP_OR:
+		case OP_XOR:
+		case OP_LESS:
+		case OP_GREATER:
+		case OP_EQUAL:
+		case OP_NOT_EQUAL:
+		case OP_LOGICAL_AND:
+		case OP_LOGICAL_OR:
+		case OP_LE:
+		case OP_GE:
+		case OP_SHIFT_L:
+		case OP_SHIFT_R:
+			if (!mDebuggerEvaluateParseTree(debugger, tree->lhs, &lhs, segment)) {
+				return false;
+			}
+			// Fall through
+		default:
+			if (!mDebuggerEvaluateParseTree(debugger, tree->rhs, &rhs, segment)) {
+				return false;
+			}
+			break;
+		}
+		return _performOperation(debugger, tree->token.operatorValue, lhs, rhs, value, segment);
+	case TOKEN_IDENTIFIER_TYPE:
+		return mDebuggerLookupIdentifier(debugger, tree->token.identifierValue, value, segment);
+	case TOKEN_ERROR_TYPE:
+	default:
+		break;
 	}
-	return ok;
+	return false;
 }

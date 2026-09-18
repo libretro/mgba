@@ -23,12 +23,12 @@ class GBA(Core):
     KEY_L = lib.GBA_KEY_L
     KEY_R = lib.GBA_KEY_R
 
-    SIO_NORMAL_8 = lib.GBA_SIO_NORMAL_8
-    SIO_NORMAL_32 = lib.GBA_SIO_NORMAL_32
-    SIO_MULTI = lib.GBA_SIO_MULTI
-    SIO_UART = lib.GBA_SIO_UART
-    SIO_JOYBUS = lib.GBA_SIO_JOYBUS
-    SIO_GPIO = lib.GBA_SIO_GPIO
+    SIO_NORMAL_8 = lib.SIO_NORMAL_8
+    SIO_NORMAL_32 = lib.SIO_NORMAL_32
+    SIO_MULTI = lib.SIO_MULTI
+    SIO_UART = lib.SIO_UART
+    SIO_JOYBUS = lib.SIO_JOYBUS
+    SIO_GPIO = lib.SIO_GPIO
 
     def __init__(self, native):
         super(GBA, self).__init__(native)
@@ -52,23 +52,90 @@ class GBA(Core):
         super(GBA, self)._load()
         self.memory = GBAMemory(self._core, self._native.memory.romSize)
 
+    def attach_sio(self, link, mode=lib.SIO_MULTI):
+        self._sio.add(mode)
+        lib.GBASIOSetDriver(ffi.addressof(self._native.sio), link._native, mode)
+
+    def __del__(self):
+        for mode in self._sio:
+            lib.GBASIOSetDriver(ffi.addressof(self._native.sio), ffi.NULL, mode)
+
+
+create_callback("GBASIOPythonDriver", "init")
+create_callback("GBASIOPythonDriver", "deinit")
+create_callback("GBASIOPythonDriver", "load")
+create_callback("GBASIOPythonDriver", "unload")
+create_callback("GBASIOPythonDriver", "writeRegister")
+
+
+class GBASIODriver(object):
+    def __init__(self):
+        super(GBASIODriver, self).__init__()
+
+        self._handle = ffi.new_handle(self)
+        self._native = ffi.gc(lib.GBASIOPythonDriverCreate(self._handle), lib.free)
+
+    def init(self):
+        return True
+
+    def deinit(self):
+        pass
+
+    def load(self):
+        return True
+
+    def unload(self):
+        return True
+
+    def write_register(self, address, value):
+        return value
+
+
+class GBASIOJOYDriver(GBASIODriver):
+    RESET = lib.JOY_RESET
+    POLL = lib.JOY_POLL
+    TRANS = lib.JOY_TRANS
+    RECV = lib.JOY_RECV
+
+    def __init__(self):
+        super(GBASIOJOYDriver, self).__init__()
+
+        self._native = ffi.gc(lib.GBASIOJOYPythonDriverCreate(self._handle), lib.free)
+
+    def send_command(self, cmd, data):
+        buffer = ffi.new('uint8_t[5]')
+        try:
+            buffer[0] = data[0]
+            buffer[1] = data[1]
+            buffer[2] = data[2]
+            buffer[3] = data[3]
+            buffer[4] = data[4]
+        except IndexError:
+            pass
+
+        outlen = lib.GBASIOJOYSendCommand(self._native, cmd, buffer)
+        if outlen > 0 and outlen <= 5:
+            return bytes(buffer[0:outlen])
+        return None
+
 
 class GBAMemory(Memory):
-    def __init__(self, core, romSize=lib.GBA_SIZE_ROM0):
+    def __init__(self, core, romSize=lib.SIZE_CART0):
         super(GBAMemory, self).__init__(core, 0x100000000)
 
-        self.bios = Memory(core, lib.GBA_SIZE_BIOS, lib.GBA_BASE_BIOS)
-        self.wram = Memory(core, lib.GBA_SIZE_EWRAM, lib.GBA_BASE_EWRAM)
-        self.iwram = Memory(core, lib.GBA_SIZE_IWRAM, lib.GBA_BASE_IWRAM)
-        self.io = Memory(core, lib.GBA_SIZE_IO, lib.GBA_BASE_IO)  # pylint: disable=invalid-name
-        self.palette = Memory(core, lib.GBA_SIZE_PALETTE_RAM, lib.GBA_BASE_PALETTE_RAM)
-        self.vram = Memory(core, lib.GBA_SIZE_VRAM, lib.GBA_BASE_VRAM)
-        self.oam = Memory(core, lib.GBA_SIZE_OAM, lib.GBA_BASE_OAM)
-        self.rom0 = Memory(core, romSize, lib.GBA_BASE_ROM0)
-        self.rom1 = Memory(core, romSize, lib.GBA_BASE_ROM1)
-        self.rom2 = Memory(core, romSize, lib.GBA_BASE_ROM2)
-        self.rom = self.rom0
-        self.sram = Memory(core, lib.GBA_SIZE_SRAM, lib.GBA_BASE_SRAM)
+        self.bios = Memory(core, lib.SIZE_BIOS, lib.BASE_BIOS)
+        self.wram = Memory(core, lib.SIZE_WORKING_RAM, lib.BASE_WORKING_RAM)
+        self.iwram = Memory(core, lib.SIZE_WORKING_IRAM, lib.BASE_WORKING_IRAM)
+        self.io = Memory(core, lib.SIZE_IO, lib.BASE_IO)  # pylint: disable=invalid-name
+        self.palette = Memory(core, lib.SIZE_PALETTE_RAM, lib.BASE_PALETTE_RAM)
+        self.vram = Memory(core, lib.SIZE_VRAM, lib.BASE_VRAM)
+        self.oam = Memory(core, lib.SIZE_OAM, lib.BASE_OAM)
+        self.cart0 = Memory(core, romSize, lib.BASE_CART0)
+        self.cart1 = Memory(core, romSize, lib.BASE_CART1)
+        self.cart2 = Memory(core, romSize, lib.BASE_CART2)
+        self.cart = self.cart0
+        self.rom = self.cart0
+        self.sram = Memory(core, lib.SIZE_CART_SRAM, lib.BASE_CART_SRAM)
 
 
 class GBASprite(Sprite):

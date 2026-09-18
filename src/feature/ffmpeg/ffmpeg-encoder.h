@@ -10,9 +10,29 @@
 
 CXX_GUARD_START
 
-#include <mgba/core/interface.h>
+#include <mgba/internal/gba/gba.h>
 
-#include "feature/ffmpeg/ffmpeg-common.h"
+#include <libavformat/avformat.h>
+#include <libavcodec/version.h>
+
+// Version 57.16 in FFmpeg
+#if LIBAVCODEC_VERSION_INT >= AV_VERSION_INT(57, 37, 100)
+#define FFMPEG_USE_PACKETS
+#endif
+
+// Version 57.15 in libav
+#if LIBAVCODEC_VERSION_INT >= AV_VERSION_INT(57, 35, 0)
+#define FFMPEG_USE_NEW_BSF
+#endif
+
+// Version 57.14 in libav
+#if LIBAVCODEC_VERSION_INT >= AV_VERSION_INT(57, 48, 0)
+#define FFMPEG_USE_CODECPAR
+#endif
+
+#if LIBAVCODEC_VERSION_INT >= AV_VERSION_INT(57, 8, 0)
+#define FFMPEG_USE_PACKET_UNREF
+#endif
 
 #define FFMPEG_FILTERS_MAX 4
 
@@ -23,7 +43,7 @@ struct FFmpegEncoder {
 	unsigned audioBitrate;
 	const char* audioCodec;
 
-	int videoBitrate;
+	unsigned videoBitrate;
 	const char* videoCodec;
 
 	const char* containerFormat;
@@ -33,6 +53,8 @@ struct FFmpegEncoder {
 	int sampleRate;
 	uint16_t* audioBuffer;
 	size_t audioBufferSize;
+	uint16_t* postaudioBuffer;
+	size_t postaudioBufferSize;
 	AVFrame* audioFrame;
 	size_t currentAudioSample;
 	int64_t currentAudioFrame;
@@ -51,17 +73,13 @@ struct FFmpegEncoder {
 	struct AVCodecContext* video;
 	enum AVPixelFormat pixFormat;
 	enum AVPixelFormat ipixFormat;
-	AVFrame* videoFrame;
+	struct AVFrame* videoFrame;
 	int width;
 	int height;
 	int iwidth;
 	int iheight;
-	int isampleRate;
-	int frameCycles;
-	int cycles;
 	int frameskip;
 	int skipResidue;
-	bool loop;
 	int64_t currentVideoFrame;
 	struct SwsContext* scaleContext;
 	struct AVStream* videoStream;
@@ -75,12 +93,9 @@ struct FFmpegEncoder {
 
 void FFmpegEncoderInit(struct FFmpegEncoder*);
 bool FFmpegEncoderSetAudio(struct FFmpegEncoder*, const char* acodec, unsigned abr);
-bool FFmpegEncoderSetVideo(struct FFmpegEncoder*, const char* vcodec, int vbr, int frameskip);
+bool FFmpegEncoderSetVideo(struct FFmpegEncoder*, const char* vcodec, unsigned vbr, int frameskip);
 bool FFmpegEncoderSetContainer(struct FFmpegEncoder*, const char* container);
 void FFmpegEncoderSetDimensions(struct FFmpegEncoder*, int width, int height);
-void FFmpegEncoderSetInputFrameRate(struct FFmpegEncoder*, int numerator, int denominator);
-void FFmpegEncoderSetInputSampleRate(struct FFmpegEncoder*, int sampleRate);
-void FFmpegEncoderSetLooping(struct FFmpegEncoder*, bool loop);
 bool FFmpegEncoderVerifyContainer(struct FFmpegEncoder*);
 bool FFmpegEncoderOpen(struct FFmpegEncoder*, const char* outfile);
 void FFmpegEncoderClose(struct FFmpegEncoder*);

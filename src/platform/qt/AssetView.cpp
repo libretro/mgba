@@ -4,7 +4,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 #include "AssetView.h"
-#include "moc_AssetView.cpp"
 
 #include "CoreController.h"
 
@@ -33,6 +32,7 @@ AssetView::AssetView(std::shared_ptr<CoreController> controller, QWidget* parent
 
 	connect(controller.get(), &CoreController::frameAvailable, &m_updateTimer,
 	        static_cast<void(QTimer::*)()>(&QTimer::start));
+	connect(controller.get(), &CoreController::stopping, this, &AssetView::close);
 	connect(controller.get(), &CoreController::stopping, &m_updateTimer, &QTimer::stop);
 }
 
@@ -43,12 +43,12 @@ void AssetView::updateTiles() {
 void AssetView::updateTiles(bool force) {
 	switch (m_controller->platform()) {
 #ifdef M_CORE_GBA
-	case mPLATFORM_GBA:
+	case PLATFORM_GBA:
 		updateTilesGBA(force);
 		break;
 #endif
 #ifdef M_CORE_GB
-	case mPLATFORM_GB:
+	case PLATFORM_GB:
 		updateTilesGB(force);
 		break;
 #endif
@@ -112,19 +112,15 @@ void AssetView::compositeTile(const void* tBuffer, void* buffer, size_t stride, 
 	}
 }
 
-QImage AssetView::compositeMap(int map, QVector<mMapCacheEntry>* mapStatus) {
+QImage AssetView::compositeMap(int map, mMapCacheEntry* mapStatus) {
 	mMapCache* mapCache = mMapCacheSetGetPointer(&m_cacheSet->maps, map);
 	int tilesW = 1 << mMapCacheSystemInfoGetTilesWide(mapCache->sysConfig);
 	int tilesH = 1 << mMapCacheSystemInfoGetTilesHigh(mapCache->sysConfig);
-	if (mapStatus->size() != tilesW * tilesH) {
-		mapStatus->resize(tilesW * tilesH);
-		mapStatus->fill({});
-	}
 	QImage rawMap = QImage(QSize(tilesW * 8, tilesH * 8), QImage::Format_ARGB32);
 	uchar* bgBits = rawMap.bits();
 	for (int j = 0; j < tilesH; ++j) {
 		for (int i = 0; i < tilesW; ++i) {
-			mMapCacheCleanTile(mapCache, mapStatus->data(), i, j);
+			mMapCacheCleanTile(mapCache, mapStatus, i, j);
 		}
 		for (int i = 0; i < 8; ++i) {
 			memcpy(static_cast<void*>(&bgBits[tilesW * 32 * (i + j * 8)]), mMapCacheGetRow(mapCache, i + j * 8), tilesW * 32);
@@ -135,8 +131,7 @@ QImage AssetView::compositeMap(int map, QVector<mMapCacheEntry>* mapStatus) {
 
 QImage AssetView::compositeObj(const ObjInfo& objInfo) {
 	mTileCache* tileCache = mTileCacheSetGetPointer(&m_cacheSet->tiles, objInfo.paletteSet);
-	unsigned maxTiles = mTileCacheSystemInfoGetMaxTiles(tileCache->sysConfig);
-	const mColor* rawPalette = mTileCacheGetPalette(tileCache, objInfo.paletteId);
+	const color_t* rawPalette = mTileCacheGetPalette(tileCache, objInfo.paletteId);
 	unsigned colors = 1 << objInfo.bits;
 	QVector<QRgb> palette;
 
@@ -147,11 +142,10 @@ QImage AssetView::compositeObj(const ObjInfo& objInfo) {
 
 	QImage image = QImage(QSize(objInfo.width * 8, objInfo.height * 8), QImage::Format_Indexed8);
 	image.setColorTable(palette);
-	image.fill(0);
 	uchar* bits = image.bits();
 	unsigned t = objInfo.tile;
-	for (unsigned y = 0; y < objInfo.height && t < maxTiles; ++y) {
-		for (unsigned x = 0; x < objInfo.width && t < maxTiles; ++x, ++t) {
+	for (int y = 0; y < objInfo.height; ++y) {
+		for (int x = 0; x < objInfo.width; ++x, ++t) {
 			compositeTile(static_cast<const void*>(mTileCacheGetVRAM(tileCache, t)), bits, objInfo.width * 8, x * 8, y * 8, objInfo.bits);
 		}
 		t += objInfo.stride - objInfo.width;
@@ -162,11 +156,11 @@ QImage AssetView::compositeObj(const ObjInfo& objInfo) {
 bool AssetView::lookupObj(int id, struct ObjInfo* info) {
 	switch (m_controller->platform()) {
 #ifdef M_CORE_GBA
-	case mPLATFORM_GBA:
+	case PLATFORM_GBA:
 		return lookupObjGBA(id, info);
 #endif
 #ifdef M_CORE_GB
-	case mPLATFORM_GB:
+	case PLATFORM_GB:
 		return lookupObjGB(id, info);
 #endif
 	default:
@@ -189,6 +183,7 @@ bool AssetView::lookupObjGBA(int id, struct ObjInfo* info) {
 	unsigned height = GBAVideoObjSizes[shape * 4 + size][1];
 	unsigned tile = GBAObjAttributesCGetTile(obj->c);
 	unsigned palette = GBAObjAttributesCGetPalette(obj->c);
+	unsigned tileBase = tile;
 	unsigned paletteSet;
 	unsigned bits;
 	if (GBAObjAttributesAIs256Color(obj->a)) {
@@ -200,7 +195,7 @@ bool AssetView::lookupObjGBA(int id, struct ObjInfo* info) {
 		paletteSet = 2;
 		bits = 4;
 	}
-	*info = ObjInfo{
+	ObjInfo newInfo{
 		tile,
 		width / 8,
 		height / 8,
@@ -219,15 +214,16 @@ bool AssetView::lookupObjGBA(int id, struct ObjInfo* info) {
 		int matIndex = GBAObjAttributesBGetMatIndex(obj->b);
 		const GBAOAMMatrix* mat = &gba->video.oam.mat[matIndex];
 		QTransform invXform(mat->a / 256., mat->c / 256., mat->b / 256., mat->d / 256., 0, 0);
-		info->xform = invXform.inverted();
+		newInfo.xform = invXform.inverted();
 	} else {
-		info->hflip = bool(GBAObjAttributesBIsHFlip(obj->b));
-		info->vflip = bool(GBAObjAttributesBIsVFlip(obj->b));
+		newInfo.hflip = bool(GBAObjAttributesBIsHFlip(obj->b));
+		newInfo.vflip = bool(GBAObjAttributesBIsVFlip(obj->b));
 	}
 	GBARegisterDISPCNT dispcnt = gba->memory.io[0]; // FIXME: Register name can't be imported due to namespacing issues
 	if (!GBARegisterDISPCNTIsObjCharacterMapping(dispcnt)) {
-		info->stride = 0x20 >> (GBAObjAttributesAGet256Color(obj->a));
+		newInfo.stride = 0x20 >> (GBAObjAttributesAGet256Color(obj->a));
 	};
+	*info = newInfo;
 	return true;
 }
 #endif
@@ -241,8 +237,9 @@ bool AssetView::lookupObjGB(int id, struct ObjInfo* info) {
 	const GB* gb = static_cast<const GB*>(m_controller->thread()->core->board);
 	const GBObj* obj = &gb->video.oam.obj[id];
 
+	unsigned width = 8;
 	unsigned height = 8;
-	GBRegisterLCDC lcdc = gb->memory.io[GB_REG_LCDC];
+	GBRegisterLCDC lcdc = gb->memory.io[REG_LCDC];
 	if (GBRegisterLCDCIsObjSize(lcdc)) {
 		height = 16;
 	}
@@ -258,7 +255,7 @@ bool AssetView::lookupObjGB(int id, struct ObjInfo* info) {
 	}
 	palette += 8;
 
-	*info = ObjInfo{
+	ObjInfo newInfo{
 		tile,
 		1,
 		height / 8,
@@ -273,6 +270,7 @@ bool AssetView::lookupObjGB(int id, struct ObjInfo* info) {
 		bool(GBObjAttributesIsXFlip(obj->attr)),
 		bool(GBObjAttributesIsYFlip(obj->attr)),
 	};
+	*info = newInfo;
 	return true;
 }
 #endif

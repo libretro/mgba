@@ -34,11 +34,9 @@ signals:
 	void coreLoaded(CoreController*);
 
 private:
-	QString saveFailed(VFile* vf, const QString& title, const QString& summary, const QString& filter);
-
 	const mCoreConfig* m_config = nullptr;
 	MultiplayerController* m_multiplayer = nullptr;
-	bool m_preload = true;
+	bool m_preload = false;
 };
 
 }

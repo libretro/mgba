@@ -34,15 +34,12 @@ void mCacheSetDeinit(struct mCacheSet* cache) {
 	for (i = 0; i < mMapCacheSetSize(&cache->maps); ++i) {
 		mMapCacheDeinit(mMapCacheSetGetPointer(&cache->maps, i));
 	}
-	mMapCacheSetDeinit(&cache->maps);
 	for (i = 0; i < mBitmapCacheSetSize(&cache->bitmaps); ++i) {
 		mBitmapCacheDeinit(mBitmapCacheSetGetPointer(&cache->bitmaps, i));
 	}
-	mBitmapCacheSetDeinit(&cache->bitmaps);
 	for (i = 0; i < mTileCacheSetSize(&cache->tiles); ++i) {
 		mTileCacheDeinit(mTileCacheSetGetPointer(&cache->tiles, i));
 	}
-	mTileCacheSetDeinit(&cache->tiles);
 }
 
 void mCacheSetAssignVRAM(struct mCacheSet* cache, void* vram) {
@@ -72,7 +69,7 @@ void mCacheSetWriteVRAM(struct mCacheSet* cache, uint32_t address) {
 	}
 }
 
-void mCacheSetWritePalette(struct mCacheSet* cache, uint32_t entry, mColor color) {
+void mCacheSetWritePalette(struct mCacheSet* cache, uint32_t entry, color_t color) {
 	size_t i;
 	for (i = 0; i < mBitmapCacheSetSize(&cache->bitmaps); ++i) {
 		mBitmapCacheWritePalette(mBitmapCacheSetGetPointer(&cache->bitmaps, i), entry, color);

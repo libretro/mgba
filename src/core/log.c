@@ -6,64 +6,17 @@
 #include <mgba/core/log.h>
 
 #include <mgba/core/config.h>
-#include <mgba-util/threading.h>
-#include <mgba-util/vfs.h>
+#include <mgba/core/thread.h>
 
 #define MAX_CATEGORY 64
-#define MAX_LOG_BUF 1024
 
 static struct mLogger* _defaultLogger = NULL;
 
-#ifndef DISABLE_THREADING
-static ThreadLocal _contextKey;
-
-#ifdef USE_PTHREADS
-static pthread_once_t _contextOnce = PTHREAD_ONCE_INIT;
-
-static void _createTLS(void) {
-	ThreadLocalInitKey(&_contextKey);
-}
-#elif _WIN32
-static INIT_ONCE _contextOnce = INIT_ONCE_STATIC_INIT;
-
-static BOOL CALLBACK _createTLS(PINIT_ONCE once, PVOID param, PVOID* context) {
-	UNUSED(once);
-	UNUSED(param);
-	UNUSED(context);
-	ThreadLocalInitKey(&_contextKey);
-	return TRUE;
-}
-#endif
-
-static void _setupTLS(void) {
-#ifdef USE_PTHREADS
-	pthread_once(&_contextOnce, _createTLS);
-#elif _WIN32
-	InitOnceExecuteOnce(&_contextOnce, _createTLS, NULL, 0);
-#endif
-}
-#endif
-
-void mLogSetThreadLogger(struct mLogger* logger) {
-#ifndef DISABLE_THREADING
-	_setupTLS();
-	ThreadLocalSetKey(_contextKey, logger);
-#else
-	UNUSED(logger);
-#endif
-}
-
-struct mLogger* mLogGetThreadLogger(void) {
-#ifndef DISABLE_THREADING
-	_setupTLS();
-	return ThreadLocalGetValue(_contextKey);
-#else
-	return NULL;
-#endif
-}
-
 struct mLogger* mLogGetContext(void) {
-	struct mLogger* logger = mLogGetThreadLogger();
+	struct mLogger* logger = NULL;
+#ifndef DISABLE_THREADING
+	logger = mCoreThreadLogger();
+#endif
 	if (logger) {
 		return logger;
 	}
@@ -95,7 +48,7 @@ const char* mLogCategoryName(int category) {
 }
 
 const char* mLogCategoryId(int category) {
-	if (category >= 0 && category < MAX_CATEGORY) {
+	if (category < MAX_CATEGORY) {
 		return _categoryIds[category];
 	}
 	return NULL;
@@ -123,15 +76,6 @@ void mLog(int category, enum mLogLevel level, const char* format, ...) {
 		printf("%s: ", mLogCategoryName(category));
 		vprintf(format, args);
 		printf("\n");
-	}
-	va_end(args);
-}
-
-void mLogExplicit(struct mLogger* context, int category, enum mLogLevel level, const char* format, ...) {
-	va_list args;
-	va_start(args, format);
-	if (!context->filter || mLogFilterTest(context->filter, category, level)) {
-		context->log(context, category, level, format, args);
 	}
 	va_end(args);
 }
@@ -229,66 +173,6 @@ int mLogFilterLevels(const struct mLogFilter* filter , int category) {
 		value = (intptr_t) HashTableLookup(&filter->categories, cat);
 	}
 	return value;
-}
-
-void _mCoreStandardLog(struct mLogger* logger, int category, enum mLogLevel level, const char* format, va_list args) {
-	struct mStandardLogger* stdlog = (struct mStandardLogger*) logger;
-
-	if (!mLogFilterTest(logger->filter, category, level)) {
-		return;
-	}
-
-	char buffer[MAX_LOG_BUF];
-
-	// Prepare the string
-	size_t length = snprintf(buffer, sizeof(buffer), "%s: ", mLogCategoryName(category));
-	if (length < sizeof(buffer)) {
-		length += vsnprintf(buffer + length, sizeof(buffer) - length, format, args);
-	}
-	if (length < sizeof(buffer)) {
-		length += snprintf(buffer + length, sizeof(buffer) - length, "\n");
-	}
-
-	// Make sure the length doesn't exceed the size of the buffer when actually writing
-	if (length > sizeof(buffer)) {
-		length = sizeof(buffer);
-	}
-
-	if (stdlog->logToStdout) {
-		printf("%s", buffer);
-	}
-
-	if (stdlog->logFile) {
-		stdlog->logFile->write(stdlog->logFile, buffer, length);
-	}
-}
-
-void mStandardLoggerInit(struct mStandardLogger* logger) {
-	logger->d.log = _mCoreStandardLog;
-	logger->d.filter = malloc(sizeof(struct mLogFilter));
-	mLogFilterInit(logger->d.filter);
-}
-
-void mStandardLoggerDeinit(struct mStandardLogger* logger) {
-	if (logger->d.filter) {
-		mLogFilterDeinit(logger->d.filter);
-		free(logger->d.filter);
-		logger->d.filter = NULL;
-	}
-}
-
-void mStandardLoggerConfig(struct mStandardLogger* logger, struct mCoreConfig* config) {
-#ifdef ENABLE_VFS
-	bool logToFile = false;
-	const char* logFile = mCoreConfigGetValue(config, "logFile");
-	mCoreConfigGetBoolValue(config, "logToFile", &logToFile);
-
-	if (logToFile && logFile) {
-		logger->logFile = VFileOpen(logFile, O_WRONLY | O_CREAT | O_APPEND);
-	}
-#endif
-	mCoreConfigGetBoolValue(config, "logToStdout", &logger->logToStdout);
-	mLogFilterLoad(logger->d.filter, config);
 }
 
 mLOG_DEFINE_CATEGORY(STATUS, "Status", "core.status")

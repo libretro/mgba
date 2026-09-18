@@ -32,8 +32,6 @@
 	<string>${MACOSX_BUNDLE_COPYRIGHT}</string>
 	<key>NSSupportsAutomaticGraphicsSwitching</key>
 	<true/>
-	<key>NSCameraUsageDescription</key>
-	<string>Only used when Game Boy Camera is selected and a physical camera is set</string>
 	<key>CFBundleDocumentTypes</key>
 	<array>
 		<dict>
@@ -58,7 +56,5 @@
 			<string>Viewer</string>
 		</dict>
 	</array>
-	<key>LSApplicationCategoryType</key>
-	<string>public.app-category.games</string>
 </dict>
 </plist>

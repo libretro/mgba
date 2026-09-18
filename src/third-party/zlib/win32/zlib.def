@@ -8,7 +8,6 @@ EXPORTS
     inflateEnd
 ; advanced functions
     deflateSetDictionary
-    deflateGetDictionary
     deflateCopy
     deflateReset
     deflateParams
@@ -34,15 +33,12 @@ EXPORTS
     compress2
     compressBound
     uncompress
-    uncompress2
     gzopen
     gzdopen
     gzbuffer
     gzsetparams
     gzread
-    gzfread
     gzwrite
-    gzfwrite
     gzprintf
     gzvprintf
     gzputs
@@ -69,16 +65,11 @@ EXPORTS
     gzoffset64
     adler32_combine64
     crc32_combine64
-    crc32_combine_gen64
 ; checksum functions
     adler32
-    adler32_z
     crc32
-    crc32_z
     adler32_combine
     crc32_combine
-    crc32_combine_gen
-    crc32_combine_op
 ; various hacks, don't look :)
     deflateInit_
     deflateInit2_
@@ -90,8 +81,6 @@ EXPORTS
     inflateSyncPoint
     get_crc_table
     inflateUndermine
-    inflateValidate
-    inflateCodesUsed
     inflateResetKeep
     deflateResetKeep
     gzopen_w

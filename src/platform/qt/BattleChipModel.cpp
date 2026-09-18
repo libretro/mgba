@@ -4,11 +4,9 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 #include "BattleChipModel.h"
-#include "moc_BattleChipModel.cpp"
 
 #include "ConfigController.h"
 #include "GBAApp.h"
-#include "LogController.h"
 
 #include <QFile>
 #include <QMimeData>
@@ -44,7 +42,7 @@ QVariant BattleChipModel::data(const QModelIndex& index, int role) const {
 	return QVariant();
 }
 
-Qt::ItemFlags BattleChipModel::flags(const QModelIndex&) const {
+Qt::ItemFlags BattleChipModel::flags(const QModelIndex& index) const {
 	return Qt::ItemIsSelectable | Qt::ItemIsDropEnabled | Qt::ItemIsDragEnabled | Qt::ItemIsEnabled | Qt::ItemNeverHasChildren;
 }
 
@@ -53,7 +51,7 @@ bool BattleChipModel::removeRows(int row, int count, const QModelIndex& parent) 
 		return false;
 	}
 	beginRemoveRows(QModelIndex(), row, row + count - 1);
-	for (int i = 0; i < count; ++i) {
+	for (size_t i = 0; i < count; ++i) {
 		m_deck.removeAt(row);
 	}
 	endRemoveRows();
@@ -109,10 +107,7 @@ void BattleChipModel::setFlavor(int flavor) {
 	m_flavor = flavor;
 
 	QFile file(QString(":/exe/exe%1/chip-names.txt").arg(flavor));
-	if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-		LOG(QT, WARN) << tr("Failed to open chip names list");
-		return;
-	}
+	file.open(QIODevice::ReadOnly | QIODevice::Text);
 	int id = 0;
 	while (true) {
 		QByteArray line = file.readLine();
@@ -123,7 +118,8 @@ void BattleChipModel::setFlavor(int flavor) {
 		if (line.trimmed().isEmpty()) {
 			continue;
 		}
-		m_chipIdToName[id] = QString::fromUtf8(line).trimmed();
+		QString name = QString::fromUtf8(line).trimmed();
+		m_chipIdToName[id] = name;
 	}
 
 }

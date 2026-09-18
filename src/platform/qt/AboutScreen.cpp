@@ -4,7 +4,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 #include "AboutScreen.h"
-#include "moc_AboutScreen.cpp"
 
 #include <mgba/core/version.h>
 
@@ -30,14 +29,13 @@ AboutScreen::AboutScreen(QWidget* parent)
 
 	QFile patronFile(":/res/patrons.txt");
 	QStringList patronList;
-	if (patronFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
-		while (true) {
-			QByteArray line = patronFile.readLine();
-			if (line.isEmpty()) {
-				break;
-			}
-			patronList.append(QString::fromUtf8(line).trimmed());
+	patronFile.open(QIODevice::ReadOnly | QIODevice::Text);
+	while (true) {
+		QByteArray line = patronFile.readLine();
+		if (line.isEmpty()) {
+			break;
 		}
+		patronList.append(QString::fromUtf8(line).trimmed());
 	}
 
 	m_ui.projectName->setText(QLatin1String(projectName));
@@ -72,11 +70,5 @@ AboutScreen::AboutScreen(QWidget* parent)
 		QString patrons = m_ui.patrons->text();
 		patrons.replace("{patrons}", patronList.join(" • "));
 		m_ui.patrons->setText(patrons);
-	}
-
-	{
-		QString copyright = m_ui.copyright->text();
-		copyright.replace("{year}", QLatin1String("2026"));
-		m_ui.copyright->setText(copyright);
 	}
 }

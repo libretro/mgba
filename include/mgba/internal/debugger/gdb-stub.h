@@ -14,7 +14,7 @@ CXX_GUARD_START
 
 #include <mgba-util/socket.h>
 
-#define GDB_STUB_MAX_LINE 1400
+#define GDB_STUB_MAX_LINE 1200
 #define GDB_STUB_INTERVAL 32
 
 enum GDBStubAckState {
@@ -24,38 +24,30 @@ enum GDBStubAckState {
 	GDB_ACK_OFF
 };
 
-enum GDBWatchpointsBehvaior {
-	GDB_WATCHPOINT_STANDARD_LOGIC = 0,
-	GDB_WATCHPOINT_OVERRIDE_LOGIC,
-	GDB_WATCHPOINT_OVERRIDE_LOGIC_ANY_WRITE,
-};
-
 struct GDBStub {
-	struct mDebuggerModule d;
+	struct mDebugger d;
 
 	char line[GDB_STUB_MAX_LINE];
 	char outgoing[GDB_STUB_MAX_LINE];
-	char memoryMapXml[GDB_STUB_MAX_LINE];
 	enum GDBStubAckState lineAck;
 
 	Socket socket;
 	Socket connection;
 
+	bool shouldBlock;
 	int untilPoll;
 
 	bool supportsSwbreak;
 	bool supportsHwbreak;
-
-	enum GDBWatchpointsBehvaior watchpointsBehavior;
 };
 
 void GDBStubCreate(struct GDBStub*);
-bool GDBStubListen(struct GDBStub*, int port, const struct Address* bindAddress, enum GDBWatchpointsBehvaior watchpointsBehavior);
+bool GDBStubListen(struct GDBStub*, int port, const struct Address* bindAddress);
 
 void GDBStubHangup(struct GDBStub*);
 void GDBStubShutdown(struct GDBStub*);
 
-bool GDBStubUpdate(struct GDBStub*, int timeoutMs);
+void GDBStubUpdate(struct GDBStub*);
 
 CXX_GUARD_END
 

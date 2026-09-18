@@ -14,12 +14,10 @@
 struct NoIntroDB {
 	sqlite3* db;
 	sqlite3_stmt* crc32;
-	sqlite3_stmt* md5;
-	sqlite3_stmt* sha1;
 };
 
 struct NoIntroDB* NoIntroDBLoad(const char* path) {
-	struct NoIntroDB* db = calloc(1, sizeof(*db));
+	struct NoIntroDB* db = malloc(sizeof(*db));
 
 	if (sqlite3_open_v2(path, &db->db, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX, NULL)) {
 		goto error;
@@ -49,31 +47,22 @@ struct NoIntroDB* NoIntroDBLoad(const char* path) {
 			"flags INTEGER DEFAULT 0,"
 			"gid INTEGER NOT NULL REFERENCES games(gid) ON DELETE CASCADE"
 		");\n"
-		"CREATE INDEX IF NOT EXISTS crc32 ON roms (crc32);\n"
-		"CREATE INDEX IF NOT EXISTS md5 ON roms (md5);\n"
-		"CREATE INDEX IF NOT EXISTS sha1 ON roms (sha1);\n";
+		"CREATE INDEX IF NOT EXISTS crc32 ON roms (crc32);";
 	if (sqlite3_exec(db->db, createTables, NULL, NULL, NULL)) {
 		goto error;
 	}
 
-	static const char selectCrc32[] = "SELECT games.name, roms.name, size, crc32, md5, sha1, flags FROM games JOIN roms USING (gid) WHERE roms.crc32 = ?;";
-	if (sqlite3_prepare_v2(db->db, selectCrc32, -1, &db->crc32, NULL)) {
-		goto error;
-	}
-
-	static const char selectMd5[] = "SELECT games.name, roms.name, size, crc32, md5, sha1, flags FROM games JOIN roms USING (gid) WHERE roms.md5 = ?;";
-	if (sqlite3_prepare_v2(db->db, selectMd5, -1, &db->md5, NULL)) {
-		goto error;
-	}
-
-	static const char selectSha1[] = "SELECT games.name, roms.name, size, crc32, md5, sha1, flags FROM games JOIN roms USING (gid) WHERE roms.sha1 = ?;";
-	if (sqlite3_prepare_v2(db->db, selectSha1, -1, &db->sha1, NULL)) {
+	static const char selectRom[] = "SELECT * FROM games JOIN roms USING (gid) WHERE roms.crc32 = ?;";
+	if (sqlite3_prepare_v2(db->db, selectRom, -1, &db->crc32, NULL)) {
 		goto error;
 	}
 
 	return db;
 
 error:
+	if (db->crc32) {
+		sqlite3_finalize(db->crc32);
+	}
 	NoIntroDBDestroy(db);
 	return NULL;
 
@@ -84,7 +73,6 @@ bool NoIntroDBLoadClrMamePro(struct NoIntroDB* db, struct VFile* vf) {
 
 	sqlite3_stmt* gamedbTable = NULL;
 	sqlite3_stmt* gamedbDrop = NULL;
-	sqlite3_stmt* gamedbSelect = NULL;
 	sqlite3_stmt* gameTable = NULL;
 	sqlite3_stmt* romTable = NULL;
 	char* fieldName = NULL;
@@ -101,11 +89,6 @@ bool NoIntroDBLoadClrMamePro(struct NoIntroDB* db, struct VFile* vf) {
 
 	static const char deleteGamedb[] = "DELETE FROM gamedb WHERE name = ? AND version < ?;";
 	if (sqlite3_prepare_v2(db->db, deleteGamedb, -1, &gamedbDrop, NULL)) {
-		return false;
-	}
-
-	static const char selectGamedb[] = "SELECT * FROM gamedb WHERE name = ? AND version >= ?;";
-	if (sqlite3_prepare_v2(db->db, selectGamedb, -1, &gamedbSelect, NULL)) {
 		return false;
 	}
 
@@ -179,24 +162,18 @@ bool NoIntroDBLoadClrMamePro(struct NoIntroDB* db, struct VFile* vf) {
 				break;
 			case ')':
 				if (currentDb < 0 && dbType && dbVersion) {
-					sqlite3_clear_bindings(gamedbSelect);
-					sqlite3_reset(gamedbSelect);
-					sqlite3_bind_text(gamedbSelect, 1, dbType, -1, SQLITE_TRANSIENT);
-					sqlite3_bind_text(gamedbSelect, 2, dbVersion, -1, SQLITE_TRANSIENT);
-					if (sqlite3_step(gamedbSelect) != SQLITE_ROW) {
-						sqlite3_clear_bindings(gamedbDrop);
-						sqlite3_reset(gamedbDrop);
-						sqlite3_bind_text(gamedbDrop, 1, dbType, -1, SQLITE_TRANSIENT);
-						sqlite3_bind_text(gamedbDrop, 2, dbVersion, -1, SQLITE_TRANSIENT);
-						sqlite3_step(gamedbDrop);
+					sqlite3_clear_bindings(gamedbDrop);
+					sqlite3_reset(gamedbDrop);
+					sqlite3_bind_text(gamedbDrop, 1, dbType, -1, SQLITE_TRANSIENT);
+					sqlite3_bind_text(gamedbDrop, 2, dbVersion, -1, SQLITE_TRANSIENT);
+					sqlite3_step(gamedbDrop);
 
-						sqlite3_clear_bindings(gamedbTable);
-						sqlite3_reset(gamedbTable);
-						sqlite3_bind_text(gamedbTable, 1, dbType, -1, SQLITE_TRANSIENT);
-						sqlite3_bind_text(gamedbTable, 2, dbVersion, -1, SQLITE_TRANSIENT);
-						if (sqlite3_step(gamedbTable) == SQLITE_DONE) {
-							currentDb = sqlite3_last_insert_rowid(db->db);
-						}
+					sqlite3_clear_bindings(gamedbTable);
+					sqlite3_reset(gamedbTable);
+					sqlite3_bind_text(gamedbTable, 1, dbType, -1, SQLITE_TRANSIENT);
+					sqlite3_bind_text(gamedbTable, 2, dbVersion, -1, SQLITE_TRANSIENT);
+					if (sqlite3_step(gamedbTable) == SQLITE_DONE) {
+						currentDb = sqlite3_last_insert_rowid(db->db);
 					}
 					free((void*) dbType);
 					free((void*) dbVersion);
@@ -283,20 +260,11 @@ bool NoIntroDBLoadClrMamePro(struct NoIntroDB* db, struct VFile* vf) {
 
 	free((void*) buffer.name);
 	free((void*) buffer.romName);
-
-	if (dbType) {
-		free(dbType);
-	}
-	if (dbVersion) {
-		free(dbVersion);
-	}
-	if (fieldName) {
-		free(fieldName);
-	}
+	free((void*) dbType);
+	free((void*) dbVersion);
 
 	sqlite3_finalize(gamedbTable);
 	sqlite3_finalize(gamedbDrop);
-	sqlite3_finalize(gamedbSelect);
 	sqlite3_finalize(gameTable);
 	sqlite3_finalize(romTable);
 
@@ -309,35 +277,9 @@ bool NoIntroDBLoadClrMamePro(struct NoIntroDB* db, struct VFile* vf) {
 }
 
 void NoIntroDBDestroy(struct NoIntroDB* db) {
-	if (db->crc32) {
-		sqlite3_finalize(db->crc32);
-	}
-	if (db->md5) {
-		sqlite3_finalize(db->md5);
-	}
-	if (db->sha1) {
-		sqlite3_finalize(db->sha1);
-	}
-	if (db->db) {
-		sqlite3_close(db->db);
-	}
+	sqlite3_finalize(db->crc32);
+	sqlite3_close(db->db);
 	free(db);
-}
-
-void _extractGame(sqlite3_stmt* stmt, struct NoIntroGame* game) {
-	game->name = (const char*) sqlite3_column_text(stmt, 0);
-	game->romName = (const char*) sqlite3_column_text(stmt, 1);
-	game->size = sqlite3_column_int(stmt, 2);
-	game->crc32 = sqlite3_column_int(stmt, 3);
-	const void* buf = sqlite3_column_blob(stmt, 4);
-	if (buf && sqlite3_column_bytes(stmt, 4) == sizeof(game->md5)) {
-		memcpy(game->md5, buf, sizeof(game->md5));
-	}
-	buf = sqlite3_column_blob(stmt, 5);
-	if (buf && sqlite3_column_bytes(stmt, 5) == sizeof(game->sha1)) {
-		memcpy(game->sha1, buf, sizeof(game->sha1));
-	}
-	game->verified = sqlite3_column_int(stmt, 6);
 }
 
 bool NoIntroDBLookupGameByCRC(const struct NoIntroDB* db, uint32_t crc32, struct NoIntroGame* game) {
@@ -350,34 +292,11 @@ bool NoIntroDBLookupGameByCRC(const struct NoIntroDB* db, uint32_t crc32, struct
 	if (sqlite3_step(db->crc32) != SQLITE_ROW) {
 		return false;
 	}
-	_extractGame(db->crc32, game);
-	return true;
-}
-
-bool NoIntroDBLookupGameByMD5(const struct NoIntroDB* db, const uint8_t* md5, struct NoIntroGame* game) {
-	if (!db) {
-		return false;
-	}
-	sqlite3_clear_bindings(db->md5);
-	sqlite3_reset(db->md5);
-	sqlite3_bind_blob(db->md5, 1, md5, 16, NULL);
-	if (sqlite3_step(db->md5) != SQLITE_ROW) {
-		return false;
-	}
-	_extractGame(db->md5, game);
-	return true;
-}
-
-bool NoIntroDBLookupGameBySHA1(const struct NoIntroDB* db, const uint8_t* sha1, struct NoIntroGame* game) {
-	if (!db) {
-		return false;
-	}
-	sqlite3_clear_bindings(db->sha1);
-	sqlite3_reset(db->sha1);
-	sqlite3_bind_blob(db->sha1, 1, sha1, 20, NULL);
-	if (sqlite3_step(db->sha1) != SQLITE_ROW) {
-		return false;
-	}
-	_extractGame(db->sha1, game);
+	game->name = (const char*) sqlite3_column_text(db->crc32, 1);
+	game->romName = (const char*) sqlite3_column_text(db->crc32, 3);
+	game->size = sqlite3_column_int(db->crc32, 4);
+	game->crc32 = sqlite3_column_int(db->crc32, 5);
+	// TODO: md5/sha1
+	game->verified = sqlite3_column_int(db->crc32, 8);
 	return true;
 }

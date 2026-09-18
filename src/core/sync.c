@@ -5,30 +5,16 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 #include <mgba/core/sync.h>
 
-#include <mgba/core/config.h>
-#include <mgba-util/audio-buffer.h>
+#include <mgba/core/blip_buf.h>
 
-static const float _defaultFPSTarget = 60.f;
-
-static void _changeVideoSync(struct mCoreSync* sync, bool wait) {
+static void _changeVideoSync(struct mCoreSync* sync, bool frameOn) {
 	// Make sure the video thread can process events while the GBA thread is paused
 	MutexLock(&sync->videoFrameMutex);
-	if (wait != sync->videoFrameWait) {
-		sync->videoFrameWait = wait;
+	if (frameOn != sync->videoFrameOn) {
+		sync->videoFrameOn = frameOn;
 		ConditionWake(&sync->videoFrameAvailableCond);
 	}
 	MutexUnlock(&sync->videoFrameMutex);
-}
-
-void mCoreSyncLoadCoreOpts(struct mCoreSync* sync, const struct mCoreOptions* opts) {
-	sync->audioWait = opts->audioSync;
-	sync->videoFrameWait = opts->videoSync;
-	if (opts->fpsTarget) {
-		sync->fpsTarget = opts->fpsTarget;
-	} else {
-		sync->fpsTarget = _defaultFPSTarget;
-	}
-	sync->audioHighWater = 512;
 }
 
 void mCoreSyncPostFrame(struct mCoreSync* sync) {
@@ -63,11 +49,11 @@ bool mCoreSyncWaitFrameStart(struct mCoreSync* sync) {
 	}
 
 	MutexLock(&sync->videoFrameMutex);
-	if (!sync->videoFrameWait && !sync->videoFramePending) {
+	ConditionWake(&sync->videoFrameRequiredCond);
+	if (!sync->videoFrameOn && !sync->videoFramePending) {
 		return false;
 	}
-	if (sync->videoFrameWait) {
-		ConditionWake(&sync->videoFrameRequiredCond);
+	if (sync->videoFrameOn) {
 		if (ConditionWaitTimed(&sync->videoFrameAvailableCond, &sync->videoFrameMutex, 50)) {
 			return false;
 		}
@@ -81,7 +67,6 @@ void mCoreSyncWaitFrameEnd(struct mCoreSync* sync) {
 		return;
 	}
 
-	ConditionWake(&sync->videoFrameRequiredCond);
 	MutexUnlock(&sync->videoFrameMutex);
 }
 
@@ -93,17 +78,17 @@ void mCoreSyncSetVideoSync(struct mCoreSync* sync, bool wait) {
 	_changeVideoSync(sync, wait);
 }
 
-bool mCoreSyncProduceAudio(struct mCoreSync* sync, const struct mAudioBuffer* buf) {
+bool mCoreSyncProduceAudio(struct mCoreSync* sync, const struct blip_t* buf, size_t samples) {
 	if (!sync) {
 		return true;
 	}
 
-	size_t produced = mAudioBufferAvailable(buf);
+	size_t produced = blip_samples_avail(buf);
 	size_t producedNew = produced;
-	while (sync->audioWait && sync->audioHighWater && producedNew >= sync->audioHighWater) {
+	while (sync->audioWait && producedNew >= samples) {
 		ConditionWait(&sync->audioRequiredCond, &sync->audioBufferMutex);
 		produced = producedNew;
-		producedNew = mAudioBufferAvailable(buf);
+		producedNew = blip_samples_avail(buf);
 	}
 	MutexUnlock(&sync->audioBufferMutex);
 	return producedNew != produced;

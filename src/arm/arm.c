@@ -9,14 +9,16 @@
 #include <mgba/internal/arm/isa-inlines.h>
 #include <mgba/internal/arm/isa-thumb.h>
 
+static inline enum RegisterBank _ARMSelectBank(enum PrivilegeMode);
+
 void ARMSetPrivilegeMode(struct ARMCore* cpu, enum PrivilegeMode mode) {
 	if (mode == cpu->privilegeMode) {
 		// Not switching modes after all
 		return;
 	}
 
-	enum RegisterBank newBank = ARMSelectBank(mode);
-	enum RegisterBank oldBank = ARMSelectBank(cpu->privilegeMode);
+	enum RegisterBank newBank = _ARMSelectBank(mode);
+	enum RegisterBank oldBank = _ARMSelectBank(cpu->privilegeMode);
 	if (newBank != oldBank) {
 		// Switch banked registers
 		if (mode == MODE_FIQ || cpu->privilegeMode == MODE_FIQ) {
@@ -44,8 +46,29 @@ void ARMSetPrivilegeMode(struct ARMCore* cpu, enum PrivilegeMode mode) {
 	cpu->privilegeMode = mode;
 }
 
+static inline enum RegisterBank _ARMSelectBank(enum PrivilegeMode mode) {
+	switch (mode) {
+	case MODE_USER:
+	case MODE_SYSTEM:
+		// No banked registers
+		return BANK_NONE;
+	case MODE_FIQ:
+		return BANK_FIQ;
+	case MODE_IRQ:
+		return BANK_IRQ;
+	case MODE_SUPERVISOR:
+		return BANK_SUPERVISOR;
+	case MODE_ABORT:
+		return BANK_ABORT;
+	case MODE_UNDEFINED:
+		return BANK_UNDEFINED;
+	default:
+		// This should be unreached
+		return BANK_NONE;
+	}
+}
+
 void ARMInit(struct ARMCore* cpu) {
-	memset(cpu->cp, 0, sizeof(cpu->cp));
 	cpu->master->init(cpu, cpu->master);
 	size_t i;
 	for (i = 0; i < cpu->numComponents; ++i) {
@@ -179,25 +202,6 @@ void ARMRaiseUndefined(struct ARMCore* cpu) {
 	cpu->cpsr.i = 1;
 }
 
-static const uint16_t conditionLut[16] = {
-	0xF0F0, // EQ [-Z--]
-	0x0F0F, // NE [-z--]
-	0xCCCC, // CS [--C-]
-	0x3333, // CC [--c-]
-	0xFF00, // MI [N---]
-	0x00FF, // PL [n---]
-	0xAAAA, // VS [---V]
-	0x5555, // VC [---v]
-	0x0C0C, // HI [-zC-]
-	0xF3F3, // LS [-Z--] || [--c-]
-	0xAA55, // GE [N--V] || [n--v]
-	0x55AA, // LT [N--v] || [n--V]
-	0x0A05, // GT [Nz-V] || [nz-v]
-	0xF5FA, // LE [-Z--] || [Nz-v] || [nz-V]
-	0xFFFF, // AL [----]
-	0x0000 // NV
-};
-
 static inline void ARMStep(struct ARMCore* cpu) {
 	uint32_t opcode = cpu->prefetch[0];
 	cpu->prefetch[0] = cpu->prefetch[1];
@@ -206,8 +210,53 @@ static inline void ARMStep(struct ARMCore* cpu) {
 
 	unsigned condition = opcode >> 28;
 	if (condition != 0xE) {
-		unsigned flags = cpu->cpsr.flags >> 4;
-		bool conditionMet = conditionLut[condition] & (1 << flags);
+		bool conditionMet = false;
+		switch (condition) {
+		case 0x0:
+			conditionMet = ARM_COND_EQ;
+			break;
+		case 0x1:
+			conditionMet = ARM_COND_NE;
+			break;
+		case 0x2:
+			conditionMet = ARM_COND_CS;
+			break;
+		case 0x3:
+			conditionMet = ARM_COND_CC;
+			break;
+		case 0x4:
+			conditionMet = ARM_COND_MI;
+			break;
+		case 0x5:
+			conditionMet = ARM_COND_PL;
+			break;
+		case 0x6:
+			conditionMet = ARM_COND_VS;
+			break;
+		case 0x7:
+			conditionMet = ARM_COND_VC;
+			break;
+		case 0x8:
+			conditionMet = ARM_COND_HI;
+			break;
+		case 0x9:
+			conditionMet = ARM_COND_LS;
+			break;
+		case 0xA:
+			conditionMet = ARM_COND_GE;
+			break;
+		case 0xB:
+			conditionMet = ARM_COND_LT;
+			break;
+		case 0xC:
+			conditionMet = ARM_COND_GT;
+			break;
+		case 0xD:
+			conditionMet = ARM_COND_LE;
+			break;
+		default:
+			break;
+		}
 		if (!conditionMet) {
 			cpu->cycles += ARM_PREFETCH_CYCLES;
 			return;
@@ -234,9 +283,6 @@ void ARMRun(struct ARMCore* cpu) {
 		ThumbStep(cpu);
 	} else {
 		ARMStep(cpu);
-	}
-	while (cpu->cycles >= cpu->nextEvent) {
-		cpu->irqh.processEvents(cpu);
 	}
 }
 

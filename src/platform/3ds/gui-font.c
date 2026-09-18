@@ -5,11 +5,10 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 #include <mgba-util/gui/font.h>
 #include <mgba-util/gui/font-metrics.h>
-#include <mgba-util/image/png-io.h>
+#include <mgba-util/png-io.h>
 #include <mgba-util/vfs.h>
 #include "icons.h"
 
-#include <tex3ds.h>
 #include "ctr-gpu.h"
 
 #define FONT_SIZE 15.6f
@@ -32,7 +31,7 @@ struct GUIFont* GUIFontCreate(void) {
 	guiFont->font = fontGetSystemFont();
 	TGLP_s* glyphInfo = fontGetGlyphInfo(guiFont->font);
 	guiFont->size = FONT_SIZE / glyphInfo->cellHeight;
-	guiFont->sheets = calloc(glyphInfo->nSheets, sizeof(*guiFont->sheets));
+	guiFont->sheets = malloc(sizeof(*guiFont->sheets) * glyphInfo->nSheets);
 
 	int i;
 	for (i = 0; i < glyphInfo->nSheets; ++i) {
@@ -45,8 +44,12 @@ struct GUIFont* GUIFontCreate(void) {
 		tex->param = GPU_TEXTURE_MAG_FILTER(GPU_LINEAR) | GPU_TEXTURE_MIN_FILTER(GPU_LINEAR) | GPU_TEXTURE_WRAP_S(GPU_CLAMP_TO_EDGE) | GPU_TEXTURE_WRAP_T(GPU_CLAMP_TO_EDGE);
 	}
 
-	Tex3DS_Texture t3x = Tex3DS_TextureImport(icons, icons_size, &guiFont->icons, NULL, true);
-	Tex3DS_TextureFree(t3x);
+	tex = &guiFont->icons;
+	C3D_TexInitVRAM(tex, 256, 64, GPU_RGBA5551);
+
+	GSPGPU_FlushDataCache(icons, icons_size);
+	GX_RequestDma((u32*) icons, tex->data, icons_size);
+	gspWaitForDMA();
 
 	return guiFont;
 }
@@ -89,15 +92,12 @@ void GUIFontIconMetrics(const struct GUIFont* font, enum GUIIcon icon, unsigned*
 	}
 }
 
-void GUIFontDrawGlyph(struct GUIFont* font, int glyph_x, int glyph_y, uint32_t color, uint32_t glyph) {
+void GUIFontDrawGlyph(const struct GUIFont* font, int glyph_x, int glyph_y, uint32_t color, uint32_t glyph) {
 	int index = fontGlyphIndexFromCodePoint(font->font, glyph);
-	if (index < 0) {
-		return;
-	}
 	fontGlyphPos_s data;
 	fontCalcGlyphPos(&data, font->font, index, 0, 1.0, 1.0);
 
-	const C3D_Tex* tex = &font->sheets[data.sheetIndex];
+	C3D_Tex* tex = &font->sheets[data.sheetIndex];
 	ctrActivateTexture(tex);
 
 	float width = data.texcoord.right - data.texcoord.left;
@@ -112,7 +112,7 @@ void GUIFontDrawGlyph(struct GUIFont* font, int glyph_x, int glyph_y, uint32_t c
 	             u, v, tex->width * width, tex->height * height, 0);
 }
 
-void GUIFontDrawIcon(struct GUIFont* font, int x, int y, enum GUIAlignment align, enum GUIOrientation orient, uint32_t color, enum GUIIcon icon) {
+void GUIFontDrawIcon(const struct GUIFont* font, int x, int y, enum GUIAlignment align, enum GUIOrientation orient, uint32_t color, enum GUIIcon icon) {
 	ctrActivateTexture(&font->icons);
 
 	if (icon >= GUI_ICON_MAX) {
@@ -136,42 +136,38 @@ void GUIFontDrawIcon(struct GUIFont* font, int x, int y, enum GUIAlignment align
 		y -= metric.height;
 		break;
 	}
-	s16 origin = font->icons.height - metric.y - metric.height;
-
 	switch (orient) {
 	case GUI_ORIENT_HMIRROR:
-		ctrAddRectEx(color, x + metric.width, y + metric.height,
-		             -metric.width, -metric.height,
-		             metric.x, origin,
+		ctrAddRectEx(color, x + metric.width, y,
+		             -metric.width, metric.height,
+		             metric.x, metric.y,
 		             metric.width, metric.height, 0);
 		break;
 	case GUI_ORIENT_VMIRROR:
-		ctrAddRectEx(color, x, y,
-		             metric.width, metric.height,
-		             metric.x, origin,
+		ctrAddRectEx(color, x, y + metric.height,
+		             metric.width, -metric.height,
+		             metric.x, metric.y,
 		             metric.width, metric.height, 0);
 		break;
 	case GUI_ORIENT_0:
 	default:
 		// TODO: Rotation
-		ctrAddRectEx(color, x, y + metric.height,
-		             metric.width, -metric.height,
-		             metric.x, origin,
-		             metric.width, metric.height, 0);
+		ctrAddRect(color, x, y, metric.x, metric.y, metric.width, metric.height);
 		break;
 	}
 }
 
-void GUIFontDrawIconSize(struct GUIFont* font, int x, int y, int w, int h, uint32_t color, enum GUIIcon icon) {
+void GUIFontDrawIconSize(const struct GUIFont* font, int x, int y, int w, int h, uint32_t color, enum GUIIcon icon) {
 	ctrActivateTexture(&font->icons);
 
 	if (icon >= GUI_ICON_MAX) {
 		return;
 	}
+
 	struct GUIIconMetric metric = defaultIconMetrics[icon];
-	ctrAddRectEx(color, x, y + (h ? h : metric.height),
+	ctrAddRectEx(color, x, y,
 	             w ? w : metric.width,
-	             h ? -h : -metric.height,
-	             metric.x, font->icons.height - metric.y - metric.height,
+	             h ? h : metric.height,
+	             metric.x, metric.y,
 	             metric.width, metric.height, 0);
 }

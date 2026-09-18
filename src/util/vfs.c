@@ -10,27 +10,12 @@
 #ifdef PSP2
 #include <mgba-util/platform/psp2/sce-vfs.h>
 #endif
-#ifdef __3DS__
+#ifdef _3DS
 #include <mgba-util/platform/3ds/3ds-vfs.h>
 #endif
-#ifdef _WIN32
-#include <shlwapi.h>
-#include <windows.h>
-#endif
 
-#ifdef __LIBRETRO__
-struct VFile* VFileOpenLibretro(const char* path, int flags);
-#endif
-
-#ifdef ENABLE_VFS
 struct VFile* VFileOpen(const char* path, int flags) {
-#ifdef __LIBRETRO__
-	struct VFile* vfLibretro = VFileOpenLibretro(path, flags);
-	if (vfLibretro) {
-		return vfLibretro;
-	}
-#endif
-#ifdef ENABLE_VFS_FILE
+#ifdef USE_VFS_FILE
 	const char* chflags;
 	switch (flags & O_ACCMODE) {
 	case O_WRONLY:
@@ -78,7 +63,7 @@ struct VFile* VFileOpen(const char* path, int flags) {
 		sceFlags |= SCE_O_CREAT;
 	}
 	return VFileOpenSce(path, sceFlags, 0666);
-#elif defined(ENABLE_VFS_3DS)
+#elif defined(USE_VFS_3DS)
 	int ctrFlags = FS_OPEN_READ;
 	switch (flags & O_ACCMODE) {
 	case O_WRONLY:
@@ -106,31 +91,26 @@ struct VFile* VFileOpen(const char* path, int flags) {
 		vf->seek(vf, vf->size(vf), SEEK_SET);
 	}
 	return vf;
-#elif defined(ENABLE_VFS_FD)
-	return VFileOpenFD(path, flags);
 #else
-#error "Can't build VFS subsystem without a VFile backend"
+	return VFileOpenFD(path, flags);
 #endif
 }
 
-#ifdef ENABLE_DIRECTORIES
 struct VDir* VDirOpenArchive(const char* path) {
 	struct VDir* dir = 0;
 	UNUSED(path);
-#if defined(USE_LIBZIP) || defined(USE_MINIZIP)
+#if defined(USE_LIBZIP) || defined(USE_ZLIB)
 	if (!dir) {
-		dir = VDirOpenZip(path, O_RDONLY);
+		dir = VDirOpenZip(path, 0);
 	}
 #endif
 #ifdef USE_LZMA
 	if (!dir) {
-		dir = VDirOpen7z(path, O_RDONLY);
+		dir = VDirOpen7z(path, 0);
 	}
 #endif
 	return dir;
 }
-#endif
-#endif
 
 ssize_t VFileReadline(struct VFile* vf, char* buffer, size_t size) {
 	size_t bytesRead = 0;
@@ -182,8 +162,8 @@ void separatePath(const char* path, char* dirname, char* basename, char* extensi
 	if (!path) {
 		return;
 	}
-	const char* dotPoint = strrchr(path, '.');
-	const char* separatorPoint = strnrstr(path, PATH_SEP, strlen(path));
+	char* dotPoint = strrchr(path, '.');
+	char* separatorPoint = strnrstr(path, PATH_SEP, strlen(path));
 	if (separatorPoint) {
 		if (dirname) {
 			ptrdiff_t len = separatorPoint - path;
@@ -227,74 +207,6 @@ void separatePath(const char* path, char* dirname, char* basename, char* extensi
 	}
 }
 
-bool isAbsolute(const char* path) {
-	// XXX: Is this robust?
-#ifdef _WIN32
-	WCHAR wpath[PATH_MAX];
-	MultiByteToWideChar(CP_UTF8, 0, path, -1, wpath, PATH_MAX);
-	return !PathIsRelativeW(wpath);
-#else
-	return path[0] == '/';
-#endif
-}
-
-void makeAbsolute(const char* path, const char* base, char* out) {
-	if (isAbsolute(path)) {
-		strncpy(out, path, PATH_MAX);
-		return;
-	}
-
-	char buf[PATH_MAX];
-	snprintf(buf, sizeof(buf), "%s" PATH_SEP "%s", base, path);
-#ifdef _WIN32
-	WCHAR wbuf[PATH_MAX];
-	WCHAR wout[PATH_MAX];
-	MultiByteToWideChar(CP_UTF8, 0, buf, -1, wbuf, PATH_MAX);
-	if (GetFullPathNameW(wbuf, PATH_MAX, wout, NULL)) {
-		WideCharToMultiByte(CP_UTF8, 0, wout, -1, out, PATH_MAX, 0, 0);
-		return;
-	}
-#elif defined(HAVE_REALPATH)
-	if (realpath(buf, out)) {
-		return;
-	}
-#endif
-	strncpy(out, buf, PATH_MAX);
-}
-
-bool upDirectory(char* path) {
-#ifdef _WIN32
-	WCHAR wbuf[PATH_MAX];
-	WCHAR vol[PATH_MAX];
-	MultiByteToWideChar(CP_UTF8, 0, path, -1, wbuf, PATH_MAX);
-	if (!GetVolumePathNameW(wbuf, vol, sizeof(vol) / sizeof(*vol))) {
-		return false;
-	}
-#endif
-
-	while (true) {
-		char* end = strnrstr(path, PATH_SEP, strlen(path));
-		if (!end) {
-			return false;
-		}
-		if (!end[1]) {
-			end[0] = '\0';
-			// Trailing slash
-			continue;
-		}
-#ifdef _WIN32
-		end[1] = '\0';
-		MultiByteToWideChar(CP_UTF8, 0, path, -1, wbuf, PATH_MAX);
-		if (wcsncmp(wbuf, vol, PATH_MAX) == 0) {
-			return false;
-		}
-#endif
-		end[0] = '\0';
-		return true;
-	}
-}
-
-#if defined(ENABLE_VFS) && defined(ENABLE_DIRECTORIES)
 struct VFile* VDirFindFirst(struct VDir* dir, bool (*filter)(struct VFile*)) {
 	dir->rewind(dir);
 	struct VDirEntry* dirent = dir->listNext(dir);
@@ -359,4 +271,3 @@ struct VFile* VDirFindNextAvailable(struct VDir* dir, const char* basename, cons
 	path[PATH_MAX - 1] = '\0';
 	return dir->openFile(dir, path, mode);
 }
-#endif

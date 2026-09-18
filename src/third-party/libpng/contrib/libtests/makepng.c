@@ -3,6 +3,8 @@
 /* Copyright: */
 #define COPYRIGHT "\251 2013,2015 John Cunningham Bowler"
 /*
+ * Last changed in libpng 1.6.20 [November 24, 2015]
+ *
  * This code is released under the libpng license.
  * For conditions of distribution and use, see the disclaimer
  * and license in png.h
@@ -297,28 +299,25 @@ generate_palette(png_colorp palette, png_bytep trans, int bit_depth,
             unsigned int x, y;
             volatile unsigned int ip = 0;
 
-            for (x=0; x<size; ++x)
+            for (x=0; x<size; ++x) for (y=0; y<size; ++y)
             {
-               for (y=0; y<size; ++y)
-               {
-                  ip = x + (size * y);
+               ip = x + (size * y);
 
-                  /* size is at most 16, so the scaled value below fits in 16 bits
-                  */
-#                 define interp(pos, c1, c2) ((pos * c1) + ((size-pos) * c2))
-#                 define xyinterp(x, y, c1, c2, c3, c4) (((size * size / 2) +\
-                     (interp(x, c1, c2) * y + (size-y) * interp(x, c3, c4))) /\
-                     (size*size))
+               /* size is at most 16, so the scaled value below fits in 16 bits
+                */
+#              define interp(pos, c1, c2) ((pos * c1) + ((size-pos) * c2))
+#              define xyinterp(x, y, c1, c2, c3, c4) (((size * size / 2) +\
+                  (interp(x, c1, c2) * y + (size-y) * interp(x, c3, c4))) /\
+                  (size*size))
 
-                  set_color(palette+ip, trans+ip,
-                     /* color:    green, red,blue,white */
-                     xyinterp(x, y,   0, 255,   0, 255),
-                     xyinterp(x, y, 255,   0,   0, 255),
-                     xyinterp(x, y,   0,   0, 255, 255),
-                     /* alpha:        0, 102, 204, 255) */
-                     xyinterp(x, y,   0, 102, 204, 255),
-                     gamma_table);
-               }
+               set_color(palette+ip, trans+ip,
+                  /* color:    green, red,blue,white */
+                  xyinterp(x, y,   0, 255,   0, 255),
+                  xyinterp(x, y, 255,   0,   0, 255),
+                  xyinterp(x, y,   0,   0, 255, 255),
+                  /* alpha:        0, 102, 204, 255) */
+                  xyinterp(x, y,   0, 102, 204, 255),
+                  gamma_table);
             }
 
             return ip+1;
@@ -397,7 +396,7 @@ generate_row(png_bytep row, size_t rowbytes, unsigned int y, int color_type,
       image_size_of_type(color_type, bit_depth, colors, small)-1;
    png_uint_32 depth_max = (1U << bit_depth)-1; /* up to 65536 */
 
-   if (colors[0] == 0 && small)
+   if (colors[0] == 0) if (small)
    {
       unsigned int pixel_depth = pixel_depth_of_type(color_type, bit_depth);
 
@@ -496,7 +495,7 @@ generate_row(png_bytep row, size_t rowbytes, unsigned int y, int color_type,
          case 32:
          case 48:
          case 64:
-            /* The rows are filled by an algorithm similar to the above, in the
+            /* The rows are filled by an alogorithm similar to the above, in the
              * first row pixel bytes are all equal, increasing from 0 by 1 for
              * each pixel.  In the second row the bytes within a pixel are
              * incremented 1,3,5,7,... from the previous row byte.  Using an odd
@@ -662,7 +661,7 @@ generate_row(png_bytep row, size_t rowbytes, unsigned int y, int color_type,
       {
          case 1:
             {
-               png_uint_32 luma = colors[1];
+               const png_uint_32 luma = colors[1];
                png_uint_32 x;
 
                for (x=0; x<=size_max; ++x)
@@ -673,8 +672,8 @@ generate_row(png_bytep row, size_t rowbytes, unsigned int y, int color_type,
 
          case 2:
             {
-               png_uint_32 luma = colors[1];
-               png_uint_32 alpha = colors[2];
+               const png_uint_32 luma = colors[1];
+               const png_uint_32 alpha = colors[2];
                png_uint_32 x;
 
                for (x=0; x<size_max; ++x)
@@ -689,9 +688,9 @@ generate_row(png_bytep row, size_t rowbytes, unsigned int y, int color_type,
 
          case 3:
             {
-               png_uint_32 red = colors[1];
-               png_uint_32 green = colors[2];
-               png_uint_32 blue = colors[3];
+               const png_uint_32 red = colors[1];
+               const png_uint_32 green = colors[2];
+               const png_uint_32 blue = colors[3];
                png_uint_32 x;
 
                for (x=0; x<=size_max; ++x)
@@ -708,10 +707,10 @@ generate_row(png_bytep row, size_t rowbytes, unsigned int y, int color_type,
 
          case 4:
             {
-               png_uint_32 red = colors[1];
-               png_uint_32 green = colors[2];
-               png_uint_32 blue = colors[3];
-               png_uint_32 alpha = colors[4];
+               const png_uint_32 red = colors[1];
+               const png_uint_32 green = colors[2];
+               const png_uint_32 blue = colors[3];
+               const png_uint_32 alpha = colors[4];
                png_uint_32 x;
 
                for (x=0; x<=size_max; ++x)
@@ -813,7 +812,7 @@ write_png(const char **name, FILE *fp, int color_type, int bit_depth,
       png_error(png_ptr, "OOM allocating info structure");
 
    {
-      unsigned int size =
+      const unsigned int size =
          image_size_of_type(color_type, bit_depth, colors, small);
       unsigned int ysize;
       png_fixed_point real_gamma = 45455; /* For sRGB */
@@ -825,7 +824,7 @@ write_png(const char **name, FILE *fp, int color_type, int bit_depth,
        */
       if (small)
       {
-         unsigned int pixel_depth =
+         const unsigned int pixel_depth =
             pixel_depth_of_type(color_type, bit_depth);
 
          if (pixel_depth <= 8U)
@@ -859,13 +858,10 @@ write_png(const char **name, FILE *fp, int color_type, int bit_depth,
       {
          unsigned int i;
 
-         if (real_gamma == 45455)
+         if (real_gamma == 45455) for (i=0; i<256; ++i)
          {
-            for (i=0; i<256; ++i)
-            {
-               gamma_table[i] = (png_byte)i;
-               conv = 1.;
-            }
+            gamma_table[i] = (png_byte)i;
+            conv = 1.;
          }
 
          else
@@ -954,7 +950,7 @@ write_png(const char **name, FILE *fp, int color_type, int bit_depth,
             int passes = 1;
 #        endif /* !WRITE_INTERLACING */
          int pass;
-         size_t rowbytes = png_get_rowbytes(png_ptr, info_ptr);
+         png_size_t rowbytes = png_get_rowbytes(png_ptr, info_ptr);
 
          row = malloc(rowbytes);
 
@@ -1098,7 +1094,7 @@ load_file(png_const_charp name, png_bytepp result)
    return 0;
 }
 
-static size_t
+static png_size_t
 load_fake(png_charp param, png_bytepp profile)
 {
    char *endptr = NULL;
@@ -1168,7 +1164,7 @@ insert_iCCP(png_structp png_ptr, png_infop info_ptr, int nparams,
    {
       case '<':
          {
-            size_t filelen = load_file(params[1]+1, &profile);
+            png_size_t filelen = load_file(params[1]+1, &profile);
             if (filelen > 0xfffffffc) /* Maximum profile length */
             {
                fprintf(stderr, "%s: file too long (%lu) for an ICC profile\n",
@@ -1183,7 +1179,7 @@ insert_iCCP(png_structp png_ptr, png_infop info_ptr, int nparams,
       case '0': case '1': case '2': case '3': case '4':
       case '5': case '6': case '7': case '8': case '9':
          {
-            size_t fake_len = load_fake(params[1], &profile);
+            png_size_t fake_len = load_fake(params[1], &profile);
 
             if (fake_len > 0) /* else a simple parameter */
             {
@@ -1278,7 +1274,7 @@ set_text(png_structp png_ptr, png_infop info_ptr, png_textp text,
       case '5': case '6': case '7': case '8': case '9':
          {
             png_bytep data = NULL;
-            size_t fake_len = load_fake(param, &data);
+            png_size_t fake_len = load_fake(param, &data);
 
             if (fake_len > 0) /* else a simple parameter */
             {
@@ -1382,10 +1378,10 @@ static void
 insert_sBIT(png_structp png_ptr, png_infop info_ptr, int nparams,
       png_charpp params)
 {
-   int ct = png_get_color_type(png_ptr, info_ptr);
-   int c = (ct & PNG_COLOR_MASK_COLOR ? 3 : 1) +
+   const int ct = png_get_color_type(png_ptr, info_ptr);
+   const int c = (ct & PNG_COLOR_MASK_COLOR ? 3 : 1) +
       (ct & PNG_COLOR_MASK_ALPHA ? 1 : 0);
-   unsigned int maxval =
+   const unsigned int maxval =
       ct & PNG_COLOR_MASK_PALETTE ? 8U : png_get_bit_depth(png_ptr, info_ptr);
    png_color_8 sBIT;
 
@@ -1434,13 +1430,10 @@ find_parameters(png_const_charp what, png_charp param, png_charp *list,
    for (i=0; *param && i<nparams; ++i)
    {
       list[i] = param;
-      while (*++param)
+      while (*++param) if (*param == '\n' || *param == ':')
       {
-         if (*param == '\n' || *param == ':')
-         {
-            *param++ = 0; /* Terminate last parameter */
-            break;        /* And start a new one. */
-         }
+         *param++ = 0; /* Terminate last parameter */
+         break;        /* And start a new one. */
       }
    }
 
@@ -1863,7 +1856,7 @@ main(int argc, char **argv)
 
    /* Check the colors */
    {
-      unsigned int lim = (color_type == PNG_COLOR_TYPE_PALETTE ? 255U :
+      const unsigned int lim = (color_type == PNG_COLOR_TYPE_PALETTE ? 255U :
          (1U<<bit_depth)-1);
       unsigned int i;
 
@@ -1876,7 +1869,7 @@ main(int argc, char **argv)
          }
    }
 
-   /* small and colors are incompatible (will probably crash if both are used at
+   /* small and colors are incomparible (will probably crash if both are used at
     * the same time!)
     */
    if (small && colors[0] != 0)

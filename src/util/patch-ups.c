@@ -5,7 +5,6 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 #include <mgba-util/patch/ips.h>
 
-#include <mgba-util/circle-buffer.h>
 #include <mgba-util/crc32.h>
 #include <mgba-util/patch.h>
 #include <mgba-util/vfs.h>
@@ -14,16 +13,14 @@ enum {
 	IN_CHECKSUM = -12,
 	OUT_CHECKSUM = -8,
 	PATCH_CHECKSUM = -4,
-
-	BUFFER_SIZE = 128
 };
 
 static size_t _UPSOutputSize(struct Patch* patch, size_t inSize);
 
-static bool _UPSApplyPatch(struct Patch* patch, const void* restrict in, size_t inSize, void* restrict out, size_t outSize);
-static bool _BPSApplyPatch(struct Patch* patch, const void* restrict in, size_t inSize, void* restrict out, size_t outSize);
+static bool _UPSApplyPatch(struct Patch* patch, const void* in, size_t inSize, void* out, size_t outSize);
+static bool _BPSApplyPatch(struct Patch* patch, const void* in, size_t inSize, void* out, size_t outSize);
 
-static size_t _decodeLength(struct VFile* vf, struct mCircleBuffer* buffer);
+static size_t _decodeLength(struct VFile* vf);
 
 bool loadPatchUPS(struct Patch* patch) {
 	patch->vf->seek(patch->vf, 0, SEEK_SET);
@@ -61,62 +58,46 @@ bool loadPatchUPS(struct Patch* patch) {
 size_t _UPSOutputSize(struct Patch* patch, size_t inSize) {
 	UNUSED(inSize);
 	patch->vf->seek(patch->vf, 4, SEEK_SET);
-	if (_decodeLength(patch->vf, NULL) != inSize) {
+	if (_decodeLength(patch->vf) != inSize) {
 		return 0;
 	}
-	return _decodeLength(patch->vf, NULL);
+	return _decodeLength(patch->vf);
 }
 
-bool _UPSApplyPatch(struct Patch* patch, const void* restrict in, size_t inSize, void* restrict out, size_t outSize) {
+bool _UPSApplyPatch(struct Patch* patch, const void* in, size_t inSize, void* out, size_t outSize) {
 	// TODO: Input checksum
 
 	size_t filesize = patch->vf->size(patch->vf);
 	patch->vf->seek(patch->vf, 4, SEEK_SET);
-	_decodeLength(patch->vf, NULL); // Discard input size
-	if (_decodeLength(patch->vf, NULL) != outSize) {
+	_decodeLength(patch->vf); // Discard input size
+	if (_decodeLength(patch->vf) != outSize) {
 		return false;
 	}
 
-	struct mCircleBuffer buffer;
 	memcpy(out, in, inSize > outSize ? outSize : inSize);
 
 	size_t offset = 0;
 	size_t alreadyRead = 0;
 	uint8_t* buf = out;
-	mCircleBufferInit(&buffer, BUFFER_SIZE);
 	while (alreadyRead < filesize + IN_CHECKSUM) {
-		offset += _decodeLength(patch->vf, &buffer);
-		int8_t byte;
+		offset += _decodeLength(patch->vf);
+		uint8_t byte;
 
 		while (true) {
-			if (!mCircleBufferSize(&buffer)) {
-				uint8_t block[BUFFER_SIZE];
-				ssize_t read = patch->vf->read(patch->vf, block, sizeof(block));
-				if (read < 1) {
-					mCircleBufferDeinit(&buffer);
-					return false;
-				}
-				mCircleBufferWrite(&buffer, block, read);
-			}
-			if (!mCircleBufferRead8(&buffer, &byte)) {
-				// This should be unreachable
-				mCircleBufferDeinit(&buffer);
+			if (patch->vf->read(patch->vf, &byte, 1) != 1) {
 				return false;
 			}
-			if (!byte) {
-				break;
-			}
 			if (offset >= outSize) {
-				mCircleBufferDeinit(&buffer);
 				return false;
 			}
 			buf[offset] ^= byte;
 			++offset;
+			if (!byte) {
+				break;
+			}
 		}
-		++offset;
-		alreadyRead = patch->vf->seek(patch->vf, 0, SEEK_CUR) - mCircleBufferSize(&buffer);
+		alreadyRead = patch->vf->seek(patch->vf, 0, SEEK_CUR);
 	}
-	mCircleBufferDeinit(&buffer);
 
 	uint32_t goodCrc32;
 	patch->vf->seek(patch->vf, OUT_CHECKSUM, SEEK_END);
@@ -131,7 +112,7 @@ bool _UPSApplyPatch(struct Patch* patch, const void* restrict in, size_t inSize,
 	return true;
 }
 
-bool _BPSApplyPatch(struct Patch* patch, const void* restrict in, size_t inSize, void* restrict out, size_t outSize) {
+bool _BPSApplyPatch(struct Patch* patch, const void* in, size_t inSize, void* out, size_t outSize) {
 	patch->vf->seek(patch->vf, IN_CHECKSUM, SEEK_END);
 	uint32_t expectedInChecksum;
 	uint32_t expectedOutChecksum;
@@ -147,14 +128,14 @@ bool _BPSApplyPatch(struct Patch* patch, const void* restrict in, size_t inSize,
 
 	ssize_t filesize = patch->vf->size(patch->vf);
 	patch->vf->seek(patch->vf, 4, SEEK_SET);
-	_decodeLength(patch->vf, NULL); // Discard input size
-	if (_decodeLength(patch->vf, NULL) != outSize) {
+	_decodeLength(patch->vf); // Discard input size
+	if (_decodeLength(patch->vf) != outSize) {
 		return false;
 	}
-	if (inSize > (size_t) SSIZE_MAX || outSize > (size_t) SSIZE_MAX) {
+	if (inSize > SSIZE_MAX || outSize > SSIZE_MAX) {
 		return false;
 	}
-	size_t metadataLength = _decodeLength(patch->vf, NULL);
+	size_t metadataLength = _decodeLength(patch->vf);
 	patch->vf->seek(patch->vf, metadataLength, SEEK_CUR); // Skip metadata
 	size_t writeLocation = 0;
 	ssize_t readSourceLocation = 0;
@@ -163,7 +144,7 @@ bool _BPSApplyPatch(struct Patch* patch, const void* restrict in, size_t inSize,
 	uint8_t* writeBuffer = out;
 	const uint8_t* readBuffer = in;
 	while (patch->vf->seek(patch->vf, 0, SEEK_CUR) < filesize + IN_CHECKSUM) {
-		size_t command = _decodeLength(patch->vf, NULL);
+		size_t command = _decodeLength(patch->vf);
 		size_t length = (command >> 2) + 1;
 		if (writeLocation + length > outSize) {
 			return false;
@@ -172,9 +153,6 @@ bool _BPSApplyPatch(struct Patch* patch, const void* restrict in, size_t inSize,
 		switch (command & 0x3) {
 		case 0x0:
 			// SourceRead
-			if (writeLocation + length > inSize) {
-				return false;
-			}
 			memmove(&writeBuffer[writeLocation], &readBuffer[writeLocation], length);
 			outputChecksum = crc32(outputChecksum, &writeBuffer[writeLocation], length);
 			writeLocation += length;
@@ -189,23 +167,13 @@ bool _BPSApplyPatch(struct Patch* patch, const void* restrict in, size_t inSize,
 			break;
 		case 0x2:
 			// SourceCopy
-			readOffset = _decodeLength(patch->vf, NULL);
-			if (readOffset > (size_t) SSIZE_MAX) {
-				// This is outrageously large...let's just reject it instead of trying to be careful with overflows
-				return false;
-			}
+			readOffset = _decodeLength(patch->vf);
 			if (readOffset & 1) {
 				readSourceLocation -= readOffset >> 1;
 			} else {
 				readSourceLocation += readOffset >> 1;
 			}
-			if (readSourceLocation < 0) {
-				return false;
-			}
-			if (readSourceLocation > (ssize_t) inSize) {
-				return false;
-			}
-			if (readSourceLocation + length > inSize) {
+			if (readSourceLocation < 0 || readSourceLocation > (ssize_t) inSize) {
 				return false;
 			}
 			memmove(&writeBuffer[writeLocation], &readBuffer[readSourceLocation], length);
@@ -215,23 +183,13 @@ bool _BPSApplyPatch(struct Patch* patch, const void* restrict in, size_t inSize,
 			break;
 		case 0x3:
 			// TargetCopy
-			readOffset = _decodeLength(patch->vf, NULL);
-			if (readOffset > (size_t) SSIZE_MAX) {
-				// This is outrageously large...let's just reject it instead of trying to be careful with overflows
-				return false;
-			}
+			readOffset = _decodeLength(patch->vf);
 			if (readOffset & 1) {
 				readTargetLocation -= readOffset >> 1;
 			} else {
 				readTargetLocation += readOffset >> 1;
 			}
-			if (readTargetLocation < 0) {
-				return false;
-			}
-			if (readTargetLocation > (ssize_t) inSize) {
-				return false;
-			}
-			if (readTargetLocation + length > inSize) {
+			if (readTargetLocation < 0 || readTargetLocation > (ssize_t) outSize) {
 				return false;
 			}
 			for (i = 0; i < length; ++i) {
@@ -250,28 +208,13 @@ bool _BPSApplyPatch(struct Patch* patch, const void* restrict in, size_t inSize,
 	return true;
 }
 
-size_t _decodeLength(struct VFile* vf, struct mCircleBuffer* buffer) {
+size_t _decodeLength(struct VFile* vf) {
 	size_t shift = 1;
 	size_t value = 0;
 	uint8_t byte;
 	while (true) {
-		if (buffer) {
-			if (!mCircleBufferSize(buffer)) {
-				uint8_t block[BUFFER_SIZE];
-				ssize_t read = vf->read(vf, block, sizeof(block));
-				if (read < 1) {
-					return 0;
-				}
-				mCircleBufferWrite(buffer, block, read);
-			}
-			if (!mCircleBufferRead8(buffer, (int8_t*) &byte)) {
-				// This should be unreachable
-				return 0;
-			}
-		} else {
-			if (vf->read(vf, &byte, 1) != 1) {
-				break;
-			}
+		if (vf->read(vf, &byte, 1) != 1) {
+			break;
 		}
 		value += (byte & 0x7f) * shift;
 		if (byte & 0x80) {

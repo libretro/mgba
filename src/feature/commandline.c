@@ -5,19 +5,9 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 #include <mgba/feature/commandline.h>
 
-#include <mgba/core/cheats.h>
 #include <mgba/core/config.h>
-#include <mgba/core/core.h>
 #include <mgba/core/version.h>
 #include <mgba-util/string.h>
-#include <mgba-util/vfs.h>
-
-#ifdef ENABLE_GDB_STUB
-#include <mgba/internal/debugger/gdb-stub.h>
-#endif
-#ifdef USE_EDITLINE
-#include <mgba/internal/debugger/cli-el-backend.h>
-#endif
 
 #include <fcntl.h>
 #ifdef _MSC_VER
@@ -26,12 +16,16 @@
 #include <getopt.h>
 #endif
 
-#define GRAPHICS_OPTIONS "12345678f"
+#define GRAPHICS_OPTIONS "123456f"
 #define GRAPHICS_USAGE \
-	"Graphics options:\n" \
-	"  -1, -2, -3, -4, -5, -6, -7, -8  Scale viewport by 1-8 times\n" \
-	"  -f, --fullscreen                Start full-screen\n" \
-	"  --scale X                       Scale viewport by X times"
+	"\nGraphics options:\n" \
+	"  -1               1x viewport\n" \
+	"  -2               2x viewport\n" \
+	"  -3               3x viewport\n" \
+	"  -4               4x viewport\n" \
+	"  -5               5x viewport\n" \
+	"  -6               6x viewport\n" \
+	"  -f               Start full-screen"
 
 static const struct option _options[] = {
 	{ "bios",      required_argument, 0, 'b' },
@@ -40,7 +34,7 @@ static const struct option _options[] = {
 #ifdef USE_EDITLINE
 	{ "debug",     no_argument, 0, 'd' },
 #endif
-#ifdef ENABLE_GDB_STUB
+#ifdef USE_GDB_STUB
 	{ "gdb",       no_argument, 0, 'g' },
 #endif
 	{ "help",      no_argument, 0, 'h' },
@@ -51,18 +45,11 @@ static const struct option _options[] = {
 	{ 0, 0, 0, 0 }
 };
 
-static const struct mOption _graphicsLongOpts[] = {
-	{ "fullscreen", false, 'f' },
-	{ "scale", true, '\0' },
-	{ 0, 0, 0 }
-};
-
 static bool _parseGraphicsArg(struct mSubParser* parser, int option, const char* arg);
-static bool _parseLongGraphicsArg(struct mSubParser* parser, const char* option, const char* arg);
 static void _applyGraphicsArgs(struct mSubParser* parser, struct mCoreConfig* config);
 
 static void _tableInsert(struct Table* table, const char* pair) {
-	const char* eq = strchr(pair, '=');
+	char* eq = strchr(pair, '=');
 	if (eq) {
 		char option[128] = "";
 		strncpy(option, pair, eq - pair);
@@ -78,62 +65,34 @@ static void _tableApply(const char* key, void* value, void* user) {
 	mCoreConfigSetOverrideValue(config, key, value);
 }
 
-bool mArgumentsParse(struct mArguments* args, int argc, char* const* argv, struct mSubParser* subparsers, int nSubparsers) {
+bool parseArguments(struct mArguments* args, int argc, char* const* argv, struct mSubParser* subparser) {
 	int ch;
-	char options[128] =
+	char options[64] =
 		"b:c:C:hl:p:s:t:"
 #ifdef USE_EDITLINE
 		"d"
 #endif
-#ifdef ENABLE_GDB_STUB
+#ifdef USE_GDB_STUB
 		"g"
 #endif
 	;
-
-	struct option longOptions[128] = {0};
-	memcpy(longOptions, _options, sizeof(_options));
-
 	memset(args, 0, sizeof(*args));
 	args->frameskip = -1;
 	args->logLevel = INT_MIN;
 	HashTableInit(&args->configOverrides, 0, free);
-	int lastLongOpt;
-
-	int i, j;
-	for (i = 0; _options[i].name; ++i); // Seek to end
-	lastLongOpt = i;
-
-	for (i = 0; i < nSubparsers; ++i) {
-		if (subparsers[i].extraOptions) {
-			strncat(options, subparsers[i].extraOptions, sizeof(options) - strlen(options) - 1);
-		}
-		if (subparsers[i].longOptions) {
-			for (j = 0; subparsers[i].longOptions[j].name; ++j) {
-				longOptions[lastLongOpt].name = subparsers[i].longOptions[j].name;
-				longOptions[lastLongOpt].has_arg = subparsers[i].longOptions[j].arg ? required_argument : no_argument;
-				longOptions[lastLongOpt].flag = NULL;
-				longOptions[lastLongOpt].val = subparsers[i].longOptions[j].shortEquiv;
-				++lastLongOpt;
-			}
-		}
+	if (subparser && subparser->extraOptions) {
+		// TODO: modularize options to subparsers
+		strncat(options, subparser->extraOptions, sizeof(options) - strlen(options) - 1);
 	}
-	bool ok = false;
 	int index = 0;
-	while ((ch = getopt_long(argc, argv, options, longOptions, &index)) != -1) {
-		const struct option* opt = &longOptions[index];
+	while ((ch = getopt_long(argc, argv, options, _options, &index)) != -1) {
+		const struct option* opt = &_options[index];
 		switch (ch) {
 		case '\0':
 			if (strcmp(opt->name, "version") == 0) {
 				args->showVersion = true;
 			} else {
-				for (i = 0; i < nSubparsers; ++i) {
-					if (subparsers[i].parseLong) {
-						ok = subparsers[i].parseLong(&subparsers[i], opt->name, optarg) || ok;
-					}
-				}
-				if (!ok) {
-					return false;
-				}
+				return false;
 			}
 			break;
 		case 'b':
@@ -147,14 +106,18 @@ bool mArgumentsParse(struct mArguments* args, int argc, char* const* argv, struc
 			break;
 #ifdef USE_EDITLINE
 		case 'd':
-			args->debugAtStart = true;
-			args->debugCli = true;
+			if (args->debuggerType != DEBUGGER_NONE) {
+				return false;
+			}
+			args->debuggerType = DEBUGGER_CLI;
 			break;
 #endif
-#ifdef ENABLE_GDB_STUB
+#ifdef USE_GDB_STUB
 		case 'g':
-			args->debugAtStart = true;
-			args->debugGdb = true;
+			if (args->debuggerType != DEBUGGER_NONE) {
+				return false;
+			}
+			args->debuggerType = DEBUGGER_GDB;
 			break;
 #endif
 		case 'h':
@@ -173,13 +136,10 @@ bool mArgumentsParse(struct mArguments* args, int argc, char* const* argv, struc
 			args->savestate = strdup(optarg);
 			break;
 		default:
-			for (i = 0; i < nSubparsers; ++i) {
-				if (subparsers[i].parse) {
-					ok = subparsers[i].parse(&subparsers[i], ch, optarg) || ok;
+			if (subparser) {
+				if (!subparser->parse(subparser, ch, optarg)) {
+					return false;
 				}
-			}
-			if (!ok) {
-				return false;
 			}
 			break;
 		}
@@ -187,21 +147,7 @@ bool mArgumentsParse(struct mArguments* args, int argc, char* const* argv, struc
 	argc -= optind;
 	argv += optind;
 	if (argc > 1) {
-		for (j = 0; j < argc; ++j) {
-			bool handled = false;
-			for (i = 0; i < nSubparsers; ++i) {
-				if (!subparsers[i].handleExtraArg) {
-					continue;
-				}
-				handled = subparsers[i].handleExtraArg(&subparsers[i], argv[j]);
-				if (handled) {
-					break;
-				}
-			}
-			if (!handled) {
-				return false;
-			}
-		}
+		return false;
 	} else if (argc == 1) {
 		args->fname = strdup(argv[0]);
 	} else {
@@ -210,7 +156,7 @@ bool mArgumentsParse(struct mArguments* args, int argc, char* const* argv, struc
 	return true;
 }
 
-void mArgumentsApply(const struct mArguments* args, struct mSubParser* subparsers, int nSubparsers, struct mCoreConfig* config) {
+void applyArguments(const struct mArguments* args, struct mSubParser* subparser, struct mCoreConfig* config) {
 	if (args->frameskip >= 0) {
 		mCoreConfigSetOverrideIntValue(config, "frameskip", args->frameskip);
 	}
@@ -219,78 +165,14 @@ void mArgumentsApply(const struct mArguments* args, struct mSubParser* subparser
 	}
 	if (args->bios) {
 		mCoreConfigSetOverrideValue(config, "bios", args->bios);
-		mCoreConfigSetOverrideIntValue(config, "useBios", true);
 	}
 	HashTableEnumerate(&args->configOverrides, _tableApply, config);
-	int i;
-	for (i = 0; i < nSubparsers; ++i) {
-		if (subparsers[i].apply) {
-			subparsers[i].apply(&subparsers[i], config);
-		}
+	if (subparser) {
+		subparser->apply(subparser, config);
 	}
 }
 
-bool mArgumentsApplyDebugger(const struct mArguments* args, struct mCore* core, struct mDebugger* debugger) {
-	UNUSED(args);
-	UNUSED(core);
-	UNUSED(debugger);
-	bool hasDebugger = false;
-
-#ifdef USE_EDITLINE
-	if (args->debugCli) {
-		struct mDebuggerModule* module = mDebuggerCreateModule(DEBUGGER_CLI, core);
-		if (module) {
-			struct CLIDebugger* cliDebugger = (struct CLIDebugger*) module;
-			CLIDebuggerAttachBackend(cliDebugger, CLIDebuggerEditLineBackendCreate());
-			mDebuggerAttachModule(debugger, module);
-			hasDebugger = true;
-		}
-	}
-#endif
-
-#ifdef ENABLE_GDB_STUB
-	if (args->debugGdb) {
-		struct mDebuggerModule* module = mDebuggerCreateModule(DEBUGGER_GDB, core);
-		if (module) {
-			mDebuggerAttachModule(debugger, module);
-			hasDebugger = true;
-		}
-	}
-#endif
-
-	return hasDebugger;
-}
-
-void mArgumentsApplyFileLoads(const struct mArguments* args, struct mCore* core) {
-#ifdef ENABLE_VFS
-	if (args->patch) {
-		struct VFile* patch = VFileOpen(args->patch, O_RDONLY);
-		if (patch) {
-			core->loadPatch(core, patch);
-			patch->close(patch);
-		}
-	} else {
-		mCoreAutoloadPatch(core);
-	}
-
-	struct mCheatDevice* device = NULL;
-	if (args->cheatsFile && (device = core->cheatDevice(core))) {
-		struct VFile* vf = VFileOpen(args->cheatsFile, O_RDONLY);
-		if (vf) {
-			mCheatDeviceClear(device);
-			mCheatParseFile(device, vf);
-			vf->close(vf);
-		}
-	} else {
-		mCoreAutoloadCheats(core);
-	}
-#else
-	UNUSED(args);
-	UNUSED(core);
-#endif
-}
-
-void mArgumentsDeinit(struct mArguments* args) {
+void freeArguments(struct mArguments* args) {
 	free(args->fname);
 	args->fname = 0;
 
@@ -309,15 +191,12 @@ void mArgumentsDeinit(struct mArguments* args) {
 	HashTableDeinit(&args->configOverrides);
 }
 
-void mSubParserGraphicsInit(struct mSubParser* parser, struct mGraphicsOpts* opts) {
+void initParserForGraphics(struct mSubParser* parser, struct mGraphicsOpts* opts) {
 	parser->usage = GRAPHICS_USAGE;
 	parser->opts = opts;
 	parser->parse = _parseGraphicsArg;
-	parser->parseLong = _parseLongGraphicsArg;
 	parser->apply = _applyGraphicsArgs;
 	parser->extraOptions = GRAPHICS_OPTIONS;
-	parser->longOptions = _graphicsLongOpts;
-	parser->handleExtraArg = NULL;
 	opts->multiplier = 0;
 	opts->fullscreen = false;
 }
@@ -335,8 +214,6 @@ bool _parseGraphicsArg(struct mSubParser* parser, int option, const char* arg) {
 	case '4':
 	case '5':
 	case '6':
-	case '7':
-	case '8':
 		if (graphicsOpts->multiplier) {
 			return false;
 		}
@@ -347,18 +224,6 @@ bool _parseGraphicsArg(struct mSubParser* parser, int option, const char* arg) {
 	}
 }
 
-bool _parseLongGraphicsArg(struct mSubParser* parser, const char* option, const char* arg) {
-	struct mGraphicsOpts* graphicsOpts = parser->opts;
-	if (strcmp(option, "scale") == 0) {
-		if (graphicsOpts->multiplier) {
-			return false;
-		}
-		graphicsOpts->multiplier = atoi(arg);
-		return graphicsOpts->multiplier != 0;
-	}
-	return false;
-}
-
 void _applyGraphicsArgs(struct mSubParser* parser, struct mCoreConfig* config) {
 	struct mGraphicsOpts* graphicsOpts = parser->opts;
 	if (graphicsOpts->fullscreen) {
@@ -366,36 +231,25 @@ void _applyGraphicsArgs(struct mSubParser* parser, struct mCoreConfig* config) {
 	}
 }
 
-void usage(const char* arg0, const char* prologue, const char* epilogue, const struct mSubParser* subparsers, int nSubparsers) {
+void usage(const char* arg0, const char* extraOptions) {
 	printf("usage: %s [option ...] file\n", arg0);
-	if (prologue) {
-		puts(prologue);
-	}
-	puts("\nGeneric options:\n"
-	     "  -b, --bios FILE            GBA BIOS file to use\n"
-	     "  -c, --cheats FILE          Apply cheat codes from a file\n"
-	     "  -C, --config OPTION=VALUE  Override config value\n"
+	puts("\nGeneric options:");
+	puts("  -b, --bios FILE            GBA BIOS file to use");
+	puts("  -c, --cheats FILE          Apply cheat codes from a file");
+	puts("  -C, --config OPTION=VALUE  Override config value");
 #ifdef USE_EDITLINE
-	     "  -d, --debug                Use command-line debugger\n"
+	puts("  -d, --debug                Use command-line debugger");
 #endif
-#ifdef ENABLE_GDB_STUB
-	     "  -g, --gdb                  Start GDB session (default port 2345)\n"
+#ifdef USE_GDB_STUB
+	puts("  -g, --gdb                  Start GDB session (default port 2345)");
 #endif
-	     "  -l, --log-level N          Log level mask\n"
-	     "  -t, --savestate FILE       Load savestate when starting\n"
-	     "  -p, --patch FILE           Apply a specified patch file when running\n"
-	     "  -s, --frameskip N          Skip every N frames\n"
-	     "  --version                  Print version and exit"
-	);
-	int i;
-	for (i = 0; i < nSubparsers; ++i) {
-		if (subparsers[i].usage) {
-			puts("");
-			puts(subparsers[i].usage);
-		}
-	}
-	if (epilogue) {
-		puts(epilogue);
+	puts("  -l, --log-level N          Log level mask");
+	puts("  -t, --savestate FILE       Load savestate when starting");
+	puts("  -p, --patch FILE           Apply a specified patch file when running");
+	puts("  -s, --frameskip N          Skip every N frames");
+	puts("  --version                  Print version and exit");
+	if (extraOptions) {
+		puts(extraOptions);
 	}
 }
 
