@@ -239,6 +239,9 @@ void mCoreConfigDirectory(char* out, size_t outLength) {
 		strlcpy(out, portableDir, outLength);
 		return;
 	}
+#ifdef __LIBRETRO__
+	return;
+#endif
 #ifdef _WIN32
 	WCHAR wpath[MAX_PATH];
 	WCHAR wprojectName[MAX_PATH];
