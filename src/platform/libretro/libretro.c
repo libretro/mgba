@@ -1795,6 +1795,7 @@ static void _setupMaps(struct mCore* core) {
 		descs[7].start  = GBA_BASE_VRAM;
 		descs[7].len    = GBA_SIZE_VRAM;
 		descs[7].select = 0xFF000000;
+		descs[7].flags  = RETRO_MEMDESC_VIDEO_RAM;
 
 		/* Map palette RAM */
 		descs[8].ptr    = gba->video.palette;
@@ -1850,6 +1851,7 @@ static void _setupMaps(struct mCore* core) {
 		descs[i].ptr    = gb->video.vram;
 		descs[i].start  = GB_BASE_VRAM;
 		descs[i].len    = GB_SIZE_VRAM_BANK0;
+		descs[i].flags  = RETRO_MEMDESC_VIDEO_RAM;
 		i++;
 
 		/* Map working RAM */
@@ -2291,6 +2293,20 @@ void* retro_get_memory_data(unsigned id) {
 #ifdef M_CORE_GBA
 		case mPLATFORM_GBA:
 			return ((struct GBA*)core->board)->video.renderer->vram;
+#endif
+		default:
+			break;
+		}
+		break;
+	case RETRO_MEMORY_ROM:
+		switch (core->platform(core)) {
+#ifdef M_CORE_GB
+		case mPLATFORM_GB:
+			return ((struct GB*)core->board)->memory.rom;
+#endif
+#ifdef M_CORE_GBA
+		case mPLATFORM_GBA:
+			return ((struct GBA*)core->board)->memory.rom;
 #endif
 		default:
 			break;
