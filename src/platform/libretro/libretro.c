@@ -98,7 +98,9 @@ static struct mRumbleIntegrator rumble;
 static struct GBALuminanceSource lux;
 static struct mRotationSource rotation;
 static bool tiltEnabled;
+static float tiltSensitivity = 1.0f;
 static bool gyroEnabled;
+static float gyroSensitivity = 1.0f;
 static int luxLevelIndex;
 static uint8_t luxLevel;
 static bool luxSensorEnabled;
@@ -131,6 +133,7 @@ static bool audioLowPassEnabled = false;
 static int32_t audioLowPassRange = 0;
 static int32_t audioLowPassLeftPrev = 0;
 static int32_t audioLowPassRightPrev = 0;
+
 
 static const int keymap[] = {
 	RETRO_DEVICE_ID_JOYPAD_A,
@@ -1250,6 +1253,26 @@ static void _reloadSettings(void) {
 	var.value = 0;
 	if (environCallback(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value) {
 		mCoreConfigSetDefaultIntValue(&core->config, "gba.forceGbp", strcmp(var.value, "ON") == 0);
+	}
+#endif
+
+	var.key = "mgba_tilt_sensitivity";
+	var.value = 0;
+	if (environCallback(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value) {
+		tiltSensitivity = strtof(var.value, NULL);
+		if (tiltSensitivity <= 0.0f) {
+			tiltSensitivity = 1.0f;
+		}
+	}
+
+#ifdef M_CORE_GBA
+	var.key = "mgba_gyro_sensitivity";
+	var.value = 0;
+	if (environCallback(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value) {
+		gyroSensitivity = strtof(var.value, NULL);
+		if (gyroSensitivity <= 0.0f) {
+			gyroSensitivity = 1.0f;
+		}
 	}
 #endif
 
@@ -2554,11 +2577,11 @@ static void _updateRotation(struct mRotationSource* source) {
 	gyroZ = 0;
 	_initSensors();
 	if (tiltEnabled) {
-		tiltX = sensorGetCallback(0, RETRO_SENSOR_ACCELEROMETER_X) * 3e8f;
-		tiltY = sensorGetCallback(0, RETRO_SENSOR_ACCELEROMETER_Y) * -3e8f;
+		tiltX = sensorGetCallback(0, RETRO_SENSOR_ACCELEROMETER_X) * 3e8f * tiltSensitivity;
+		tiltY = sensorGetCallback(0, RETRO_SENSOR_ACCELEROMETER_Y) * -3e8f * tiltSensitivity;
 	}
 	if (gyroEnabled) {
-		gyroZ = sensorGetCallback(0, RETRO_SENSOR_GYROSCOPE_Z) * -5.5e8f;
+		gyroZ = sensorGetCallback(0, RETRO_SENSOR_GYROSCOPE_Z) * -5.5e8f * gyroSensitivity;
 	}
 }
 
