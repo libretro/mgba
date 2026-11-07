@@ -1,0 +1,610 @@
+#include "libretro_multiplayer.h"
+#include "libretro_lockstep.h"
+
+#include "libretro_multiplayer_display.h"
+
+#include "libretro_log.h"
+
+#include <mgba/core/config.h>
+#include <mgba-util/audio-buffer.h>
+#include <mgba/gba/interface.h>
+#include <mgba-util/memory.h>
+#include <mgba-util/vfs.h>
+
+#include <fcntl.h>
+#include <string.h>
+
+#define VIDEO_BYTES_PER_PIXEL sizeof(mColor)
+#define COOPERATIVE_WATCHDOG 4000000
+
+static struct mLibretroMultiplayer* sMultiplayer;
+
+static void _lockstepSleep(struct mLockstepUser* user) {
+	struct mLibretroLockstepUser* lockstepUser = (struct mLibretroLockstepUser*) user;
+	if (!lockstepUser->multiplayer || lockstepUser->multiplayer->numPlayers < 2) {
+		return;
+	}
+
+	lockstepUser->blocked = true;
+}
+
+static void _lockstepWake(struct mLockstepUser* user) {
+	struct mLibretroLockstepUser* lockstepUser = (struct mLibretroLockstepUser*) user;
+	lockstepUser->blocked = false;
+}
+
+static int _requestedId(struct mLockstepUser* user) {
+	struct mLibretroLockstepUser* lockstepUser = (struct mLibretroLockstepUser*) user;
+	return lockstepUser->requestedId;
+}
+
+static int _modePlayerCount(enum mLibretroSplitscreenMode mode) {
+	switch (mode) {
+	case mLIBRETRO_SPLITSCREEN_2P_VERTICAL:
+	case mLIBRETRO_SPLITSCREEN_2P_HORIZONTAL:
+		return 2;
+	case mLIBRETRO_SPLITSCREEN_4P_GRID:
+		return 4;
+	default:
+		return 1;
+	}
+}
+
+static enum mLibretroSplitscreenMode _parseMode(retro_environment_t environCallback) {
+	struct retro_variable var = {
+		.key = "mgba_multiplayer_splitscreen",
+		.value = 0,
+	};
+
+	if (!environCallback || !environCallback(RETRO_ENVIRONMENT_GET_VARIABLE, &var) || !var.value) {
+		return mLIBRETRO_SPLITSCREEN_OFF;
+	}
+
+	if (strcmp(var.value, "Side by Side") == 0) {
+		return mLIBRETRO_SPLITSCREEN_2P_VERTICAL;
+	}
+
+	if (strcmp(var.value, "Top/Bottom") == 0) {
+		return mLIBRETRO_SPLITSCREEN_2P_HORIZONTAL;
+	}
+
+	if (strcmp(var.value, "4-Player Grid") == 0) {
+		return mLIBRETRO_SPLITSCREEN_4P_GRID;
+	}
+
+	return mLIBRETRO_SPLITSCREEN_OFF;
+}
+
+static enum mLibretroDisplayPlayers _parseDisplayPlayers(retro_environment_t environCallback) {
+	struct retro_variable var = {
+		.key = "mgba_multiplayer_av",
+		.value = 0,
+	};
+
+	if (!environCallback || !environCallback(RETRO_ENVIRONMENT_GET_VARIABLE, &var) || !var.value) {
+		return mLIBRETRO_DISPLAY_ALL;
+	}
+
+	if (strcmp(var.value, "Self") == 0) {
+		return mLIBRETRO_DISPLAY_SELF;
+	}
+
+	return mLIBRETRO_DISPLAY_ALL;
+}
+
+static void _clearPrimaryLinkPeripheral(void) {
+	struct mCore* primary = sMultiplayer->cores[0];
+	if (!primary || primary->platform(primary) != mPLATFORM_GBA) {
+		return;
+	}
+	primary->setPeripheral(primary, mPERIPH_GBA_LINK_PORT, NULL);
+}
+
+static void _detachLockstep(void) {
+	if (!sMultiplayer->coordinatorInitialized) {
+		return;
+	}
+
+	int i;
+	for (i = 0; i < sMultiplayer->numPlayers; ++i) {
+		struct mCore* core = sMultiplayer->cores[i];
+		if (core && core->platform(core) == mPLATFORM_GBA) {
+			if (i > 0) {
+				core->setPeripheral(core, mPERIPH_GBA_LINK_PORT, NULL);
+			}
+			GBASIOLockstepCoordinatorDetach(&sMultiplayer->coordinator, &sMultiplayer->drivers[i]);
+		}
+	}
+
+	GBASIOLockstepCoordinatorDeinit(&sMultiplayer->coordinator);
+	sMultiplayer->coordinatorInitialized = false;
+}
+
+static void _destroySecondaryCores(void) {
+	int i;
+	for (i = 1; i < sMultiplayer->numPlayers; ++i) {
+		if (sMultiplayer->cores[i]) {
+			mCoreConfigDeinit(&sMultiplayer->cores[i]->config);
+			sMultiplayer->cores[i]->deinit(sMultiplayer->cores[i]);
+			sMultiplayer->cores[i] = NULL;
+		}
+	}
+}
+
+static void _destroyBuffers(void) {
+	int i;
+	for (i = 1; i < MAX_GBAS; ++i) {
+		if (sMultiplayer->outputBuffers[i]) {
+			free(sMultiplayer->outputBuffers[i]);
+			sMultiplayer->outputBuffers[i] = NULL;
+		}
+	}
+
+	mLibretroMultiplayerDisplayDestroyCompositeBuffer(sMultiplayer);
+}
+
+static void _destroyRomData(void) {
+	if (sMultiplayer->romData) {
+		mappedMemoryFree(sMultiplayer->romData, sMultiplayer->romSize);
+		sMultiplayer->romData = NULL;
+		sMultiplayer->romSize = 0;
+	}
+}
+
+static void _stopSession(void) {
+	_clearPrimaryLinkPeripheral();
+	_detachLockstep();
+	_destroySecondaryCores();
+	_destroyBuffers();
+	_destroyRomData();
+	sMultiplayer->numPlayers = sMultiplayer->cores[0] ? 1 : 0;
+}
+
+// Players 2..4 emulate separate cartridges, so each needs its own save file.
+// The libretro API only has one SAVE_RAM region and the frontend manages that
+// one for player 1, so the extra players' saves are opened by the core itself,
+// next to player 1's, as "<basename>.p2.srm" and so on.
+static bool _loadSecondarySave(retro_environment_t environCallback, struct mCore* core, const char* romPath, int player) {
+	if (!environCallback || !romPath || !*romPath) {
+		return false;
+	}
+
+	const char* saveDir = NULL;
+	if (!environCallback(RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY, &saveDir) || !saveDir || !*saveDir) {
+		return false;
+	}
+
+	char base[PATH_MAX];
+	separatePath(romPath, NULL, base, NULL);
+	if (!base[0]) {
+		return false;
+	}
+
+	char savePath[PATH_MAX];
+	snprintf(savePath, sizeof(savePath), "%s" PATH_SEP "%s.p%i.srm", saveDir, base, player + 1);
+
+	struct VFile* save = VFileOpen(savePath, O_RDWR | O_CREAT);
+	if (!save) {
+		mLibretroLog(RETRO_LOG_WARN, "libretro: could not open save file for player %i at %s\n", player + 1, savePath);
+		return false;
+	}
+
+	if (!core->loadSave(core, save)) {
+		save->close(save);
+		return false;
+	}
+
+	mLibretroLog(RETRO_LOG_INFO, "libretro: player %i save file %s\n", player + 1, savePath);
+	return true;
+}
+
+static bool _initSecondaryCores(retro_environment_t environCallback, int numPlayers, const void* romData, size_t romSize, const char* romPath) {
+	if (numPlayers < 2 || numPlayers > MAX_GBAS) {
+		return false;
+	}
+
+	if (romData && romSize) {
+		sMultiplayer->romData = anonymousMemoryMap(romSize);
+		if (!sMultiplayer->romData) {
+			return false;
+		}
+		sMultiplayer->romSize = romSize;
+		memcpy(sMultiplayer->romData, romData, romSize);
+	} else if (!(romPath && *romPath)) {
+		return false;
+	}
+
+	int i;
+	for (i = 1; i < numPlayers; ++i) {
+		struct VFile* rom;
+		if (sMultiplayer->romData) {
+			rom = VFileFromMemory(sMultiplayer->romData, sMultiplayer->romSize);
+		} else {
+			rom = VFileOpen(romPath, O_RDONLY);
+		}
+		if (!rom) {
+			return false;
+		}
+
+		sMultiplayer->cores[i] = mCoreFindVF(rom);
+		if (!sMultiplayer->cores[i]) {
+			rom->close(rom);
+			return false;
+		}
+
+		mCoreInitConfig(sMultiplayer->cores[i], NULL);
+		sMultiplayer->cores[i]->init(sMultiplayer->cores[i]);
+
+		sMultiplayer->outputBuffers[i] = malloc((size_t) sMultiplayer->video.maxVideoWidth * sMultiplayer->video.maxVideoHeight * VIDEO_BYTES_PER_PIXEL);
+		if (!sMultiplayer->outputBuffers[i]) {
+			return false;
+		}
+		memset(sMultiplayer->outputBuffers[i], 0xFF, (size_t) sMultiplayer->video.maxVideoWidth * sMultiplayer->video.maxVideoHeight * VIDEO_BYTES_PER_PIXEL);
+		sMultiplayer->cores[i]->setVideoBuffer(sMultiplayer->cores[i], sMultiplayer->outputBuffers[i], sMultiplayer->video.maxVideoWidth);
+
+		memset(&sMultiplayer->streams[i], 0, sizeof(sMultiplayer->streams[i]));
+		sMultiplayer->cores[i]->setAVStream(sMultiplayer->cores[i], &sMultiplayer->streams[i]);
+
+		if (!sMultiplayer->cores[i]->loadROM(sMultiplayer->cores[i], rom)) {
+			rom->close(rom);
+			return false;
+		}
+
+		// Reset first, then hand over the save file, matching what
+		// _doDeferredSetup does for player 1.
+		sMultiplayer->cores[i]->reset(sMultiplayer->cores[i]);
+		_loadSecondarySave(environCallback, sMultiplayer->cores[i], romPath, i);
+		sMultiplayer->numPlayers = i + 1;
+	}
+
+	return true;
+}
+
+static bool _attachLockstep(void) {
+	struct mCore* primary = sMultiplayer->cores[0];
+	if (!primary || primary->platform(primary) != mPLATFORM_GBA) {
+		return false;
+	}
+
+	int i;
+	for (i = 1; i < sMultiplayer->numPlayers; ++i) {
+		if (!sMultiplayer->cores[i] || sMultiplayer->cores[i]->platform(sMultiplayer->cores[i]) != mPLATFORM_GBA) {
+			return false;
+		}
+	}
+
+	GBASIOLockstepCoordinatorInit(&sMultiplayer->coordinator);
+	sMultiplayer->coordinatorInitialized = true;
+
+	for (i = 0; i < sMultiplayer->numPlayers; ++i) {
+		sMultiplayer->users[i].d.sleep = _lockstepSleep;
+		sMultiplayer->users[i].d.wake = _lockstepWake;
+		sMultiplayer->users[i].d.requestedId = _requestedId;
+		sMultiplayer->users[i].d.playerIdChanged = NULL;
+		sMultiplayer->users[i].requestedId = i;
+		sMultiplayer->users[i].multiplayer = sMultiplayer;
+		sMultiplayer->users[i].playerIndex = i;
+		sMultiplayer->users[i].blocked = false;
+
+		GBASIOLockstepDriverCreate(&sMultiplayer->drivers[i], &sMultiplayer->users[i].d);
+		GBASIOLockstepCoordinatorAttach(&sMultiplayer->coordinator, &sMultiplayer->drivers[i]);
+	}
+
+	for (i = 0; i < sMultiplayer->numPlayers; ++i) {
+		sMultiplayer->cores[i]->setPeripheral(sMultiplayer->cores[i], mPERIPH_GBA_LINK_PORT, &sMultiplayer->drivers[i].d);
+	}
+	return true;
+}
+
+static bool _startSession(retro_environment_t environCallback, int numPlayers, const void* romData, size_t romSize, const char* romPath) {
+	struct mCore* primary = sMultiplayer->cores[0];
+	if (!primary || primary->platform(primary) != mPLATFORM_GBA || !romData || !romSize) {
+		if (!(romPath && *romPath)) {
+			return false;
+		}
+	}
+
+	if (!_initSecondaryCores(environCallback, numPlayers, romData, romSize, romPath)) {
+		_stopSession();
+		return false;
+	}
+
+	if (!mLibretroMultiplayerDisplayCreateCompositeBuffer(sMultiplayer)) {
+		_stopSession();
+		return false;
+	}
+
+	if (!_attachLockstep()) {
+		_stopSession();
+		return false;
+	}
+
+	return true;
+}
+
+void mLibretroMultiplayerInit(unsigned maxVideoWidth, unsigned maxVideoHeight) {
+	static struct mLibretroMultiplayer instance;
+	memset(&instance, 0, sizeof(instance));
+	mLibretroMultiplayerDisplayInit(&instance, maxVideoWidth, maxVideoHeight);
+	sMultiplayer = &instance;
+}
+
+void mLibretroMultiplayerSetPrimaryCore(struct mCore* primaryCore) {
+	mASSERT(sMultiplayer);
+	sMultiplayer->cores[0] = primaryCore;
+	if (!primaryCore) {
+		sMultiplayer->numPlayers = 0;
+	} else if (sMultiplayer->numPlayers < 1) {
+		sMultiplayer->numPlayers = 1;
+	}
+}
+
+void mLibretroMultiplayerDeinit(void) {
+	mASSERT(sMultiplayer);
+	_stopSession();
+	mLibretroMultiplayerDisplayReset(sMultiplayer);
+}
+
+void mLibretroMultiplayerUpdateMode(retro_environment_t environCallback) {
+	mASSERT(sMultiplayer);
+	sMultiplayer->video.mode = _parseMode(environCallback);
+}
+
+void mLibretroMultiplayerUpdateDisplayPlayers(retro_environment_t environCallback) {
+	mASSERT(sMultiplayer);
+	sMultiplayer->video.displayPlayers = _parseDisplayPlayers(environCallback);
+}
+
+bool mLibretroMultiplayerApplyMode(retro_environment_t environCallback, const void* romData, size_t romSize, const char* romPath) {
+	mASSERT(sMultiplayer);
+	bool wantsSession = sMultiplayer->video.mode != mLIBRETRO_SPLITSCREEN_OFF;
+	int desiredPlayers = wantsSession ? _modePlayerCount(sMultiplayer->video.mode) : 1;
+
+	/* Tear down if the player count changed or if switching to single-player. */
+	if (sMultiplayer->numPlayers > 1 && sMultiplayer->numPlayers != desiredPlayers) {
+		_stopSession();
+	}
+
+	if (desiredPlayers <= 1) {
+		return true;
+	}
+
+	if (sMultiplayer->numPlayers == desiredPlayers) {
+		return true;
+	}
+
+	if (!_startSession(environCallback, desiredPlayers, romData, romSize, romPath)) {
+		mLibretroLog(RETRO_LOG_WARN, "libretro: failed to start multiplayer lockstep session; continuing in single-player mode\n");
+		return false;
+	}
+
+	mLibretroLog(RETRO_LOG_INFO, "libretro: started %d-player splitscreen multiplayer session\n", sMultiplayer->numPlayers);
+
+	return true;
+}
+
+void mLibretroMultiplayerReset(void) {
+	mASSERT(sMultiplayer);
+	if (!sMultiplayer->cores[0]) {
+		return;
+	}
+
+	int i;
+	for (i = 1; i < sMultiplayer->numPlayers; ++i) {
+		if (sMultiplayer->cores[i]) {
+			sMultiplayer->cores[i]->reset(sMultiplayer->cores[i]);
+		}
+	}
+
+	sMultiplayer->cores[0]->reset(sMultiplayer->cores[0]);
+}
+
+void mLibretroMultiplayerSetKeys(uint16_t keys[MAX_GBAS]) {
+	mASSERT(sMultiplayer);
+	if (!sMultiplayer->cores[0]) {
+		return;
+	}
+
+	int i;
+	for (i = 0; i < sMultiplayer->numPlayers; ++i) {
+		if (sMultiplayer->cores[i]) {
+			sMultiplayer->cores[i]->setKeys(sMultiplayer->cores[i], keys[i]);
+		}
+	}
+}
+
+void mLibretroMultiplayerRunFrame(void) {
+	mASSERT(sMultiplayer);
+	struct mCore* primary = sMultiplayer->cores[0];
+	if (!primary) {
+		return;
+	}
+
+	if (sMultiplayer->numPlayers < 2) {
+		primary->runFrame(primary);
+		return;
+	}
+
+	uint32_t startFrames[MAX_GBAS];
+	bool done[MAX_GBAS];
+
+	int i;
+	for (i = 0; i < sMultiplayer->numPlayers; ++i) {
+		startFrames[i] = sMultiplayer->cores[i]->frameCounter(sMultiplayer->cores[i]);
+		done[i] = false;
+	}
+
+	int watchdog = COOPERATIVE_WATCHDOG;
+	bool allDone = false;
+	while (!allDone && watchdog > 0) {
+		bool ranAny = false;
+		int blockedCount = 0;
+
+		for (i = 0; i < sMultiplayer->numPlayers; ++i) {
+			if (sMultiplayer->users[i].blocked) {
+				++blockedCount;
+			}
+		}
+
+		for (i = 0; i < sMultiplayer->numPlayers; ++i) {
+			if (sMultiplayer->users[i].blocked) {
+				continue;
+			}
+			if (done[i] && blockedCount == 0) {
+				continue;
+			}
+
+			sMultiplayer->cores[i]->runLoop(sMultiplayer->cores[i]);
+			--watchdog;
+			ranAny = true;
+
+			if (!done[i] && sMultiplayer->cores[i]->frameCounter(sMultiplayer->cores[i]) != startFrames[i]) {
+				done[i] = true;
+			}
+		}
+
+		if (!ranAny) {
+			mLOG(GBA_SIO, FATAL, "All players blocked simultaneously -- deadlock");
+			mASSERT(false);
+			break;
+		}
+
+		allDone = true;
+		for (i = 0; i < sMultiplayer->numPlayers; ++i) {
+			if (!done[i]) {
+				allDone = false;
+				break;
+			}
+		}
+	}
+	if (watchdog <= 0) {
+		mLOG(GBA_SIO, FATAL, "Cooperative scheduling watchdog expired");
+		mASSERT(false);
+	}
+}
+
+void mLibretroMultiplayerAdjustGeometry(struct retro_game_geometry* geometry) {
+	mASSERT(sMultiplayer);
+	mLibretroMultiplayerDisplayAdjustGeometry(sMultiplayer, geometry);
+}
+
+const mColor* mLibretroMultiplayerComposeFrame(const mColor* primaryFrame, unsigned primaryWidth, unsigned primaryHeight, size_t* outPitch, unsigned* outWidth, unsigned* outHeight) {
+	mASSERT(sMultiplayer);
+	return mLibretroMultiplayerDisplayComposeFrame(sMultiplayer, primaryFrame, primaryWidth, primaryHeight, outPitch, outWidth, outHeight);
+}
+
+static enum mLibretroDisplayPlayers _effectiveDisplayPlayers(void) {
+	return sMultiplayer->numPlayers < 2 ? mLIBRETRO_DISPLAY_SELF : sMultiplayer->video.displayPlayers;
+}
+
+// The frontend only tells us which player we are while netplay is up, and the
+// answer can change mid-session, so it is re-read every frame.
+static bool _updateLocalPlayer(retro_environment_t environCallback) {
+	if (!environCallback || sMultiplayer->video.displayPlayers != mLIBRETRO_DISPLAY_SELF) {
+		return false;
+	}
+
+	unsigned localClientIndex = 0;
+	if (!environCallback(RETRO_ENVIRONMENT_GET_NETPLAY_CLIENT_INDEX, &localClientIndex)) {
+		return false;
+	}
+
+	int playerIndex = (int) localClientIndex;
+	if (playerIndex >= MAX_GBAS) {
+		playerIndex = MAX_GBAS - 1;
+	}
+
+	if (sMultiplayer->video.localPlayerIndex == playerIndex) {
+		return false;
+	}
+
+	sMultiplayer->video.localPlayerIndex = playerIndex;
+	return true;
+}
+
+bool mLibretroMultiplayerRefreshDisplayState(retro_environment_t environCallback) {
+	mASSERT(sMultiplayer);
+	enum mLibretroDisplayPlayers previousDisplay = _effectiveDisplayPlayers();
+
+	mLibretroMultiplayerUpdateDisplayPlayers(environCallback);
+	bool changed = previousDisplay != _effectiveDisplayPlayers();
+
+	if (_updateLocalPlayer(environCallback)) {
+		changed = true;
+	}
+
+	return changed;
+}
+
+bool mLibretroMultiplayerApplySessionState(retro_environment_t environCallback, struct mCore* primaryCore, const void* romData, size_t romSize, const char* romPath) {
+	mASSERT(sMultiplayer);
+	bool wasActive = sMultiplayer->numPlayers > 1;
+	enum mLibretroSplitscreenMode previousMode = sMultiplayer->video.mode;
+	enum mLibretroDisplayPlayers previousDisplay = _effectiveDisplayPlayers();
+
+	mLibretroMultiplayerSetPrimaryCore(primaryCore);
+	mLibretroMultiplayerUpdateMode(environCallback);
+	mLibretroMultiplayerUpdateDisplayPlayers(environCallback);
+	mLibretroMultiplayerApplyMode(environCallback, romData, romSize, romPath);
+
+	return wasActive != (sMultiplayer->numPlayers > 1) || previousMode != sMultiplayer->video.mode || previousDisplay != _effectiveDisplayPlayers();
+}
+
+// In "Self" mode only the local player is audible, so the converter is fed
+// from that player's core rather than the primary one.
+struct mCore* mLibretroMultiplayerAudioCore(struct mCore* primaryCore) {
+	mASSERT(sMultiplayer);
+	int local = sMultiplayer->video.localPlayerIndex;
+	if (_effectiveDisplayPlayers() != mLIBRETRO_DISPLAY_SELF || local < 0 || local >= sMultiplayer->numPlayers || !sMultiplayer->cores[local]) {
+		return primaryCore;
+	}
+	return sMultiplayer->cores[local];
+}
+
+// The players we are not listening to keep filling their own audio buffers;
+// drain those or they back up.
+void mLibretroMultiplayerDrainInaudibleCores(struct mCore* audioCore, int16_t* scratch, size_t scratchFrames) {
+	mASSERT(sMultiplayer);
+	if (!scratch || !scratchFrames) {
+		return;
+	}
+
+	int i;
+	for (i = 0; i < sMultiplayer->numPlayers; ++i) {
+		struct mCore* core = sMultiplayer->cores[i];
+		if (!core || core == audioCore) {
+			continue;
+		}
+
+		struct mAudioBuffer* buffer = core->getAudioBuffer(core);
+		while (true) {
+			size_t available = mAudioBufferAvailable(buffer);
+			if (!available) {
+				break;
+			}
+			size_t frames = available < scratchFrames ? available : scratchFrames;
+			if (!mAudioBufferRead(buffer, scratch, frames)) {
+				break;
+			}
+		}
+	}
+}
+
+bool mLibretroMultiplayerStateActive(void) {
+	mASSERT(sMultiplayer);
+	return sMultiplayer->numPlayers > 1;
+}
+
+const struct mLibretroMultiplayer* mLibretroMultiplayerGet(void) {
+	mASSERT(sMultiplayer);
+	return sMultiplayer;
+}
+
+int mLibretroMultiplayerConfiguredPlayers(void) {
+	mASSERT(sMultiplayer);
+	int desired = _modePlayerCount(sMultiplayer->video.mode);
+	if (sMultiplayer->numPlayers > desired) {
+		desired = sMultiplayer->numPlayers;
+	}
+	return desired;
+}

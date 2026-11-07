@@ -2587,6 +2587,15 @@ enum retro_mod
 */
 #define RETRO_ENVIRONMENT_GET_TARGET_SAMPLE_RATE (81 | RETRO_ENVIRONMENT_EXPERIMENTAL)
 
+/**
+ * Returns local player's netplay client index for frontend-managed rollback sessions.
+ *
+ * @param[out] data <tt>unsigned *</tt>.
+ * 0 indicates host, values > 0 indicate clients.
+ * @return \\c true if available and value was written.
+*/
+#define RETRO_ENVIRONMENT_GET_NETPLAY_CLIENT_INDEX (82 | RETRO_ENVIRONMENT_EXPERIMENTAL)
+
 /**@}*/
 
 /**

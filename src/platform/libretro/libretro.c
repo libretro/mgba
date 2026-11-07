@@ -43,6 +43,11 @@ FS_Archive sdmcArchive;
 #endif
 
 #include "libretro_core_options.h"
+#include "libretro_input.h"
+#include "libretro_log.h"
+#include "libretro_multiplayer.h"
+#include "libretro_netplay.h"
+#include "libretro_savestate.h"
 
 #define GBA_AUDIO_CHUNK_FRAMES 1024
 #define GB_SAMPLES 512
@@ -82,6 +87,10 @@ static int32_t _readTiltX(struct mRotationSource* source);
 static int32_t _readTiltY(struct mRotationSource* source);
 static int32_t _readGyroZ(struct mRotationSource* source);
 static void _setupMaps(struct mCore* core);
+static bool _applyMultiplayerSessionState(void);
+static void _refreshRuntimeMultiplayerState(void);
+static void _updateFrontendAVInfo(void);
+static void _ensureDeferredSetupForStateIO(void);
 
 static struct mCore* core;
 static mColor* outputBuffer = NULL;
@@ -131,19 +140,9 @@ static bool audioLowPassEnabled = false;
 static int32_t audioLowPassRange = 0;
 static int32_t audioLowPassLeftPrev = 0;
 static int32_t audioLowPassRightPrev = 0;
-
-static const int keymap[] = {
-	RETRO_DEVICE_ID_JOYPAD_A,
-	RETRO_DEVICE_ID_JOYPAD_B,
-	RETRO_DEVICE_ID_JOYPAD_SELECT,
-	RETRO_DEVICE_ID_JOYPAD_START,
-	RETRO_DEVICE_ID_JOYPAD_RIGHT,
-	RETRO_DEVICE_ID_JOYPAD_LEFT,
-	RETRO_DEVICE_ID_JOYPAD_UP,
-	RETRO_DEVICE_ID_JOYPAD_DOWN,
-	RETRO_DEVICE_ID_JOYPAD_R,
-	RETRO_DEVICE_ID_JOYPAD_L,
-};
+static struct mLibretroTurboState turboState;
+static struct mLibretroNetplayState netplay;
+static char loadedRomPath[PATH_MAX];
 
 /* Maximum number of consecutive frames that
  * can be skipped */
@@ -1257,6 +1256,27 @@ static void _reloadSettings(void) {
 	mCoreLoadConfig(core);
 }
 
+static void _updateFrontendAVInfo(void) {
+	if (!environCallback || !core) {
+		return;
+	}
+
+	struct retro_system_av_info info;
+	retro_get_system_av_info(&info);
+	environCallback(RETRO_ENVIRONMENT_SET_SYSTEM_AV_INFO, &info);
+}
+
+static bool _applyMultiplayerSessionState(void) {
+	return mLibretroMultiplayerApplySessionState(environCallback, core, data, dataSize, loadedRomPath);
+}
+
+static void _refreshRuntimeMultiplayerState(void) {
+	mLibretroNetplayRefresh(&netplay, environCallback);
+	if (mLibretroMultiplayerRefreshDisplayState(environCallback)) {
+		_updateFrontendAVInfo();
+	}
+}
+
 static void _doDeferredSetup(void) {
 	// Libretro API doesn't let you know when it's done copying data into the save buffers.
 	// On the off-hand chance that a core actually expects its buffers to be populated when
@@ -1276,6 +1296,12 @@ static void _doDeferredSetup(void) {
 		save->close(save);
 	}
 	deferredSetup = false;
+}
+
+static void _ensureDeferredSetupForStateIO(void) {
+	if (deferredSetup) {
+		_doDeferredSetup();
+	}
 }
 
 unsigned retro_api_version(void) {
@@ -1352,6 +1378,8 @@ void retro_get_system_av_info(struct retro_system_av_info* info) {
 	core->baseVideoSize(core, &width, &height);
 	info->geometry.max_width = width;
 	info->geometry.max_height = height;
+
+	mLibretroMultiplayerAdjustGeometry(&info->geometry);
 
 	info->timing.fps = core->frequency(core) / (float) core->frameCycles(core);
 
@@ -1441,6 +1469,7 @@ void retro_init(void) {
 	} else {
 		logCallback = 0;
 	}
+	mLibretroSetLogCallback(logCallback);
 	logger.log = GBARetroLog;
 	mLogSetDefaultLogger(&logger);
 
@@ -1463,9 +1492,15 @@ void retro_init(void) {
 	retroAudioLatency       = 0;
 	updateAudioLatency      = false;
 	updateAudioRate         = false;
+	mLibretroTurboStateInit(&turboState);
+	mLibretroNetplayInit(&netplay);
+	mLibretroMultiplayerInit(VIDEO_WIDTH_MAX, VIDEO_HEIGHT_MAX);
+	loadedRomPath[0] = '\0';
 }
 
 void retro_deinit(void) {
+	mLibretroMultiplayerDeinit();
+
 	if (outputBuffer) {
 #ifdef _3DS
 		linearFree(outputBuffer);
@@ -1502,43 +1537,15 @@ void retro_deinit(void) {
 	audioLowPassRange = 0;
 	audioLowPassLeftPrev = 0;
 	audioLowPassRightPrev = 0;
-}
-
-static int turboclock = 0;
-static bool indownstate = true;
-
-int16_t cycleturbo(bool a, bool b, bool l, bool r) {
-	int16_t buttons = 0;
-	turboclock++;
-	if (turboclock >= 2) {
-		turboclock = 0;
-		indownstate = !indownstate;
-	}
-
-	if (a) {
-		buttons |= indownstate << 0;
-	}
-
-	if (b) {
-		buttons |= indownstate << 1;
-	}
-
-	if (l) {
-		buttons |= indownstate << 9;
-	}
-
-	if (r) {
-		buttons |= indownstate << 8;
-	}
-
-	return buttons;
+	core = NULL;
 }
 
 void retro_run(void) {
 	if (deferredSetup) {
 		_doDeferredSetup();
+		_refreshRuntimeMultiplayerState();
 	}
-	uint16_t keys;
+	uint16_t playerKeys[MAX_GBAS];
 	bool skipFrame = false;
 
 	inputPollCallback();
@@ -1567,30 +1574,13 @@ void retro_run(void) {
 #endif
 	}
 
-	keys = 0;
-	unsigned i;
-	if (useBitmasks) {
-		int16_t joypadMask = inputCallback(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_MASK);
-		for (i = 0; i < sizeof(keymap) / sizeof(*keymap); ++i) {
-			keys |= ((joypadMask >> keymap[i]) & 1) << i;
-		}
-		// XXX: turbo keys, should be moved to frontend
-#define JOYPAD_BIT(BUTTON) (1 << RETRO_DEVICE_ID_JOYPAD_ ## BUTTON)
-		keys |= cycleturbo(joypadMask & JOYPAD_BIT(X), joypadMask & JOYPAD_BIT(Y), joypadMask & JOYPAD_BIT(L2), joypadMask & JOYPAD_BIT(R2));
-#undef JOYPAD_BIT
-	} else {
-		for (i = 0; i < sizeof(keymap) / sizeof(*keymap); ++i) {
-			keys |= (!!inputCallback(0, RETRO_DEVICE_JOYPAD, 0, keymap[i])) << i;
-		}
-		// XXX: turbo keys, should be moved to frontend
-		keys |= cycleturbo(
-			inputCallback(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_X),
-			inputCallback(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_Y),
-			inputCallback(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_L2),
-			inputCallback(0, RETRO_DEVICE_JOYPAD, 0, RETRO_DEVICE_ID_JOYPAD_R2)
-		);
+	_refreshRuntimeMultiplayerState();
+
+	int p;
+	for (p = 0; p < MAX_GBAS; ++p) {
+		playerKeys[p] = mLibretroInputReadKeys(p, inputCallback, useBitmasks, &turboState);
 	}
-	core->setKeys(core, keys);
+	mLibretroMultiplayerSetKeys(playerKeys);
 
 	if (!luxSensorUsed) {
 		static bool wasAdjustingLux = false;
@@ -1669,7 +1659,7 @@ void retro_run(void) {
       updateAudioLatency = false;
    }
 
-	core->runFrame(core);
+	mLibretroMultiplayerRunFrame();
 	unsigned width, height;
 	core->currentVideoSize(core, &width, &height);
 
@@ -1693,15 +1683,27 @@ void retro_run(void) {
 	}
 
 	if (!skipFrame) {
+		size_t outPitch;
+		unsigned outWidth;
+		unsigned outHeight;
+		const mColor* frame = mLibretroMultiplayerComposeFrame(outputBuffer, width, height, &outPitch, &outWidth, &outHeight);
+		if (frame == outputBuffer) {
 #if defined(COLOR_16_BIT) && defined(COLOR_5_6_5)
-		if (videoPostProcess) {
-			videoPostProcess(width, height);
-			videoCallback(ppOutputBuffer, width, height, VIDEO_WIDTH_MAX * sizeof(mColor));
-		} else
+			if (videoPostProcess) {
+				videoPostProcess(width, height);
+				videoCallback(ppOutputBuffer, width, height, VIDEO_WIDTH_MAX * sizeof(mColor));
+			} else
 #endif
-			videoCallback(outputBuffer, width, height, VIDEO_WIDTH_MAX * sizeof(mColor));
+				videoCallback(outputBuffer, width, height, VIDEO_WIDTH_MAX * sizeof(mColor));
+		} else {
+			videoCallback(frame, outWidth, outHeight, outPitch);
+		}
 	} else {
-		videoCallback(NULL, width, height, VIDEO_WIDTH_MAX * sizeof(mColor));
+		size_t outPitch = VIDEO_WIDTH_MAX * sizeof(mColor);
+		unsigned outWidth = width;
+		unsigned outHeight = height;
+		mLibretroMultiplayerComposeFrame(outputBuffer, width, height, &outPitch, &outWidth, &outHeight);
+		videoCallback(NULL, outWidth, outHeight, outPitch);
 	}
 
 	/* Check whether audio sample rate has changed */
@@ -1715,8 +1717,9 @@ void retro_run(void) {
 #ifdef M_CORE_GBA
 	if (core->platform(core) == mPLATFORM_GBA) {
 		static int16_t coreSamples[GBA_AUDIO_CHUNK_FRAMES * 2];
-		struct mAudioBuffer* coreBuffer = core->getAudioBuffer(core);
-		unsigned coreSampleRate = core->audioSampleRate(core);
+		struct mCore* audioCore = mLibretroMultiplayerAudioCore(core);
+		struct mAudioBuffer* coreBuffer = audioCore->getAudioBuffer(audioCore);
+		unsigned coreSampleRate = audioCore->audioSampleRate(audioCore);
 		if (coreSampleRate != audioConverter.inputRate) {
 			audioConverterReset(&audioConverter, coreSampleRate);
 		}
@@ -1730,9 +1733,11 @@ void retro_run(void) {
 				if (audioLowPassEnabled) {
 					_audioLowPassFilter(audioSampleBuffer, produced);
 				}
-				audioCallback(audioSampleBuffer, (size_t)produced);
+				audioCallback(audioSampleBuffer, (size_t) produced);
 			}
 		}
+
+		mLibretroMultiplayerDrainInaudibleCores(audioCore, coreSamples, GBA_AUDIO_CHUNK_FRAMES);
 	}
 #endif
 }
@@ -1931,9 +1936,12 @@ static void _setupMaps(struct mCore* core) {
 }
 
 void retro_reset(void) {
-	core->reset(core);
+	mLibretroNetplayRefresh(&netplay, environCallback);
+	_applyMultiplayerSessionState();
+	mLibretroMultiplayerReset();
 	mRumbleIntegratorReset(&rumble);
 	_setupMaps(core);
+	_updateFrontendAVInfo();
 }
 
 #ifdef GEKKO
@@ -1978,6 +1986,12 @@ bool retro_load_game(const struct retro_game_info* game) {
 		return false;
 	}
 
+	if (game->path) {
+		snprintf(loadedRomPath, sizeof(loadedRomPath), "%s", game->path);
+	} else {
+		loadedRomPath[0] = '\0';
+	}
+
 	if (game->data) {
 		data = anonymousMemoryMap(game->size);
 		dataSize = game->size;
@@ -2008,6 +2022,7 @@ bool retro_load_game(const struct retro_game_info* game) {
 	}
 	mCoreInitConfig(core, NULL);
 	core->init(core);
+	mLibretroMultiplayerSetPrimaryCore(core);
 
 #ifdef _3DS
 	outputBuffer = linearMemAlign(VIDEO_BUFF_SIZE, 0x80);
@@ -2056,6 +2071,8 @@ bool retro_load_game(const struct retro_game_info* game) {
 	_reloadSettings();
 	core->loadROM(core, rom);
 	deferredSetup = true;
+	mLibretroNetplayRefresh(&netplay, environCallback);
+	_applyMultiplayerSessionState();
 
 	const char* sysDir = 0;
 	const char* biosName = 0;
@@ -2124,51 +2141,31 @@ void retro_unload_game(void) {
 	if (!core) {
 		return;
 	}
+	mLibretroMultiplayerDeinit();
 	mCoreConfigDeinit(&core->config);
 	core->deinit(core);
+	core = NULL;
+	mLibretroMultiplayerSetPrimaryCore(NULL);
 	mappedMemoryFree(data, dataSize);
 	data = 0;
 	mappedMemoryFree(savedata, GBA_SIZE_FLASH1M);
 	savedata = 0;
+	loadedRomPath[0] = '\0';
 }
 
 size_t retro_serialize_size(void) {
-	if (deferredSetup) {
-		_doDeferredSetup();
-	}
-	struct VFile* vfm = VFileMemChunk(NULL, 0);
-	mCoreSaveStateNamed(core, vfm, SAVESTATE_SAVEDATA | SAVESTATE_RTC);
-	size_t size = vfm->size(vfm);
-	vfm->close(vfm);
-	return size;
+	_ensureDeferredSetupForStateIO();
+	return mLibretroSerializeSize(core);
 }
 
 bool retro_serialize(void* data, size_t size) {
-	if (deferredSetup) {
-		_doDeferredSetup();
-	}
-	struct VFile* vfm = VFileMemChunk(NULL, 0);
-	mCoreSaveStateNamed(core, vfm, SAVESTATE_SAVEDATA | SAVESTATE_RTC);
-	if ((ssize_t) size > vfm->size(vfm)) {
-		size = vfm->size(vfm);
-	} else if ((ssize_t) size < vfm->size(vfm)) {
-		vfm->close(vfm);
-		return false;
-	}
-	vfm->seek(vfm, 0, SEEK_SET);
-	vfm->read(vfm, data, size);
-	vfm->close(vfm);
-	return true;
+	_ensureDeferredSetupForStateIO();
+	return mLibretroSerialize(core, data, size);
 }
 
 bool retro_unserialize(const void* data, size_t size) {
-	if (deferredSetup) {
-		_doDeferredSetup();
-	}
-	struct VFile* vfm = VFileFromConstMemory(data, size);
-	bool success = mCoreLoadStateNamed(core, vfm, SAVESTATE_RTC);
-	vfm->close(vfm);
-	return success;
+	_ensureDeferredSetupForStateIO();
+	return mLibretroUnserialize(core, data, size);
 }
 
 void retro_cheat_reset(void) {
